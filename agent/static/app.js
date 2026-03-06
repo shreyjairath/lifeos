@@ -254,22 +254,29 @@ async function sendMessage() {
             const label = document.createElement("div");
             label.className = "msg-label";
             label.textContent = "Agent";
+            currentMsgEl.appendChild(label);
+            messagesEl.appendChild(currentMsgEl);
+          }
+          if (!currentAgentBubble) {
             currentAgentBubble = document.createElement("div");
             currentAgentBubble.className = "bubble";
-            currentMsgEl.appendChild(label);
             currentMsgEl.appendChild(currentAgentBubble);
-            messagesEl.appendChild(currentMsgEl);
           }
           currentAgentText += event.text;
           currentAgentBubble.innerHTML = renderMarkdown(currentAgentText);
           scrollToBottom();
         } else if (event.type === "tool_call") {
-          const block = addToolBlock(event.name, event.input);
-          if (currentMsgEl) {
-            currentMsgEl.appendChild(block);
-          } else {
-            messagesEl.appendChild(block);
+          if (!currentMsgEl) {
+            currentMsgEl = document.createElement("div");
+            currentMsgEl.className = "msg agent";
+            const label = document.createElement("div");
+            label.className = "msg-label";
+            label.textContent = "Agent";
+            currentMsgEl.appendChild(label);
+            messagesEl.appendChild(currentMsgEl);
           }
+          const block = addToolBlock(event.name, event.input);
+          currentMsgEl.appendChild(block);
           scrollToBottom();
         } else if (event.type === "tool_result") {
           if (["create_project", "update_project", "list_projects"].includes(event.name)) {
@@ -350,6 +357,8 @@ document.getElementById("clear-btn").addEventListener("click", async () => {
 // ── Sidecar tab switching ─────────────────────────────────────────────────────
 const inspectorPanel = document.getElementById("inspector-panel");
 const ccPanel = document.getElementById("cc-panel");
+const eventsPanel = document.getElementById("events-panel");
+const promptPanel = document.getElementById("prompt-panel");
 const ispTabs = document.querySelectorAll(".isp-tab");
 
 ispTabs.forEach(tab => {
@@ -357,16 +366,23 @@ ispTabs.forEach(tab => {
     ispTabs.forEach(t => t.classList.remove("active"));
     tab.classList.add("active");
     const which = tab.dataset.tab;
+    inspectorPanel.classList.add("hidden");
+    ccPanel.classList.add("hidden");
+    eventsPanel.classList.add("hidden");
+    promptPanel.classList.add("hidden");
+    inspectorCopy.style.display = "none";
     if (which === "inspector") {
       inspectorPanel.classList.remove("hidden");
-      ccPanel.classList.add("hidden");
       inspectorCopy.style.display = "";
-    } else {
-      inspectorPanel.classList.add("hidden");
+    } else if (which === "cc") {
       ccPanel.classList.remove("hidden");
-      inspectorCopy.style.display = "none";
       ccInputEl.focus();
+    } else if (which === "events") {
+      eventsPanel.classList.remove("hidden");
+    } else if (which === "prompt") {
+      promptPanel.classList.remove("hidden");
     }
+
   });
 });
 
@@ -534,11 +550,138 @@ async function loadCCHistory() {
   }
 }
 
+// ── Prompt parts editor ───────────────────────────────────────────────────────
+const promptFileList = document.getElementById("prompt-file-list");
+const promptEditor = document.getElementById("prompt-editor");
+const promptSaveBtn = document.getElementById("prompt-save-btn");
+const promptSaveStatus = document.getElementById("prompt-save-status");
+let activePromptFile = null;
+
+async function loadPromptParts() {
+  const resp = await fetch("/api/prompt-parts");
+  const data = await resp.json();
+  promptFileList.innerHTML = "";
+  for (const name of data.parts) {
+    const btn = document.createElement("button");
+    btn.className = "prompt-file-btn";
+    btn.textContent = name;
+    btn.addEventListener("click", () => selectPromptFile(name));
+    promptFileList.appendChild(btn);
+  }
+  if (data.parts.length > 0) selectPromptFile(data.parts[0]);
+}
+
+async function selectPromptFile(name) {
+  activePromptFile = name;
+  promptFileList.querySelectorAll(".prompt-file-btn").forEach(b => {
+    b.classList.toggle("active", b.textContent === name);
+  });
+  const resp = await fetch(`/api/prompt-parts/${name}`);
+  const data = await resp.json();
+  promptEditor.value = data.content;
+  promptSaveStatus.textContent = "";
+}
+
+promptSaveBtn.addEventListener("click", async () => {
+  if (!activePromptFile) return;
+  promptSaveBtn.disabled = true;
+  const resp = await fetch(`/api/prompt-parts/${activePromptFile}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: promptEditor.value }),
+  });
+  promptSaveBtn.disabled = false;
+  promptSaveStatus.textContent = resp.ok ? "Saved" : "Error";
+  setTimeout(() => { promptSaveStatus.textContent = ""; }, 2000);
+});
+
+// ── Events stream ─────────────────────────────────────────────────────────────
+const eventsBody = document.getElementById("events-body");
+
+function appendEvent(event) {
+  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const row = document.createElement("div");
+  row.className = `ev-row ev-${event.type.replace(/_/g, "-")}`;
+
+  let badge = event.type;
+  let detail = "";
+
+  if (event.type === "boot_start") {
+    badge = "boot"; detail = "Boot sequence started";
+  } else if (event.type === "boot_done") {
+    badge = "boot"; detail = "Boot complete";
+  } else if (event.type === "knowledge_file") {
+    badge = "knowledge"; detail = `${event.file} — ${event.status}${event.chars ? ` (${event.chars.toLocaleString()} chars)` : ""}`;
+  } else if (event.type === "onboarding_status") {
+    badge = "onboarding"; detail = `${event.file} — ${event.status}`;
+  } else if (event.type === "system_prompt") {
+    badge = "prompt"; detail = `System prompt assembled (${event.chars.toLocaleString()} chars)`;
+  } else if (event.type === "session_start") {
+    badge = "session"; detail = `Session started — ${event.session_id}`;
+  } else if (event.type === "session_end") {
+    badge = "session"; detail = `Session ended — ${event.session_id}`;
+  } else if (event.type === "llm_request") {
+    badge = "llm"; detail = `→ ${event.model} (${event.messages} messages)`;
+  } else if (event.type === "llm_response") {
+    badge = "llm"; detail = `← ${event.stop_reason} · ${event.input_tokens} in / ${event.output_tokens} out`;
+  } else if (event.type === "tool_use") {
+    badge = "tool_use"; detail = `${event.name} — Claude requested`;
+  } else if (event.type === "tool_call") {
+    badge = "tool"; detail = `${event.name}(${JSON.stringify(event.input)})`;
+  } else if (event.type === "tool_result") {
+    badge = "result"; detail = `${event.name} → ${JSON.stringify(event.result).slice(0, 120)}`;
+  } else if (event.type === "knowledge_updated") {
+    badge = "write"; detail = `${event.file} updated (${event.chars.toLocaleString()} chars)`;
+  } else if (event.type === "onboarding_updated") {
+    badge = "onboarding"; detail = `${event.file} marked ${event.status}`;
+  } else if (event.type === "onboarding_complete") {
+    badge = "onboarding"; detail = "Onboarding complete";
+  } else if (event.type === "prompt_part_updated") {
+    badge = "prompt"; detail = `${event.name} updated (${event.chars.toLocaleString()} chars)`;
+  } else if (event.type === "cc_request") {
+    badge = "cc"; detail = `→ ${event.message.slice(0, 80)}`;
+  } else if (event.type === "cc_response") {
+    badge = "cc"; detail = `← ${event.chars.toLocaleString()} chars · session ${event.session_id?.slice(0, 8)}`;
+  } else {
+    detail = JSON.stringify(event);
+  }
+
+  row.innerHTML = `<span class="ev-ts">${ts}</span><span class="ev-badge">${badge}</span><span class="ev-detail">${detail}</span>`;
+  eventsBody.appendChild(row);
+  eventsBody.scrollTop = eventsBody.scrollHeight;
+}
+
+async function connectEventStream() {
+  try {
+    const resp = await fetch("/api/events");
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+        try { appendEvent(JSON.parse(jsonStr)); } catch { }
+      }
+    }
+  } catch (e) {
+    console.error("Event stream disconnected", e);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   await resolveSessionId();
   await loadHistory();
   await loadProjects();
   await loadCCHistory();
+  await loadPromptParts();
+  connectEventStream();
   inputEl.focus();
 })();

@@ -3,10 +3,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from tools.files import USER_DATA
+
 
 def _projects_dir(config: dict) -> Path:
-    base = Path(__file__).parent.parent.parent
-    return base / config["paths"]["projects"]
+    return USER_DATA / "user" / "projects"
 
 
 def _slugify(name: str) -> str:

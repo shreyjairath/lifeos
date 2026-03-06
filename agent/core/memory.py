@@ -3,7 +3,7 @@ import json
 import threading
 from pathlib import Path
 
-_DATA_FILE = Path(__file__).parent.parent / "data" / "conversations.json"
+_DATA_FILE = Path(__file__).parent.parent.parent / ".user-data" / "conversations.json"
 _lock = threading.Lock()
 
 

@@ -48,13 +48,32 @@
     <aside id="inspector">
       <!-- Tab bar -->
       <div class="isp-tabbar">
-        <button class="isp-tab active" data-tab="inspector">Inspector</button>
+        <button class="isp-tab active" data-tab="prompt">Prompt</button>
+        <button class="isp-tab" data-tab="events">Events</button>
+        <button class="isp-tab" data-tab="inspector">Inspector</button>
         <button class="isp-tab" data-tab="cc">Claude Code</button>
-        <button id="inspector-copy" title="Copy JSON">Copy</button>
+        <button id="inspector-copy" title="Copy JSON" style="display:none">Copy</button>
+      </div>
+
+      <!-- Prompt parts editor panel -->
+      <div id="prompt-panel">
+        <div id="prompt-file-list"></div>
+        <div id="prompt-editor-area">
+          <textarea id="prompt-editor" spellcheck="false"></textarea>
+          <div id="prompt-editor-footer">
+            <span id="prompt-save-status"></span>
+            <button id="prompt-save-btn">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Events panel -->
+      <div id="events-panel" class="hidden">
+        <div id="events-body"></div>
       </div>
 
       <!-- Inspector panel -->
-      <div id="inspector-panel">
+      <div id="inspector-panel" class="hidden">
         <div id="inspector-body">
           <span class="inspector-empty">Request JSON will appear here after you send a message.</span>
         </div>
@@ -68,6 +87,7 @@
           <button id="cc-send">Send</button>
         </div>
       </div>
+
     </aside>
   </div>
 

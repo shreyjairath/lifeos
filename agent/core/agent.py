@@ -4,11 +4,12 @@ from collections.abc import AsyncGenerator
 
 import anthropic
 
-from core.knowledge import load_knowledge_base
+from core.events import bus
+from core.knowledge import prepare_system_prompt
 from core.memory import append_message, get_history
 from core.tools import TOOLS, dispatch_tool
 
-_MAX_HISTORY = 10
+_MAX_HISTORY = 20
 
 
 def _prepare_messages(messages: list) -> list:
@@ -60,9 +61,11 @@ async def run_agent(
     Run the agent for one user message.
     Yields SSE-formatted strings: 'data: ...\n\n'
     """
-    client = anthropic.Anthropic()
-    system_prompt = load_knowledge_base(config)
+    bus.publish({"type": "session_start", "session_id": session_id})
 
+    client = anthropic.Anthropic()
+    system_prompt = prepare_system_prompt(config)
+    
     # Add user message to history
     append_message(session_id, {"role": "user", "content": user_message})
     messages = _prepare_messages(get_history(session_id))
@@ -83,6 +86,7 @@ async def run_agent(
             "messages": messages,
         }
         yield f"data: {json.dumps({'type': 'request_json', 'payload': request_payload})}\n\n"
+        bus.publish({"type": "llm_request", "model": config["model"], "messages": len(messages)})
 
         with client.messages.stream(
             model=config["model"],
@@ -99,6 +103,7 @@ async def run_agent(
                                 "id": event.content_block.id,
                                 "name": event.content_block.name,
                                 "input_str": "",
+                                "index": event.index,
                             })
                     elif event.type == "content_block_delta":
                         delta = event.delta
@@ -109,6 +114,18 @@ async def run_agent(
                             elif delta.type == "input_json_delta":
                                 if tool_uses:
                                     tool_uses[-1]["input_str"] += delta.partial_json
+                    elif event.type == "content_block_stop":
+                        # Emit tool_call live as soon as the block completes
+                        idx = getattr(event, "index", None)
+                        if idx is not None:
+                            matching = [tu for tu in tool_uses if tu.get("index") == idx]
+                            if matching:
+                                tu = matching[-1]
+                                try:
+                                    parsed_input = json.loads(tu["input_str"]) if tu["input_str"] else {}
+                                except json.JSONDecodeError:
+                                    parsed_input = {}
+                                yield f"data: {json.dumps({'type': 'tool_call', 'name': tu['name'], 'input': parsed_input})}\n\n"
                     elif event.type == "message_delta":
                         if hasattr(event, "delta") and hasattr(event.delta, "stop_reason"):
                             stop_reason = event.delta.stop_reason
@@ -131,6 +148,7 @@ async def run_agent(
             ],
         }
         yield f"data: {json.dumps({'type': 'response_json', 'payload': response_payload})}\n\n"
+        bus.publish({"type": "llm_response", "stop_reason": stop_reason, "input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens})
 
         # Build assistant message content
         assistant_content = []
@@ -152,6 +170,7 @@ async def run_agent(
                     "name": block.name,
                     "input": block.input,
                 })
+                bus.publish({"type": "tool_use", "name": block.name, "input": block.input})
 
         # Save assistant turn
         append_message(session_id, {"role": "assistant", "content": assistant_content})
@@ -163,9 +182,10 @@ async def run_agent(
         # Execute tools and build tool_result messages
         tool_results = []
         for tu in parsed_tool_uses:
-            yield f"data: {json.dumps({'type': 'tool_call', 'name': tu['name'], 'input': tu['input']})}\n\n"
+            bus.publish({"type": "tool_call", "name": tu["name"], "input": tu["input"]})
             result = dispatch_tool(tu["name"], tu["input"], config)
             yield f"data: {json.dumps({'type': 'tool_result', 'name': tu['name'], 'result': result})}\n\n"
+            bus.publish({"type": "tool_result", "name": tu["name"], "result": result})
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu["id"],
@@ -175,4 +195,5 @@ async def run_agent(
         append_message(session_id, {"role": "user", "content": tool_results})
         messages = _prepare_messages(get_history(session_id))
 
+    bus.publish({"type": "session_end", "session_id": session_id})
     yield f"data: {json.dumps({'type': 'done'})}\n\n"

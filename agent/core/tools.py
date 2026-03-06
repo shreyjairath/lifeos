@@ -2,7 +2,7 @@
 from typing import Any
 
 from tools.projects import create_project, list_projects, update_project, read_project
-from tools.files import read_knowledge, update_knowledge
+from tools.files import read_knowledge, update_knowledge, set_onboarding_status
 from tools.web import web_search
 from tools.claude_code import run_claude_code
 
@@ -94,6 +94,26 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "set_onboarding_status",
+        "description": "Mark a knowledge area as done or pending in onboarding. Call with status='done' once you have a solid understanding of that area.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": "string",
+                    "enum": ["identity", "routines", "tools", "services", "integrations"],
+                    "description": "The knowledge area to update",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "done"],
+                    "description": "Mark as done when you have a solid understanding of this area",
+                },
+            },
+            "required": ["file", "status"],
+        },
+    },
+    {
         "name": "claude_code",
         "description": (
             "Run a task with Claude Code (the AI coding agent) in non-interactive mode. "
@@ -141,6 +161,8 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
         return read_knowledge(tool_input["file"])
     elif tool_name == "update_knowledge":
         return update_knowledge(tool_input["file"], tool_input["content"])
+    elif tool_name == "set_onboarding_status":
+        return set_onboarding_status(tool_input["file"], tool_input["status"])
     elif tool_name == "claude_code":
         return run_claude_code(tool_input["prompt"], tool_input.get("working_dir"))
     else:

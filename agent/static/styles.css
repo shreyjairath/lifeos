@@ -191,7 +191,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 
 /* ── Tool indicators ── */
 .tool-block {
-  margin-top: 8px; padding: 8px 12px;
+  margin-top: 8px; margin-bottom: 8px; padding: 8px 12px;
   background: var(--tool-bg); border: 1px solid var(--tool-border);
   border-radius: 6px; font-family: var(--mono); font-size: 12px;
   color: #7ab8f5;
@@ -312,6 +312,102 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 }
 #cc-send:hover { opacity: 0.85; }
 #cc-send:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Prompt parts editor ── */
+#prompt-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+#prompt-panel.hidden { display: none; }
+
+#prompt-file-list {
+  display: flex; gap: 4px; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+
+.prompt-file-btn {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 10px; border-radius: 5px;
+  font-size: 11px; cursor: pointer; transition: background 0.1s;
+}
+.prompt-file-btn:hover { background: var(--border); }
+.prompt-file-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+#prompt-editor-area {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+
+#prompt-editor {
+  flex: 1; resize: none; border: none; outline: none;
+  padding: 14px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.6; background: var(--bg); color: var(--text);
+  overflow-y: auto;
+}
+
+#prompt-editor-footer {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; padding: 8px 12px;
+  border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+}
+
+#prompt-save-status { font-size: 11px; color: var(--accent); }
+
+#prompt-save-btn {
+  background: var(--accent); border: none; color: #fff;
+  padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: opacity 0.15s;
+}
+#prompt-save-btn:hover { opacity: 0.85; }
+#prompt-save-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Events panel ── */
+#events-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+#events-panel.hidden { display: none; }
+
+#events-body {
+  flex: 1; overflow-y: auto;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 3px;
+  font-family: var(--mono); font-size: 11px;
+}
+
+.ev-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 3px 6px; border-radius: 4px;
+  line-height: 1.5;
+}
+.ev-row:hover { background: var(--surface); }
+
+.ev-ts {
+  color: var(--muted); flex-shrink: 0; font-size: 10px;
+}
+
+.ev-badge {
+  flex-shrink: 0; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.ev-boot .ev-badge    { background: #e8f0e6; border-color: #bdd0bb; color: #4a6e48; }
+.ev-knowledge-file .ev-badge,
+.ev-knowledge-updated .ev-badge { background: #e8eef8; border-color: #b8c8e8; color: #3a5a8a; }
+.ev-onboarding-status .ev-badge,
+.ev-onboarding-updated .ev-badge { background: #f5eee8; border-color: #ddc8b0; color: #8a5a2a; }
+.ev-system-prompt .ev-badge { background: #f0e8f5; border-color: #cdb8e0; color: #6a3a8a; }
+.ev-session-start .ev-badge,
+.ev-session-end .ev-badge   { background: #eef0f8; border-color: #c0c8e8; color: #3a4a8a; }
+.ev-llm-request .ev-badge,
+.ev-llm-response .ev-badge  { background: #f5f0e8; border-color: #e0c8a0; color: #7a5a20; }
+.ev-tool-use .ev-badge      { background: #f0f4e8; border-color: #c8d8a8; color: #4a6e48; }
+.ev-tool-call .ev-badge     { background: var(--tool-bg); border-color: var(--tool-border); color: #4a6e48; }
+.ev-tool-result .ev-badge   { background: var(--surface); border-color: var(--border); color: var(--muted); }
+.ev-cc-request .ev-badge,
+.ev-cc-response .ev-badge   { background: #f0e8f8; border-color: #d0b8e8; color: #6a3a9a; }
+
+.ev-detail { color: var(--text); word-break: break-all; }
 
 /* Utility */
 .hidden { display: none !important; }

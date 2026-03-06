@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.agent import run_agent
+from core.events import bus
 from core.memory import clear_session, get_history, list_sessions
 from tools.projects import list_projects
 from tools.files import read_knowledge, update_knowledge, ALLOWED_FILES
@@ -145,9 +146,58 @@ async def put_knowledge_file(file_key: str, body: KnowledgeUpdate):
     return result
 
 
+# ── Prompt parts ─────────────────────────────────────────────────────────────
+
+_PROMPT_PARTS_DIR = Path(__file__).parent / "core" / "system_prompt_parts"
+
+
+@app.get("/api/prompt-parts")
+async def list_prompt_parts():
+    parts = [p.name for p in sorted(_PROMPT_PARTS_DIR.glob("*.md"))]
+    return {"parts": parts}
+
+
+@app.get("/api/prompt-parts/{name}")
+async def get_prompt_part(name: str):
+    path = _PROMPT_PARTS_DIR / name
+    if not path.exists() or path.suffix != ".md":
+        raise HTTPException(status_code=404, detail=f"Prompt part '{name}' not found")
+    return {"name": name, "content": path.read_text(encoding="utf-8")}
+
+
+class PromptPartUpdate(BaseModel):
+    content: str
+
+
+@app.put("/api/prompt-parts/{name}")
+async def put_prompt_part(name: str, body: PromptPartUpdate):
+    path = _PROMPT_PARTS_DIR / name
+    if not path.exists() or path.suffix != ".md":
+        raise HTTPException(status_code=404, detail=f"Prompt part '{name}' not found")
+    path.write_text(body.content, encoding="utf-8")
+    bus.publish({"type": "prompt_part_updated", "name": name, "chars": len(body.content)})
+    return {"updated": name}
+
+
+# ── Events stream ────────────────────────────────────────────────────────────
+
+async def _event_stream():
+    async for event in bus.subscribe():
+        yield f"data: {json.dumps(event)}\n\n"
+
+
+@app.get("/api/events")
+async def events_stream():
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Claude Code Chat ──────────────────────────────────────────────────────────
 
-_CC_HISTORY_FILE = Path(__file__).parent / "data" / "cc_history.json"
+_CC_HISTORY_FILE = Path(__file__).parent.parent / ".user-data" / "cc_history.json"
 _cc_lock = threading.Lock()
 
 
@@ -185,6 +235,8 @@ async def _stream_cc_chat(message: str, session_id: Optional[str] = None):
     can pass it back on the next turn (Option B session management).
     """
     try:
+        bus.publish({"type": "cc_request", "session_id": session_id, "message": message})
+
         cmd = [CLAUDE_BIN]
         if session_id:
             cmd += ["--resume", session_id]
@@ -225,6 +277,7 @@ async def _stream_cc_chat(message: str, session_id: Optional[str] = None):
                 final_sid = event.get("session_id", "") or final_sid
                 if final_sid:
                     yield f"data: {json.dumps({'type': 'session_id', 'session_id': final_sid})}\n\n"
+                bus.publish({"type": "cc_response", "session_id": final_sid, "chars": len(full_response)})
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
             elif etype == "system":
                 pass  # session info at startup — ignore
