@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "Read(*)",
+      "WebFetch(*)",
+      "WebSearch(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)"
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>lifeos</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>lifeos</h1>
+      </div>
+
+      <section class="sidebar-section">
+        <h2>Projects</h2>
+        <ul id="project-list"><li class="empty">No projects yet</li></ul>
+      </section>
+
+      <section class="sidebar-section">
+        <h2>Knowledge</h2>
+        <ul id="knowledge-list">
+          <li><a href="#" data-file="identity">Identity</a></li>
+          <li><a href="#" data-file="routines">Routines</a></li>
+          <li><a href="#" data-file="services">Services</a></li>
+          <li><a href="#" data-file="tools">Tools</a></li>
+          <li><a href="#" data-file="integrations">Integrations</a></li>
+        </ul>
+      </section>
+
+      <div class="sidebar-footer">
+        <button id="clear-btn" title="Clear conversation">↺ New chat</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main id="main">
+      <div id="messages"></div>
+      <div id="input-area">
+        <textarea id="input" placeholder="Ask your agent anything…" rows="1"></textarea>
+        <button id="send-btn">Send</button>
+      </div>
+    </main>
+
+    <!-- Inspector / Claude Code sidecar -->
+    <aside id="inspector">
+      <!-- Tab bar -->
+      <div class="isp-tabbar">
+        <button class="isp-tab active" data-tab="inspector">Inspector</button>
+        <button class="isp-tab" data-tab="cc">Claude Code</button>
+        <button id="inspector-copy" title="Copy JSON">Copy</button>
+      </div>
+
+      <!-- Inspector panel -->
+      <div id="inspector-panel">
+        <div id="inspector-body">
+          <span class="inspector-empty">Request JSON will appear here after you send a message.</span>
+        </div>
+      </div>
+
+      <!-- Claude Code chat panel -->
+      <div id="cc-panel" class="hidden">
+        <div id="cc-messages"></div>
+        <div id="cc-input-area">
+          <textarea id="cc-input" placeholder="Ask Claude Code about lifeos…" rows="1"></textarea>
+          <button id="cc-send">Send</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
