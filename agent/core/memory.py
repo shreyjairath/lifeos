@@ -192,14 +192,14 @@ def get_session_meta(conv_id: str, session_id: str) -> dict:
         return _load_meta(conv_id).get("session_meta", {}).get(session_id, {})
 
 
-def update_session_meta(conv_id: str, session_id: str, tokens_delta: int = 0) -> None:
+def update_session_meta(conv_id: str, session_id: str, input_tokens: int = 0) -> None:
     with _lock:
         meta = _load_meta(conv_id)
         entry = meta.setdefault("session_meta", {}).setdefault(session_id, {
-            "total_tokens": 0, "created_at": time.time(),
+            "created_at": time.time(),
         })
         entry["last_message_at"] = time.time()
-        entry["total_tokens"] = entry.get("total_tokens", 0) + tokens_delta
+        entry["last_input_tokens"] = input_tokens
         _save_meta(conv_id, meta)
 
 

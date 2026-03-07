@@ -9,47 +9,10 @@ from core.events import bus
 from core.knowledge import prepare_system_prompt
 from core.memory import (
     append_message, get_history, get_session_meta, update_session_meta,
-    new_session, summaries_dir, get_conv_summary, write_conv_summary,
+    new_session,
 )
+from core.reflection import rotation_reflect
 from core.tools import TOOLS, dispatch_tool
-
-_HAIKU_MODEL = "claude-haiku-4-5-20251001"
-
-_SUMMARIZE_SYSTEM = """\
-Summarize this conversation session in 2-3 concise paragraphs for archival purposes.
-Focus on: what was discussed, decisions made, open threads. Write in second person \
-("You were discussing...", "The user asked..."). Be specific — include names, numbers, \
-and concrete details. Omit small talk.\
-"""
-
-_CONV_SUMMARIZE_SYSTEM = """\
-You maintain a running summary of an ongoing conversation between a user and their personal AI agent.
-Given the current summary (if any) and a new session transcript, produce an updated summary that merges both.
-Capture: topics discussed, decisions made, actions taken, open threads, and key facts or preferences revealed.
-Write in second person ("You discussed...", "The user wants...").
-Be specific — include names, numbers, dates, concrete details.
-Aim for 3-6 paragraphs. Drop stale details that are no longer relevant. Omit small talk.\
-"""
-
-_REFLECT_TOOLS = [t for t in TOOLS if t["name"] in {
-    "update_knowledge", "create_project", "update_project", "write_file", "update_file",
-}]
-
-_REFLECT_SYSTEM = """\
-You are a memory agent. Review this conversation and persist any new, lasting information \
-to the user's knowledge base or projects using your tools.
-
-Persist:
-- New facts about the user (values, preferences, context) → update_knowledge("identity")
-- Routine or habit changes → update_knowledge("routines")
-- New services or tools mentioned → update_knowledge("services") or update_knowledge("tools")
-- Project progress or new projects → update_project / create_project
-- Notes or documents the user wants saved → write_file / update_file
-
-Only persist information that is genuinely new or changed. Skip anything already known.
-After updating, respond with a short bullet list of what you saved. \
-If nothing was worth persisting, respond with exactly: nothing to save.\
-"""
 
 def _prepare_messages(messages: list) -> list:
     """Pass full history, trimming only a leading orphaned tool_result if needed."""
@@ -92,8 +55,8 @@ def _check_rotation(conv_id: str, session_id: str, config: dict) -> tuple[bool, 
     if not meta:
         return False, ""
 
-    if meta.get("total_tokens", 0) >= token_threshold:
-        return True, f"token threshold ({token_threshold:,} tokens)"
+    if meta.get("last_input_tokens", 0) >= token_threshold:
+        return True, f"context window ({meta['last_input_tokens']:,} input tokens)"
 
     last_msg = meta.get("last_message_at")
     if last_msg and (time.time() - last_msg) >= time_threshold_hours * 3600:
@@ -114,7 +77,7 @@ async def _run_agent_inner(
     if should_rotate:
         old_history = get_history(conv_id, session_id)
         bus.publish({"type": "session_rotate", "session_id": session_id, "reason": reason})
-        async for chunk in _rotation_reflect(conv_id, old_history, config):
+        async for chunk in rotation_reflect(conv_id, old_history, config):
             yield chunk
         session_id = new_session(conv_id)
         yield f"data: {json.dumps({'type': 'session_rotated', 'session_id': session_id, 'reason': reason})}\n\n"
@@ -199,9 +162,8 @@ async def _run_agent_inner(
             ],
         }
         yield f"data: {json.dumps({'type': 'response_json', 'payload': response_payload})}\n\n"
-        turn_tokens = final_message.usage.input_tokens + final_message.usage.output_tokens
         bus.publish({"type": "llm_response", "stop_reason": stop_reason, "input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens})
-        update_session_meta(conv_id, session_id, tokens_delta=turn_tokens)
+        update_session_meta(conv_id, session_id, input_tokens=final_message.usage.input_tokens)
 
         assistant_content = []
         if full_text:
@@ -235,109 +197,3 @@ async def _run_agent_inner(
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
-def _build_transcript(history: list) -> str:
-    lines = []
-    for msg in history:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            lines.append(f"{role.upper()}: {content}")
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    lines.append(f"{role.upper()}: {block['text']}")
-    return "\n\n".join(lines)
-
-
-async def _rotation_reflect(
-    conv_id: str,
-    history: list,
-    config: dict,
-) -> AsyncGenerator[str, None]:
-    """Full 3-tier reflection at session rotation: KB update, session archive, conv summary."""
-    transcript = _build_transcript(history)
-    if not transcript:
-        return
-
-    # Tier 1: knowledge base update (same as per-turn reflection)
-    async for chunk in _reflect(history, config):
-        yield chunk
-
-    # Tiers 2 & 3: session archive + rolling conversation summary
-    try:
-        client = anthropic.Anthropic()
-
-        # Tier 2: archive this session as a timestamped file
-        session_resp = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_SUMMARIZE_SYSTEM,
-            messages=[{"role": "user", "content": transcript}],
-            max_tokens=1024,
-        )
-        session_summary = "".join(b.text for b in session_resp.content if hasattr(b, "text")).strip()
-        if session_summary:
-            sdir = summaries_dir(conv_id)
-            sdir.mkdir(parents=True, exist_ok=True)
-            (sdir / f"{int(time.time())}.md").write_text(session_summary, encoding="utf-8")
-            bus.publish({"type": "session_summary_written", "chars": len(session_summary)})
-
-        # Tier 3: update rolling conversation-level summary
-        existing = get_conv_summary(conv_id)
-        user_content = f"New session transcript:\n\n{transcript}"
-        if existing:
-            user_content = f"Existing summary:\n\n{existing}\n\n---\n\n{user_content}"
-        conv_resp = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_CONV_SUMMARIZE_SYSTEM,
-            messages=[{"role": "user", "content": user_content}],
-            max_tokens=1024,
-        )
-        conv_summary = "".join(b.text for b in conv_resp.content if hasattr(b, "text")).strip()
-        if conv_summary:
-            write_conv_summary(conv_id, conv_summary)
-            bus.publish({"type": "conv_summary_updated", "chars": len(conv_summary)})
-    except Exception as e:
-        bus.publish({"type": "error", "text": f"Rotation reflection failed: {e}"})
-
-
-async def _reflect(history: list, config: dict) -> AsyncGenerator[str, None]:
-    transcript = _build_transcript(history)
-    if not transcript:
-        return
-
-    client = anthropic.Anthropic()
-    messages = [{"role": "user", "content": "Conversation to reflect on:\n\n" + transcript}]
-
-    response = client.messages.create(
-        model=_HAIKU_MODEL,
-        system=_REFLECT_SYSTEM,
-        tools=_REFLECT_TOOLS,
-        messages=messages,
-        max_tokens=2048,
-    )
-
-    tool_results = []
-    for block in response.content:
-        if block.type == "tool_use":
-            result = dispatch_tool(block.name, block.input, config)
-            bus.publish({"type": "tool_result", "name": block.name, "result": result})
-            tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result)})
-
-    if tool_results:
-        followup = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_REFLECT_SYSTEM,
-            tools=_REFLECT_TOOLS,
-            messages=messages + [
-                {"role": "assistant", "content": response.content},
-                {"role": "user", "content": tool_results},
-            ],
-            max_tokens=512,
-        )
-        summary = "".join(b.text for b in followup.content if hasattr(b, "text")).strip()
-    else:
-        summary = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
-
-    if summary and summary.lower() != "nothing to save":
-        bus.publish({"type": "reflection", "summary": summary})
-        yield f"data: {json.dumps({'type': 'reflection', 'text': summary})}\n\n"

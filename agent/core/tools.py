@@ -5,6 +5,7 @@ from tools.projects import create_project, list_projects, update_project, read_p
 from tools.files import read_knowledge, update_knowledge, set_onboarding_status
 from tools.fs import write_file, read_file, update_file, list_dir
 from tools.web import web_search
+from tools.browse import browse_page
 from tools.claude_code import run_claude_code
 
 TOOLS: list[dict] = [
@@ -51,6 +52,17 @@ TOOLS: list[dict] = [
                 "name": {"type": "string", "description": "Project name or slug"},
             },
             "required": ["name"],
+        },
+    },
+    {
+        "name": "browse_page",
+        "description": "Fetch and read the content of a web page. Use after web_search when you need the full content of a specific URL, not just a snippet. Also use when given a direct URL to retrieve listings, articles, or any web content.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Full URL to fetch (must start with http:// or https://)"},
+            },
+            "required": ["url"],
         },
     },
     {
@@ -202,6 +214,8 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
         return update_project(tool_input["name"], tool_input["update"], config)
     elif tool_name == "read_project":
         return read_project(tool_input["name"], config)
+    elif tool_name == "browse_page":
+        return browse_page(tool_input["url"])
     elif tool_name == "web_search":
         return web_search(tool_input["query"])
     elif tool_name == "read_knowledge":

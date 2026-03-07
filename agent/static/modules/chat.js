@@ -88,17 +88,28 @@ export function removeTypingIndicator() {
   if (el) el.remove();
 }
 
+function toolSummary(name, input) {
+  switch (name) {
+    case "web_search":    return `web_search  "${input.query}"`;
+    case "browse_page":   return `browse  ${input.url}`;
+    case "create_project":
+    case "update_project":
+    case "read_project":  return `${name}  ${input.name}`;
+    case "update_knowledge": return `update_knowledge  ${input.file}`;
+    case "read_knowledge":   return `read_knowledge  ${input.file}`;
+    case "write_file":
+    case "read_file":
+    case "update_file":   return `${name}  ${input.path ?? input.name ?? ""}`;
+    case "list_projects": return "list_projects";
+    case "list_dir":      return `list_dir  ${input.path ?? ""}`;
+    default:              return name;
+  }
+}
+
 function addToolBlock(name, input) {
   const block = document.createElement("div");
   block.className = "tool-block";
-  const nameEl = document.createElement("div");
-  nameEl.className = "tool-name";
-  nameEl.textContent = `⚙ ${name}`;
-  const detail = document.createElement("div");
-  detail.className = "tool-detail";
-  detail.textContent = JSON.stringify(input, null, 2);
-  block.appendChild(nameEl);
-  block.appendChild(detail);
+  block.textContent = `⚙ ${toolSummary(name, input)}`;
   return block;
 }
 
@@ -215,6 +226,8 @@ async function sendMessage(getIds, onProjectRefresh) {
           scrollToBottom();
         } else if (event.type === "tool_call") {
           removeTypingIndicator();
+          currentAgentBubble = null;
+          currentAgentText = "";
           if (!currentMsgEl) {
             currentMsgEl = document.createElement("div");
             currentMsgEl.className = "msg agent";

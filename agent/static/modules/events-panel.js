@@ -36,26 +36,12 @@ export function appendEvent(event) {
   eventsBody.scrollTop = eventsBody.scrollHeight;
 }
 
-export async function connect() {
-  try {
-    const resp = await fetch("/api/events");
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr) continue;
-        try { appendEvent(JSON.parse(jsonStr)); } catch { }
-      }
-    }
-  } catch (e) {
-    console.error("Event stream disconnected", e);
-  }
+export function connect() {
+  const source = new EventSource("/api/events");
+  source.onmessage = (e) => {
+    try { appendEvent(JSON.parse(e.data)); } catch {}
+  };
+  source.onerror = () => {
+    // EventSource auto-reconnects on error
+  };
 }
