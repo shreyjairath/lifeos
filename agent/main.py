@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,10 @@ from pydantic import BaseModel
 
 from core.agent import run_agent
 from core.events import bus
-from core.memory import clear_session, get_history, list_sessions
+from core.memory import (
+    clear_session, get_display_history, get_all_display_history, list_conversations,
+    get_or_create_for_project, get_or_create_main, truncate_session,
+)
 from tools.projects import list_projects
 from tools.files import read_knowledge, update_knowledge, ALLOWED_FILES
 
@@ -49,7 +53,13 @@ def _find_claude() -> str:
 
 CLAUDE_BIN = _find_claude()
 
-app = FastAPI(title="lifeos agent")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    bus.shutdown()
+
+
+app = FastAPI(title="lifeos agent", lifespan=lifespan)
 
 # Serve static files
 _static_dir = Path(__file__).parent / "static"
@@ -64,52 +74,65 @@ async def index():
 # ── Chat ────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    session_id: str = "default"
+    conv_id: str
+    session_id: str
     message: str
 
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     return StreamingResponse(
-        run_agent(req.session_id, req.message, CONFIG),
+        run_agent(req.conv_id, req.session_id, req.message, CONFIG),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-@app.get("/api/chat/sessions")
-async def get_sessions():
-    return {"sessions": list_sessions()}
+@app.get("/api/chat/{conv_id}")
+async def get_all_chat_history(conv_id: str):
+    return get_all_display_history(conv_id)
 
 
-@app.get("/api/chat/{session_id}")
-async def get_chat_history(session_id: str):
-    """Return persisted messages for a session (text turns only, for rendering)."""
-    history = get_history(session_id)
-    # Extract only text content for display
-    display = []
-    for msg in history:
-        if msg["role"] in ("user", "assistant"):
-            content = msg["content"]
-            if isinstance(content, str):
-                display.append({"role": msg["role"], "text": content})
-            elif isinstance(content, list):
-                text = " ".join(
-                    b["text"] for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-                if text:
-                    display.append({"role": msg["role"], "text": text})
-    return {"session_id": session_id, "messages": display}
+@app.get("/api/chat/{conv_id}/{session_id}")
+async def get_chat_history(conv_id: str, session_id: str):
+    display, total = get_display_history(conv_id, session_id)
+    return {"conv_id": conv_id, "session_id": session_id, "messages": display, "total": total}
 
 
-@app.delete("/api/chat/{session_id}")
-async def clear_chat(session_id: str):
-    clear_session(session_id)
+@app.delete("/api/chat/{conv_id}/{session_id}")
+async def clear_chat(conv_id: str, session_id: str):
+    clear_session(conv_id, session_id)
     return {"cleared": session_id}
+
+
+class TruncateRequest(BaseModel):
+    index: int
+
+
+@app.post("/api/chat/{conv_id}/{session_id}/truncate")
+async def truncate_chat(conv_id: str, session_id: str, body: TruncateRequest):
+    remaining = truncate_session(conv_id, session_id, body.index)
+    return {"session_id": session_id, "remaining": remaining}
+
+
+# ── Conversations ─────────────────────────────────────────────────────────────
+
+@app.get("/api/conversations")
+async def get_conversations():
+    return {"conversations": list_conversations()}
+
+
+@app.post("/api/conversations/for-project")
+async def conversation_for_project(body: dict):
+    project_name = body.get("project_name", "")
+    conv_id, session_id = get_or_create_for_project(project_name)
+    return {"conv_id": conv_id, "session_id": session_id}
+
+
+@app.get("/api/conversations/main")
+async def get_main_conversation():
+    conv_id, session_id = get_or_create_main()
+    return {"conv_id": conv_id, "session_id": session_id}
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────
@@ -268,11 +291,10 @@ async def _stream_cc_chat(message: str, session_id: Optional[str] = None):
             etype = event.get("type")
             if etype == "assistant":
                 for block in event.get("message", {}).get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text", "")
-                        if text:
-                            full_response += text
-                            yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            full_response += block.get("text", "")
+                        yield f"data: {json.dumps({'type': 'cc_block', 'block': block})}\n\n"
             elif etype == "result":
                 final_sid = event.get("session_id", "") or final_sid
                 if final_sid:

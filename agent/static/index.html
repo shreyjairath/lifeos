@@ -14,6 +14,12 @@
         <h1>lifeos</h1>
       </div>
 
+      <div class="sidebar-spacer"></div>
+
+      <a href="#" id="main-conv-btn" class="main-conv-link">⌂ Main</a>
+
+      <hr class="sidebar-divider">
+
       <section class="sidebar-section">
         <h2>Projects</h2>
         <ul id="project-list"><li class="empty">No projects yet</li></ul>
@@ -30,9 +36,6 @@
         </ul>
       </section>
 
-      <div class="sidebar-footer">
-        <button id="clear-btn" title="Clear conversation">↺ New chat</button>
-      </div>
     </aside>
 
     <!-- Main -->
@@ -91,6 +94,7 @@
     </aside>
   </div>
 
-  <script src="/static/app.js"></script>
+  <ul id="conv-list" style="display:none"></ul>
+  <script type="module" src="/static/app.js"></script>
 </body>
 </html>

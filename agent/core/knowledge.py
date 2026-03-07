@@ -15,12 +15,12 @@ def _prepare_knowledge() -> str:
     parts = [
         _read_dir(USER_DATA / "environment", "Environment"),
         _read_dir(USER_DATA / "user", "About User"),
-        _read_projects(USER_DATA / "user" / "projects"),
+        _read_projects(USER_DATA / "projects"),
     ]
     return "\n\n".join(p for p in parts if p)
 
 
-def prepare_system_prompt(config: dict) -> str:
+def prepare_system_prompt(config: dict, conv_id: str = None) -> str:
     """Assemble the full system prompt from knowledge files and prompt parts.
 
     Loads user and environment knowledge, checks onboarding status, and
@@ -32,16 +32,49 @@ def prepare_system_prompt(config: dict) -> str:
     knowledge = _prepare_knowledge()
     incomplete_onboarding = _incomplete_onboarding_topics()
 
+    session_context = _load_session_context(conv_id)
+
     if incomplete_onboarding:
         onboarding_block = _onboarding_prompt(incomplete_onboarding)
         system = f"{_load_part('persona.md')}\n\n{knowledge}\n\n{onboarding_block}"
     else:
         system = f"{_load_part('persona.md')}\n\n{knowledge}"
 
+    if session_context:
+        system += f"\n\n{session_context}"
+
     system = system.strip()
     bus.publish({"type": "system_prompt", "chars": len(system)})
     bus.publish({"type": "boot_done"})
     return system
+
+
+def _load_session_context(conv_id: str = None) -> str:
+    if not conv_id:
+        return ""
+    from core.memory import get_conv_summary, summaries_dir
+    sections = []
+
+    conv_summary = get_conv_summary(conv_id)
+    if conv_summary:
+        bus.publish({"type": "knowledge_file", "file": "conv_summary", "label": "Conversation Summary", "status": "loaded", "chars": len(conv_summary)})
+        sections.append(f"## Conversation Summary\n\n{conv_summary}")
+
+    sdir = summaries_dir(conv_id)
+    if sdir.exists():
+        files = sorted(sdir.glob("*.md"))
+        if files:
+            import datetime
+            last = files[-1]
+            content = last.read_text(encoding="utf-8").strip()
+            if content:
+                date_str = datetime.datetime.fromtimestamp(int(last.stem)).strftime("%b %d, %Y %H:%M")
+                bus.publish({"type": "knowledge_file", "file": "last_session", "label": "Last Session", "status": "loaded", "chars": len(content)})
+                sections.append(f"## Last Session — {date_str}\n\n{content}")
+
+    if not sections:
+        return ""
+    return "# Session Context\n\n" + "\n\n".join(sections)
 
 
 def _incomplete_onboarding_topics() -> list[str]:

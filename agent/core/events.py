@@ -10,6 +10,7 @@ class EventBus:
     def __init__(self):
         self._subscribers: list[asyncio.Queue] = []
         self._history: list[dict] = []
+        self._shutdown = False
 
     def publish(self, event: dict[str, Any]) -> None:
         self._history.append(event)
@@ -21,17 +22,26 @@ class EventBus:
             except asyncio.QueueFull:
                 pass
 
+    def shutdown(self) -> None:
+        self._shutdown = True
+        for q in self._subscribers:
+            try:
+                q.put_nowait(None)  # sentinel to unblock q.get()
+            except asyncio.QueueFull:
+                pass
+
     async def subscribe(self) -> AsyncGenerator[dict, None]:
         q: asyncio.Queue = asyncio.Queue(maxsize=512)
-        for event in self._history:
-            q.put_nowait(event)
         self._subscribers.append(q)
         try:
             while True:
                 event = await q.get()
+                if event is None:
+                    break
                 yield event
         finally:
-            self._subscribers.remove(q)
+            if q in self._subscribers:
+                self._subscribers.remove(q)
 
 
 bus = EventBus()

@@ -7,7 +7,7 @@ from tools.files import USER_DATA
 
 
 def _projects_dir(config: dict) -> Path:
-    return USER_DATA / "user" / "projects"
+    return USER_DATA / "projects"
 
 
 def _slugify(name: str) -> str:

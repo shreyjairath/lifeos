@@ -33,7 +33,9 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
 .sidebar-header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.05em; color: var(--accent); }
 
-.sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); flex: 1; min-height: 0; overflow-y: auto; }
+.sidebar-spacer { flex: 1; }
+.sidebar-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
 .sidebar-section h2 { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
 .sidebar-section ul { list-style: none; }
 .sidebar-section li { margin-bottom: 4px; }
@@ -45,21 +47,15 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 }
 .sidebar-section li a:hover, .sidebar-section li.project-item:hover { background: var(--border); }
 .sidebar-section li.empty { color: var(--muted); font-size: 12px; padding: 4px 8px; }
+.active-conv { background: var(--accent-dim) !important; font-weight: 600; }
 .project-status { font-size: 10px; color: var(--muted); margin-top: 1px; }
 
-.sidebar-footer {
-  padding: 0 16px;
-  min-height: 79px;
-  display: flex;
-  align-items: center;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
+a.main-conv-link {
+  display: block; padding: 5px 24px; font-size: 14px;
+  color: var(--text); text-decoration: none; border-radius: 5px;
+  transition: background 0.1s;
 }
-#clear-btn {
-  background: none; border: 1px solid var(--border); color: var(--muted);
-  padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; width: 100%;
-}
-#clear-btn:hover { border-color: var(--accent); color: var(--accent); }
+a.main-conv-link:hover { background: var(--border); }
 
 /* ── Main ── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -187,7 +183,42 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .msg.user .bubble { background: var(--user-bubble); border: 1px solid var(--border); }
 .msg.agent .bubble { background: var(--agent-bubble); border: 1px solid var(--border); }
 
-.msg-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; letter-spacing: 0.06em; text-transform: uppercase; }
+.msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.msg-label { font-size: 10px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+
+.rewind-btn {
+  display: none;
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: 11px; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  line-height: 1.4; transition: color 0.1s, border-color 0.1s;
+}
+.msg:hover .rewind-btn { display: inline-block; }
+.rewind-btn:hover { color: #c0392b; border-color: #c0392b; }
+
+/* ── Session divider ── */
+.session-divider {
+  text-align: center; font-size: 11px; color: var(--muted);
+  border-top: 1px solid var(--border); padding-top: 8px; margin: 12px 0 4px;
+}
+
+/* ── Reflection / memory ── */
+.reflection-msg {
+  align-self: flex-start;
+  max-width: 720px; width: 100%;
+  padding: 8px 14px;
+  background: #f0ece5;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.reflection-label {
+  display: inline-block;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--accent);
+  margin-right: 8px;
+}
 
 /* ── Tool indicators ── */
 .tool-block {
@@ -215,6 +246,9 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .bubble ul, .bubble ol { padding-left: 20px; margin: 4px 0; }
 .bubble li { margin: 2px 0; }
 .bubble h1, .bubble h2, .bubble h3 { margin: 8px 0 4px; }
+.bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.bubble th, .bubble td { border: 1px solid var(--border); padding: 5px 10px; }
+.bubble th { background: var(--surface); font-weight: 600; }
 
 /* ── Input area ── */
 #input-area {
@@ -286,6 +320,13 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .cc-bubble em { font-style: italic; }
 .cc-bubble ul, .cc-bubble ol { padding-left: 18px; margin: 3px 0; }
 .cc-bubble li { margin: 1px 0; }
+
+.cc-block-meta {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 8px; margin-top: 6px;
+  white-space: pre-wrap; word-break: break-all;
+}
 
 #cc-input-area {
   padding: 10px 12px 14px;
