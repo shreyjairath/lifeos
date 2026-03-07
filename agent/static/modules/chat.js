@@ -8,6 +8,7 @@ const sendBtn = document.getElementById("send-btn");
 let currentAgentBubble = null;
 let currentAgentText = "";
 let currentMsgEl = null;
+let currentToolBlock = null;
 let historyIndex = 0;
 let _getIds = () => ({ convId: null, sessionId: null });
 let _onRotate = (_newSessionId) => {};
@@ -204,6 +205,7 @@ async function sendMessage(getIds, onProjectRefresh) {
           resolveWithResponse(event.payload);
         } else if (event.type === "text") {
           removeTypingIndicator();
+          currentToolBlock = null;
           if (!currentMsgEl) {
             currentMsgEl = document.createElement("div");
             currentMsgEl.className = "msg agent";
@@ -240,7 +242,12 @@ async function sendMessage(getIds, onProjectRefresh) {
             currentMsgEl.appendChild(header);
             messagesEl.appendChild(currentMsgEl);
           }
-          currentMsgEl.appendChild(addToolBlock(event.name, event.input));
+          if (!currentToolBlock) {
+            currentToolBlock = addToolBlock(event.name, event.input);
+            currentMsgEl.appendChild(currentToolBlock);
+          } else {
+            currentToolBlock.textContent = `⚙ ${toolSummary(event.name, event.input)}`;
+          }
           scrollToBottom();
         } else if (event.type === "tool_result") {
           if (["create_project", "update_project", "list_projects"].includes(event.name)) {
@@ -259,6 +266,7 @@ async function sendMessage(getIds, onProjectRefresh) {
           currentMsgEl = null;
           currentAgentBubble = null;
           currentAgentText = "";
+          currentToolBlock = null;
           fetch(`/api/chat/${convId}/${sessionId}`)
             .then(r => r.json())
             .then(d => { historyIndex = d.total ?? historyIndex; })
@@ -280,6 +288,7 @@ export function reset(convId, sessionId) {
   currentAgentBubble = null;
   currentAgentText = "";
   currentMsgEl = null;
+  currentToolBlock = null;
   messagesEl.innerHTML = "";
 }
 

@@ -65,7 +65,7 @@ lifeos/
 cd agent
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=your_key_here
-uvicorn main:app --reload
+python run.py
 # Open http://localhost:8000
 ```
 

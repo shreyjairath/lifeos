@@ -13,6 +13,8 @@ _HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 _REFLECT_TOOLS = [t for t in TOOLS if t["name"] in {
     "update_knowledge", "create_project", "update_project", "write_file", "update_file",
+    "list_projects", "read_project",
+    "add_project_file", "read_project_file", "update_project_file", "delete_project_file",
 }]
 
 _REFLECT_SYSTEM = """\
@@ -23,8 +25,14 @@ Persist:
 - New facts about the user (values, preferences, context) → update_knowledge("identity")
 - Routine or habit changes → update_knowledge("routines")
 - New services or tools mentioned → update_knowledge("services") or update_knowledge("tools")
-- Project progress or new projects → update_project / create_project
 - Notes or documents the user wants saved → write_file / update_file
+
+Additionally, for every project touched in this session (or any active project whose state changed):
+1. Call list_projects to find relevant projects, then read_project to get current content.
+2. Rewrite the `snapshot` section with the current state of the project as of this session.
+3. Rewrite the `next_action` section with the clearest next step going forward.
+4. If the project's background or constraints changed, rewrite `context` too.
+These three sections are how continuity is maintained across sessions — always keep them current.
 
 Only persist information that is genuinely new or changed. Skip anything already known.
 After updating, respond with a short bullet list of what you saved. \

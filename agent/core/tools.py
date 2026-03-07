@@ -1,7 +1,10 @@
 """Tool definitions and dispatch for the agent."""
 from typing import Any
 
-from tools.projects import create_project, list_projects, update_project, read_project
+from tools.projects import (
+    create_project, list_projects, update_project, read_project,
+    add_project_file, read_project_file, update_project_file, delete_project_file,
+)
 from tools.files import read_knowledge, update_knowledge, set_onboarding_status
 from tools.fs import write_file, read_file, update_file, list_dir
 from tools.web import web_search
@@ -11,17 +14,13 @@ from tools.claude_code import run_claude_code
 TOOLS: list[dict] = [
     {
         "name": "create_project",
-        "description": "Create a new project with a goal and optional initial tasks. Use when the user wants to start tracking a new goal or initiative.",
+        "description": "Create a new project with a goal and optional context. Use when the user wants to start tracking a new goal or initiative.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Short project name"},
                 "goal": {"type": "string", "description": "What success looks like"},
-                "tasks": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Initial task list (optional)",
-                },
+                "context": {"type": "string", "description": "Background, constraints, and why this matters (optional)"},
             },
             "required": ["name", "goal"],
         },
@@ -33,14 +32,19 @@ TOOLS: list[dict] = [
     },
     {
         "name": "update_project",
-        "description": "Add a progress update, note, or status change to a project.",
+        "description": "Update a specific section of a project. Use 'log' to append a dated entry; use other sections to overwrite in place.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Project name or slug"},
-                "update": {"type": "string", "description": "The update or note to append"},
+                "section": {
+                    "type": "string",
+                    "enum": ["context", "snapshot", "next_action", "waiting_on", "files", "log"],
+                    "description": "Which section to update",
+                },
+                "content": {"type": "string", "description": "New content for the section (log entries are appended with today's date)"},
             },
-            "required": ["name", "update"],
+            "required": ["name", "section", "content"],
         },
     },
     {
@@ -52,6 +56,57 @@ TOOLS: list[dict] = [
                 "name": {"type": "string", "description": "Project name or slug"},
             },
             "required": ["name"],
+        },
+    },
+    {
+        "name": "add_project_file",
+        "description": "Create a new file inside a project folder and register it in the project's Files section.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Filename (e.g. notes.md)"},
+                "description": {"type": "string", "description": "One-line description for the Files section"},
+                "content": {"type": "string", "description": "Full file content"},
+            },
+            "required": ["project", "filename", "description", "content"],
+        },
+    },
+    {
+        "name": "read_project_file",
+        "description": "Read a file that lives inside a project folder.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Filename to read"},
+            },
+            "required": ["project", "filename"],
+        },
+    },
+    {
+        "name": "update_project_file",
+        "description": "Overwrite a file inside a project folder with new content.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Filename to update"},
+                "content": {"type": "string", "description": "New full content"},
+            },
+            "required": ["project", "filename", "content"],
+        },
+    },
+    {
+        "name": "delete_project_file",
+        "description": "Delete a file from a project folder and remove its entry from the project's Files section.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Filename to delete"},
+            },
+            "required": ["project", "filename"],
         },
     },
     {
@@ -205,15 +260,23 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
         return create_project(
             tool_input["name"],
             tool_input["goal"],
-            tool_input.get("tasks", []),
+            tool_input.get("context", ""),
             config,
         )
     elif tool_name == "list_projects":
         return list_projects(config)
     elif tool_name == "update_project":
-        return update_project(tool_input["name"], tool_input["update"], config)
+        return update_project(tool_input["name"], tool_input["section"], tool_input["content"], config)
     elif tool_name == "read_project":
         return read_project(tool_input["name"], config)
+    elif tool_name == "add_project_file":
+        return add_project_file(tool_input["project"], tool_input["filename"], tool_input["description"], tool_input["content"], config)
+    elif tool_name == "read_project_file":
+        return read_project_file(tool_input["project"], tool_input["filename"], config)
+    elif tool_name == "update_project_file":
+        return update_project_file(tool_input["project"], tool_input["filename"], tool_input["content"], config)
+    elif tool_name == "delete_project_file":
+        return delete_project_file(tool_input["project"], tool_input["filename"], config)
     elif tool_name == "browse_page":
         return browse_page(tool_input["url"])
     elif tool_name == "web_search":
