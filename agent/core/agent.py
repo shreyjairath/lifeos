@@ -13,6 +13,7 @@ from core.memory import (
 )
 from core.reflection import rotation_reflect
 from core.tools import TOOLS, dispatch_tool
+from core import confirmations, cancellation, hooks
 
 def _prepare_messages(messages: list) -> list:
     """Pass full history, trimming only a leading orphaned tool_result if needed."""
@@ -75,14 +76,16 @@ async def _run_agent_inner(
     # Check if session should be rotated
     should_rotate, reason = _check_rotation(conv_id, session_id, config)
     if should_rotate:
+        old_session_id = session_id
         old_history = get_history(conv_id, session_id)
-        bus.publish({"type": "session_rotate", "session_id": session_id, "reason": reason})
-        async for chunk in rotation_reflect(conv_id, old_history, config):
+        async for chunk in rotation_reflect(conv_id, old_history, config, pending_user_message=user_message, session_id=old_session_id):
             yield chunk
         session_id = new_session(conv_id)
         yield f"data: {json.dumps({'type': 'session_rotated', 'session_id': session_id, 'reason': reason})}\n\n"
+        await hooks.fire("on_session_rotate", conv_id=conv_id, old_session_id=old_session_id, new_session_id=session_id, reason=reason)
 
-    bus.publish({"type": "session_start", "session_id": session_id})
+    cancellation.clear(session_id)
+    await hooks.fire("on_agent_start", conv_id=conv_id, session_id=session_id, user_message=user_message)
     client = anthropic.Anthropic()
 
     system_prompt = prepare_system_prompt(config, conv_id)
@@ -91,6 +94,10 @@ async def _run_agent_inner(
     messages = _prepare_messages(get_history(conv_id, session_id))
 
     while True:
+        if cancellation.is_cancelled(session_id):
+            yield f"data: {json.dumps({'type': 'stopped'})}\n\n"
+            break
+
         full_text = ""
         tool_uses = []
         stop_reason = None
@@ -103,7 +110,7 @@ async def _run_agent_inner(
             "messages": messages,
         }
         yield f"data: {json.dumps({'type': 'request_json', 'payload': request_payload})}\n\n"
-        bus.publish({"type": "llm_request", "model": config["model"], "messages": len(messages)})
+        await hooks.fire("on_llm_call", conv_id=conv_id, session_id=session_id, message_count=len(messages), model=config["model"])
 
         with client.messages.stream(
             model=config["model"],
@@ -162,8 +169,11 @@ async def _run_agent_inner(
             ],
         }
         yield f"data: {json.dumps({'type': 'response_json', 'payload': response_payload})}\n\n"
-        bus.publish({"type": "llm_response", "stop_reason": stop_reason, "input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens})
         update_session_meta(conv_id, session_id, input_tokens=final_message.usage.input_tokens)
+        await hooks.fire("on_llm_response", conv_id=conv_id, session_id=session_id,
+                         input_tokens=final_message.usage.input_tokens,
+                         output_tokens=final_message.usage.output_tokens,
+                         stop_reason=stop_reason)
 
         assistant_content = []
         if full_text:
@@ -174,7 +184,6 @@ async def _run_agent_inner(
             if block.type == "tool_use":
                 parsed_tool_uses.append({"id": block.id, "name": block.name, "input": block.input})
                 assistant_content.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
-                bus.publish({"type": "tool_use", "name": block.name, "input": block.input})
 
         append_message(conv_id, session_id, {"role": "assistant", "content": assistant_content})
         messages = _prepare_messages(get_history(conv_id, session_id))
@@ -183,17 +192,43 @@ async def _run_agent_inner(
             break
 
         tool_results = []
-        for tu in parsed_tool_uses:
-            bus.publish({"type": "tool_call", "name": tu["name"], "input": tu["input"]})
-            result = dispatch_tool(tu["name"], tu["input"], config)
+        for i, tu in enumerate(parsed_tool_uses):
+            if cancellation.is_cancelled(session_id):
+                # Stub out all remaining tool uses so history stays valid
+                for remaining in parsed_tool_uses[i:]:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": remaining["id"],
+                        "content": json.dumps({"error": "Cancelled by user"}),
+                    })
+                append_message(conv_id, session_id, {"role": "user", "content": tool_results})
+                await hooks.fire("on_agent_done", conv_id=conv_id, session_id=session_id, stopped=True)
+                yield f"data: {json.dumps({'type': 'stopped'})}\n\n"
+                return
+
+            # on_pre_tool hook — return a dict to override execution
+            override = await hooks.fire("on_pre_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"])
+            if isinstance(override, dict):
+                result = override
+            elif confirmations.is_gated(tu["name"]):
+                req_id = confirmations.register()
+                yield f"data: {json.dumps({'type': 'tool_confirm_request', 'request_id': req_id, 'name': tu['name'], 'input': tu['input']})}\n\n"
+                approved = await confirmations.wait_for(req_id)
+                if not approved:
+                    result = {"error": f"User denied execution of {tu['name']}"}
+                    yield f"data: {json.dumps({'type': 'tool_confirm_denied', 'name': tu['name']})}\n\n"
+                else:
+                    result = dispatch_tool(tu["name"], tu["input"], config)
+            else:
+                result = dispatch_tool(tu["name"], tu["input"], config)
+
+            await hooks.fire("on_post_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"], result=result)
             yield f"data: {json.dumps({'type': 'tool_result', 'name': tu['name'], 'result': result})}\n\n"
-            bus.publish({"type": "tool_result", "name": tu["name"], "result": result})
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": json.dumps(result)})
 
         append_message(conv_id, session_id, {"role": "user", "content": tool_results})
         messages = _prepare_messages(get_history(conv_id, session_id))
 
-    bus.publish({"type": "session_end", "session_id": session_id})
+    stopped = cancellation.is_cancelled(session_id)
+    await hooks.fire("on_agent_done", conv_id=conv_id, session_id=session_id, stopped=stopped)
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-

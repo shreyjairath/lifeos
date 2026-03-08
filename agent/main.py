@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.agent import run_agent
+from core import confirmations, cancellation
 from core.events import bus
 from core.memory import (
     clear_session, get_display_history, get_all_display_history, list_conversations,
@@ -55,6 +56,19 @@ CLAUDE_BIN = _find_claude()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Connect to Chrome DevTools MCP in a background thread (non-blocking for startup)
+    def _init_chrome():
+        try:
+            from tools.chrome_mcp import connect, get_tool_definitions
+            from core.tools import TOOLS
+            if connect(timeout=60):
+                defs = get_tool_definitions()
+                TOOLS.extend(defs)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Chrome MCP init failed: %s", exc)
+
+    threading.Thread(target=_init_chrome, daemon=True).start()
     yield
     bus.shutdown()
 
@@ -207,6 +221,20 @@ async def put_prompt_part(name: str, body: PromptPartUpdate):
 async def _event_stream():
     async for event in bus.subscribe():
         yield f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/api/chat/{conv_id}/{session_id}/stop")
+async def stop_agent(conv_id: str, session_id: str):
+    cancellation.cancel(session_id)
+    return {"ok": True}
+
+
+@app.post("/api/tool-confirm/{req_id}")
+async def tool_confirm(req_id: str, body: dict):
+    ok = confirmations.resolve(req_id, body.get("approved", False))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Unknown confirmation request")
+    return {"ok": True}
 
 
 @app.get("/api/events")

@@ -216,13 +216,24 @@ def write_conv_summary(conv_id: str, content: str) -> None:
     p.write_text(content, encoding="utf-8")
 
 
+_DISPLAY_SESSIONS = 3
+
+
 def get_all_display_history(conv_id: str) -> dict:
-    """Return all sessions' messages in order with session metadata."""
+    """Return the last _DISPLAY_SESSIONS sessions as full messages.
+
+    If older sessions exist, includes the rolling conv summary so the frontend
+    can render a collapsed history card instead of loading all raw messages.
+    """
     meta = _load_meta(conv_id)
     current_session = meta.get("current_session", "")
     sessions = meta.get("sessions", [])
+
+    truncated = max(0, len(sessions) - _DISPLAY_SESSIONS)
+    visible = sessions[truncated:]
+
     result = []
-    for sid in sessions:
+    for sid in visible:
         messages = _load_session(conv_id, sid)
         display = []
         for i, msg in enumerate(messages):
@@ -243,7 +254,11 @@ def get_all_display_history(conv_id: str) -> dict:
             "total": len(messages),
             "messages": display,
         })
-    return {"sessions": result, "current_session": current_session}
+
+    response = {"sessions": result, "current_session": current_session, "truncated_sessions": truncated}
+    if truncated > 0:
+        response["conv_summary"] = get_conv_summary(conv_id)
+    return response
 
 
 def get_display_history(conv_id: str, session_id: str) -> tuple[list[dict], int]:

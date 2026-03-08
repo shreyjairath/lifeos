@@ -9,7 +9,12 @@ from tools.files import read_knowledge, update_knowledge, set_onboarding_status
 from tools.fs import write_file, read_file, update_file, list_dir
 from tools.web import web_search
 from tools.browse import browse_page
+from tools.browse_js import browse_page_js
 from tools.claude_code import run_claude_code
+from tools.run_python import run_python
+from tools.property_report import property_report
+from tools.media import show_image
+from tools.redfin import parse_redfin_listing
 
 TOOLS: list[dict] = [
     {
@@ -60,58 +65,69 @@ TOOLS: list[dict] = [
     },
     {
         "name": "add_project_file",
-        "description": "Create a new file inside a project folder and register it in the project's Files section.",
+        "description": "Attach a named document to a project. Use when a project needs structured data that would clutter project.md — e.g. a property shortlist, a workout plan, a spec doc.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project name or slug"},
-                "filename": {"type": "string", "description": "Filename (e.g. notes.md)"},
-                "description": {"type": "string", "description": "One-line description for the Files section"},
-                "content": {"type": "string", "description": "Full file content"},
+                "name": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Name for the document (e.g. shortlist.md)"},
+                "description": {"type": "string", "description": "One-line description of what this document contains"},
+                "content": {"type": "string", "description": "Full document content"},
             },
-            "required": ["project", "filename", "description", "content"],
+            "required": ["name", "filename", "description", "content"],
         },
     },
     {
         "name": "read_project_file",
-        "description": "Read a file that lives inside a project folder.",
+        "description": "Read a document attached to a project.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project name or slug"},
-                "filename": {"type": "string", "description": "Filename to read"},
+                "name": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Document name to read"},
             },
-            "required": ["project", "filename"],
+            "required": ["name", "filename"],
         },
     },
     {
         "name": "update_project_file",
-        "description": "Overwrite a file inside a project folder with new content.",
+        "description": "Overwrite a document attached to a project with new content.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project name or slug"},
-                "filename": {"type": "string", "description": "Filename to update"},
+                "name": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Document name to update"},
                 "content": {"type": "string", "description": "New full content"},
             },
-            "required": ["project", "filename", "content"],
+            "required": ["name", "filename", "content"],
         },
     },
     {
         "name": "delete_project_file",
-        "description": "Delete a file from a project folder and remove its entry from the project's Files section.",
+        "description": "Remove a document attached to a project.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project name or slug"},
-                "filename": {"type": "string", "description": "Filename to delete"},
+                "name": {"type": "string", "description": "Project name or slug"},
+                "filename": {"type": "string", "description": "Document name to delete"},
             },
-            "required": ["project", "filename"],
+            "required": ["name", "filename"],
         },
     },
     {
         "name": "browse_page",
         "description": "Fetch and read the content of a web page. Use after web_search when you need the full content of a specific URL, not just a snippet. Also use when given a direct URL to retrieve listings, articles, or any web content.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Full URL to fetch (must start with http:// or https://)"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "browse_page_js",
+        "description": "Fetch and read a JS-rendered or SPA page using a headless browser. Use when browse_page returns empty or insufficient content because the page requires JavaScript to render (React, Vue, Angular apps, etc.).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -228,24 +244,72 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "property_report",
+        "description": "Analyze sun exposure for a property address. Returns street orientation, front/rear/left/right compass directions, open distances to neighboring buildings, and whether each side blocks light. Useful for evaluating real estate.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Full street address (e.g. '801 Hinman Ave #1, Evanston, IL')"},
+            },
+            "required": ["address"],
+        },
+    },
+    {
+        "name": "parse_redfin_listing",
+        "description": "Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Full Redfin listing URL"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "show_image",
+        "description": "Display an image inline in the chat UI. Use when you have an image URL worth showing — e.g. a map, photo, diagram, or chart found during research. The image renders directly in the conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Direct image URL (must start with http:// or https://)"},
+                "caption": {"type": "string", "description": "Optional caption shown below the image"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "run_python",
+        "description": "Execute a Python snippet and get stdout/stderr back. Always ask user permission before running. Use for: geocoding, bearing calculations, math, data processing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python source code to execute"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
         "name": "claude_code",
         "description": (
-            "Run a task with Claude Code (the AI coding agent) in non-interactive mode. "
-            "Use this to write or edit code, scaffold files, refactor, explain codebases, "
-            "run shell commands, or do any software engineering task. "
-            "Claude Code will operate in the lifeos project directory by default. "
-            "Pass a clear, self-contained prompt describing the task."
+            "Delegate a software engineering task to Claude Code (the AI coding agent). "
+            "Describe WHAT to build — the feature, tool, or product spec — not HOW to implement it. "
+            "Claude Code will figure out the implementation. "
+            "Runs in the lifeos project directory by default."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "The task to give Claude Code. Be specific and self-contained.",
+                    "description": (
+                        "What to build: the feature, tool, or product spec. "
+                        "Include goals, inputs/outputs, and constraints. "
+                        "Do NOT specify implementation details — Claude Code decides those."
+                    ),
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Absolute path to run Claude Code in. Defaults to the lifeos root.",
+                    "description": "Absolute path to run Claude Code in. Omit to use the lifeos root.",
                 },
             },
             "required": ["prompt"],
@@ -270,15 +334,21 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
     elif tool_name == "read_project":
         return read_project(tool_input["name"], config)
     elif tool_name == "add_project_file":
-        return add_project_file(tool_input["project"], tool_input["filename"], tool_input["description"], tool_input["content"], config)
+        proj = tool_input.get("project") or tool_input.get("name")
+        return add_project_file(proj, tool_input["filename"], tool_input["description"], tool_input["content"], config)
     elif tool_name == "read_project_file":
-        return read_project_file(tool_input["project"], tool_input["filename"], config)
+        proj = tool_input.get("project") or tool_input.get("name")
+        return read_project_file(proj, tool_input["filename"], config)
     elif tool_name == "update_project_file":
-        return update_project_file(tool_input["project"], tool_input["filename"], tool_input["content"], config)
+        proj = tool_input.get("project") or tool_input.get("name")
+        return update_project_file(proj, tool_input["filename"], tool_input["content"], config)
     elif tool_name == "delete_project_file":
-        return delete_project_file(tool_input["project"], tool_input["filename"], config)
+        proj = tool_input.get("project") or tool_input.get("name")
+        return delete_project_file(proj, tool_input["filename"], config)
     elif tool_name == "browse_page":
         return browse_page(tool_input["url"])
+    elif tool_name == "browse_page_js":
+        return browse_page_js(tool_input["url"])
     elif tool_name == "web_search":
         return web_search(tool_input["query"])
     elif tool_name == "read_knowledge":
@@ -295,7 +365,18 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
         return update_file(tool_input["path"], tool_input["old_str"], tool_input["new_str"])
     elif tool_name == "list_dir":
         return list_dir(tool_input.get("path", "."))
+    elif tool_name == "parse_redfin_listing":
+        return parse_redfin_listing(tool_input["url"])
+    elif tool_name == "show_image":
+        return show_image(tool_input["url"], tool_input.get("caption", ""))
+    elif tool_name == "property_report":
+        return property_report(tool_input["address"])
+    elif tool_name == "run_python":
+        return run_python(tool_input["code"])
     elif tool_name == "claude_code":
         return run_claude_code(tool_input["prompt"], tool_input.get("working_dir"))
+    elif tool_name.startswith("chrome_"):
+        from tools.chrome_mcp import call_tool as chrome_call
+        return chrome_call(tool_name[len("chrome_"):], tool_input)
     else:
         return {"error": f"Unknown tool: {tool_name}"}

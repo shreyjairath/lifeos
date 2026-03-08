@@ -34,6 +34,10 @@ def _project_file(name: str) -> Path:
     return _project_dir(name) / "project.md"
 
 
+def _data_dir(proj_dir: Path) -> Path:
+    return proj_dir / "data"
+
+
 def _find_project(name: str) -> Optional[Path]:
     """Find a project dir by exact slug or partial match. Returns None if not found."""
     slug = _slugify(name)
@@ -86,6 +90,7 @@ def create_project(name: str, goal: str, context: str = "", config: dict = None)
     if proj_dir.exists():
         return {"error": f"Project '{name}' already exists. Use update_project to modify it."}
     proj_dir.mkdir(parents=True)
+    _data_dir(proj_dir).mkdir()
     path = proj_dir / "project.md"
     path.write_text(_build_project_md(name, goal, context), encoding="utf-8")
     return {"created": str(proj_dir), "name": name, "goal": goal}
@@ -186,7 +191,9 @@ def add_project_file(project: str, filename: str, description: str, content: str
     if path is None:
         return {"error": f"Project '{project}' not found."}
     proj_dir = path.parent
-    file_path = proj_dir / filename
+    data = _data_dir(proj_dir)
+    data.mkdir(exist_ok=True)
+    file_path = data / filename
     file_path.write_text(content, encoding="utf-8")
 
     # Add to Files section in project.md
@@ -220,7 +227,7 @@ def read_project_file(project: str, filename: str, config: dict = None) -> dict:
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
-    file_path = path.parent / filename
+    file_path = _data_dir(path.parent) / filename
     if not file_path.exists():
         return {"error": f"File '{filename}' not found in project '{project}'."}
     return {"project": path.parent.name, "filename": filename, "content": file_path.read_text(encoding="utf-8")}
@@ -230,7 +237,7 @@ def update_project_file(project: str, filename: str, content: str, config: dict 
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
-    file_path = path.parent / filename
+    file_path = _data_dir(path.parent) / filename
     if not file_path.exists():
         return {"error": f"File '{filename}' not found in project '{project}'."}
     file_path.write_text(content, encoding="utf-8")
@@ -241,7 +248,7 @@ def delete_project_file(project: str, filename: str, config: dict = None) -> dic
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
-    file_path = path.parent / filename
+    file_path = _data_dir(path.parent) / filename
     if not file_path.exists():
         return {"error": f"File '{filename}' not found in project '{project}'."}
     file_path.unlink()

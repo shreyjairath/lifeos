@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 
 import anthropic
 
-from core.events import bus
+from core import hooks
 from core.memory import summaries_dir, get_conv_summary, write_conv_summary
 from core.tools import TOOLS, dispatch_tool
 
@@ -65,12 +65,23 @@ def build_transcript(history: list) -> str:
             lines.append(f"{role.upper()}: {content}")
         elif isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
                     lines.append(f"{role.upper()}: {block['text']}")
+                elif btype == "tool_use":
+                    input_str = json.dumps(block.get("input", {}), ensure_ascii=False)
+                    lines.append(f"TOOL CALL [{block['name']}]: {input_str}")
+                elif btype == "tool_result":
+                    content_val = block.get("content", "")
+                    lines.append(f"TOOL RESULT: {content_val}")
     return "\n\n".join(lines)
 
 
-async def kb_reflect(history: list, config: dict) -> AsyncGenerator[str, None]:
+async def kb_reflect(
+    history: list, config: dict, conv_id: str = "", session_id: str = ""
+) -> AsyncGenerator[str, None]:
     """Tier 1: persist new knowledge from session to knowledge base and projects."""
     transcript = build_transcript(history)
     if not transcript:
@@ -91,7 +102,6 @@ async def kb_reflect(history: list, config: dict) -> AsyncGenerator[str, None]:
     for block in response.content:
         if block.type == "tool_use":
             result = dispatch_tool(block.name, block.input, config)
-            bus.publish({"type": "tool_result", "name": block.name, "result": result})
             tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result)})
 
     if tool_results:
@@ -110,7 +120,7 @@ async def kb_reflect(history: list, config: dict) -> AsyncGenerator[str, None]:
         summary = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
 
     if summary and summary.lower() != "nothing to save":
-        bus.publish({"type": "reflection", "summary": summary})
+        await hooks.fire("on_kb_reflect", conv_id=conv_id, session_id=session_id, summary=summary)
         yield f"data: {json.dumps({'type': 'reflection', 'text': summary})}\n\n"
 
 
@@ -129,9 +139,9 @@ def write_session_summary(conv_id: str, transcript: str) -> None:
             sdir = summaries_dir(conv_id)
             sdir.mkdir(parents=True, exist_ok=True)
             (sdir / f"{int(time.time())}.md").write_text(summary, encoding="utf-8")
-            bus.publish({"type": "session_summary_written", "chars": len(summary)})
     except Exception as e:
-        bus.publish({"type": "error", "text": f"Session summary failed: {e}"})
+        import logging
+        logging.getLogger(__name__).warning("Session summary failed: %s", e)
 
 
 def update_conv_summary(conv_id: str, transcript: str) -> None:
@@ -151,23 +161,34 @@ def update_conv_summary(conv_id: str, transcript: str) -> None:
         summary = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
         if summary:
             write_conv_summary(conv_id, summary)
-            bus.publish({"type": "conv_summary_updated", "chars": len(summary)})
     except Exception as e:
-        bus.publish({"type": "error", "text": f"Conv summary failed: {e}"})
+        import logging
+        logging.getLogger(__name__).warning("Conv summary failed: %s", e)
 
 
 async def rotation_reflect(
     conv_id: str,
     history: list,
     config: dict,
+    pending_user_message: str = "",
+    session_id: str = "",
 ) -> AsyncGenerator[str, None]:
-    """Full 3-tier reflection at session rotation."""
+    """Full 3-tier reflection at session rotation.
+
+    pending_user_message: the user message that triggered rotation, not yet in
+    history. Appended to the transcript so summaries capture what the user was
+    about to say, giving the new session proper context.
+    """
     transcript = build_transcript(history)
     if not transcript:
         return
 
-    async for chunk in kb_reflect(history, config):
+    if pending_user_message:
+        transcript += f"\n\nUSER (pending — triggered session rotation): {pending_user_message}"
+
+    async for chunk in kb_reflect(history, config, conv_id=conv_id, session_id=session_id):
         yield chunk
 
     write_session_summary(conv_id, transcript)
     update_conv_summary(conv_id, transcript)
+    await hooks.fire("on_reflection_done", conv_id=conv_id, session_id=session_id)

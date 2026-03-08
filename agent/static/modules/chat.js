@@ -4,6 +4,12 @@ import { setPendingRequest, resolveWithResponse } from "./inspector.js";
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
+const stopBtn = document.getElementById("stop-btn");
+
+function setAgentRunning(running) {
+  sendBtn.disabled = running;
+  if (stopBtn) stopBtn.style.display = running ? "inline-flex" : "none";
+}
 
 let currentAgentBubble = null;
 let currentAgentText = "";
@@ -68,6 +74,7 @@ export function addMessage(role, content, msgIndex) {
 }
 
 export function addTypingIndicator() {
+  removeTypingIndicator();
   const msg = document.createElement("div");
   msg.className = "msg agent";
   msg.id = "typing";
@@ -96,6 +103,10 @@ function toolSummary(name, input) {
     case "create_project":
     case "update_project":
     case "read_project":  return `${name}  ${input.name}`;
+    case "add_project_file":
+    case "read_project_file":
+    case "update_project_file":
+    case "delete_project_file": return `${name}  ${input.name ?? input.project}  /  ${input.filename}`;
     case "update_knowledge": return `update_knowledge  ${input.file}`;
     case "read_knowledge":   return `read_knowledge  ${input.file}`;
     case "write_file":
@@ -103,7 +114,16 @@ function toolSummary(name, input) {
     case "update_file":   return `${name}  ${input.path ?? input.name ?? ""}`;
     case "list_projects": return "list_projects";
     case "list_dir":      return `list_dir  ${input.path ?? ""}`;
-    default:              return name;
+    case "browse_page_js":       return `browse_js  ${input.url}`;
+    case "run_python":           return `run_python  ${(input.code ?? "").split("\n")[0].slice(0, 60)}`;
+    case "parse_redfin_listing":     return `parse_redfin  ${input.url}`;
+    case "show_image":               return `show_image  ${input.url}`;
+    case "property_report":         return `property_report  ${input.address}`;
+    case "set_onboarding_status": return `set_onboarding  ${input.file}  →  ${input.status}`;
+    case "claude_code":          return `claude_code  ${(input.prompt ?? "").slice(0, 60)}`;
+    default:
+      if (name.startsWith("chrome_")) return `${name}  ${input.url ?? input.selector ?? input.script?.slice(0, 40) ?? ""}`.trimEnd();
+      return name;
   }
 }
 
@@ -126,6 +146,28 @@ export async function loadHistory(convId, sessionId) {
     const resp = await fetch(`/api/chat/${convId}`);
     if (!resp.ok) return;
     const data = await resp.json();
+
+    if (data.truncated_sessions > 0 && data.conv_summary) {
+      const card = document.createElement("div");
+      card.className = "history-summary-card";
+      card.innerHTML = `
+        <div class="history-summary-header" role="button" aria-expanded="false">
+          <span class="history-summary-label">Earlier history (${data.truncated_sessions} session${data.truncated_sessions !== 1 ? "s" : ""})</span>
+          <span class="history-summary-toggle">▸</span>
+        </div>
+        <div class="history-summary-body" hidden>${renderMarkdown(data.conv_summary)}</div>`;
+      const header = card.querySelector(".history-summary-header");
+      const body = card.querySelector(".history-summary-body");
+      const toggle = card.querySelector(".history-summary-toggle");
+      header.addEventListener("click", () => {
+        const expanded = !body.hidden;
+        body.hidden = expanded;
+        toggle.textContent = expanded ? "▸" : "▾";
+        header.setAttribute("aria-expanded", String(!expanded));
+      });
+      messagesEl.appendChild(card);
+    }
+
     const sessions = data.sessions ?? [];
     const nonEmpty = sessions.filter(s => s.messages.length > 0);
     nonEmpty.forEach((session, idx) => {
@@ -153,7 +195,7 @@ async function sendMessage(getIds, onProjectRefresh) {
   if (!text) return;
   inputEl.value = "";
   inputEl.style.height = "auto";
-  sendBtn.disabled = true;
+  setAgentRunning(true);
 
   const userMsgIndex = historyIndex;
   addMessage("user", text, userMsgIndex);
@@ -249,10 +291,69 @@ async function sendMessage(getIds, onProjectRefresh) {
             currentToolBlock.textContent = `⚙ ${toolSummary(event.name, event.input)}`;
           }
           scrollToBottom();
+        } else if (event.type === "tool_confirm_request") {
+          removeTypingIndicator();
+          const confirm = document.createElement("div");
+          confirm.className = "tool-confirm";
+          confirm.innerHTML = `
+            <span class="tool-confirm-label">Permission required</span>
+            <span class="tool-confirm-name">⚙ ${toolSummary(event.name, event.input)}</span>
+            <div class="tool-confirm-actions">
+              <button class="tool-confirm-btn allow">Allow</button>
+              <button class="tool-confirm-btn deny">Deny</button>
+            </div>`;
+          if (currentMsgEl) currentMsgEl.appendChild(confirm);
+          else messagesEl.appendChild(confirm);
+          scrollToBottom();
+
+          const respond = async (approved) => {
+            confirm.querySelector(".tool-confirm-actions").remove();
+            confirm.querySelector(".tool-confirm-label").textContent = approved ? "Allowed" : "Denied";
+            confirm.classList.add(approved ? "allowed" : "denied");
+            await fetch(`/api/tool-confirm/${event.request_id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ approved }),
+            });
+            if (approved) addTypingIndicator();
+          };
+          confirm.querySelector(".allow").addEventListener("click", () => respond(true));
+          confirm.querySelector(".deny").addEventListener("click", () => respond(false));
         } else if (event.type === "tool_result") {
           if (["create_project", "update_project", "list_projects"].includes(event.name)) {
             onProjectRefresh();
           }
+          if (event.name === "show_image" && event.result?.ok) {
+            if (!currentMsgEl) {
+              currentMsgEl = document.createElement("div");
+              currentMsgEl.className = "msg agent";
+              const header = document.createElement("div");
+              header.className = "msg-header";
+              const label = document.createElement("div");
+              label.className = "msg-label";
+              label.textContent = "Agent";
+              header.appendChild(label);
+              currentMsgEl.appendChild(header);
+              messagesEl.appendChild(currentMsgEl);
+            }
+            const figure = document.createElement("figure");
+            figure.className = "inline-image";
+            const img = document.createElement("img");
+            img.src = event.result.url;
+            img.alt = event.result.caption || "";
+            img.loading = "lazy";
+            figure.appendChild(img);
+            if (event.result.caption) {
+              const cap = document.createElement("figcaption");
+              cap.textContent = event.result.caption;
+              figure.appendChild(cap);
+            }
+            currentMsgEl.appendChild(figure);
+            scrollToBottom();
+          }
+          currentMsgEl = null;
+          currentToolBlock = null;
+          addTypingIndicator();
         } else if (event.type === "reflection") {
           const el = document.createElement("div");
           el.className = "reflection-msg";
@@ -262,6 +363,12 @@ async function sendMessage(getIds, onProjectRefresh) {
         } else if (event.type === "error") {
           removeTypingIndicator();
           addMessage("agent", `⚠ Error: ${event.text}${event.detail ? "\n\n" + event.detail : ""}`);
+        } else if (event.type === "stopped") {
+          removeTypingIndicator();
+          currentMsgEl = null;
+          currentAgentBubble = null;
+          currentAgentText = "";
+          currentToolBlock = null;
         } else if (event.type === "done") {
           currentMsgEl = null;
           currentAgentBubble = null;
@@ -279,7 +386,7 @@ async function sendMessage(getIds, onProjectRefresh) {
     addMessage("agent", `Error: ${err.message}`);
   }
 
-  sendBtn.disabled = false;
+  setAgentRunning(false);
   inputEl.focus();
 }
 
@@ -306,4 +413,12 @@ export function init(getIds, onProjectRefresh, onRotate) {
     }
   });
   sendBtn.addEventListener("click", () => sendMessage(getIds, onProjectRefresh));
+  if (stopBtn) {
+    stopBtn.addEventListener("click", () => {
+      const { convId, sessionId } = getIds();
+      if (convId && sessionId) {
+        fetch(`/api/chat/${convId}/${sessionId}/stop`, { method: "POST" });
+      }
+    });
+  }
 }

@@ -224,11 +224,106 @@ a.main-conv-link:hover { background: var(--border); }
 
 /* ── Tool indicators ── */
 .tool-block {
-  margin: 3px 0; padding: 2px 0;
+  margin: 8px 0; padding: 2px 0;
   font-family: var(--mono); font-size: 11px;
   color: var(--muted); opacity: 0.7;
+  text-align: left;
 }
-.tool-block + .bubble { margin-top: 10px; }
+.tool-block + .bubble { margin-top: 8px; }
+
+/* ── History summary card ── */
+.history-summary-card {
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.history-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--surface);
+  gap: 8px;
+}
+.history-summary-header:hover { background: var(--border); }
+.history-summary-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.history-summary-toggle { color: var(--muted); font-size: 11px; }
+.history-summary-body {
+  padding: 12px 14px;
+  color: var(--text);
+  line-height: 1.6;
+  border-top: 1px solid var(--border);
+}
+.history-summary-body p { margin: 0 0 8px; }
+.history-summary-body p:last-child { margin-bottom: 0; }
+
+/* ── Inline images ── */
+figure.inline-image {
+  margin: 8px 0 0;
+  padding: 0;
+}
+figure.inline-image img {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 6px;
+  display: block;
+  border: 1px solid var(--border);
+}
+figure.inline-image figcaption {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Tool confirmation ── */
+.tool-confirm {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 380px;
+}
+.tool-confirm-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tool-confirm.allowed .tool-confirm-label { color: #5a9e6f; }
+.tool-confirm.denied  .tool-confirm-label { color: #b05050; }
+.tool-confirm-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.tool-confirm-actions { display: flex; gap: 6px; }
+.tool-confirm-btn {
+  padding: 3px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--text);
+}
+.tool-confirm-btn.allow:hover { background: #d4edda; border-color: #5a9e6f; }
+.tool-confirm-btn.deny:hover  { background: #f8d7da; border-color: #b05050; }
 
 /* ── Typing indicator ── */
 #typing .bubble { width: fit-content; }
@@ -276,6 +371,12 @@ a.main-conv-link:hover { background: var(--border); }
 }
 #send-btn:hover { opacity: 0.85; }
 #send-btn:disabled { opacity: 0.4; cursor: default; }
+#stop-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  padding: 10px 16px; border-radius: 8px; cursor: pointer;
+  font-size: 14px; white-space: nowrap; transition: all 0.15s;
+}
+#stop-btn:hover { border-color: #b05050; color: #b05050; }
 
 /* ── Claude Code chat panel ── */
 #cc-panel {
