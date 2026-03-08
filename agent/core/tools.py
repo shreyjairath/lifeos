@@ -14,7 +14,7 @@ from tools.claude_code import run_claude_code
 from tools.run_python import run_python
 from tools.property_report import property_report
 from tools.media import show_image
-from tools.redfin import parse_redfin_listing
+from tools.redfin import parse_redfin_listing, parse_redfin_search
 
 TOOLS: list[dict] = [
     {
@@ -255,6 +255,17 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "parse_redfin_search",
+        "description": "Parse a Redfin search, neighborhood, or filter results page. Returns all listed properties with price, beds, baths, sq ft, and URL. Use when the user provides a Redfin search URL rather than a single listing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Redfin search or neighborhood URL"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
         "name": "parse_redfin_listing",
         "description": "Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.",
         "input_schema": {
@@ -365,6 +376,8 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
         return update_file(tool_input["path"], tool_input["old_str"], tool_input["new_str"])
     elif tool_name == "list_dir":
         return list_dir(tool_input.get("path", "."))
+    elif tool_name == "parse_redfin_search":
+        return parse_redfin_search(tool_input["url"])
     elif tool_name == "parse_redfin_listing":
         return parse_redfin_listing(tool_input["url"])
     elif tool_name == "show_image":

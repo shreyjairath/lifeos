@@ -192,39 +192,52 @@ async def _run_agent_inner(
             break
 
         tool_results = []
-        for i, tu in enumerate(parsed_tool_uses):
-            if cancellation.is_cancelled(session_id):
-                # Stub out all remaining tool uses so history stays valid
-                for remaining in parsed_tool_uses[i:]:
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": remaining["id"],
-                        "content": json.dumps({"error": "Cancelled by user"}),
-                    })
-                append_message(conv_id, session_id, {"role": "user", "content": tool_results})
-                await hooks.fire("on_agent_done", conv_id=conv_id, session_id=session_id, stopped=True)
-                yield f"data: {json.dumps({'type': 'stopped'})}\n\n"
-                return
+        try:
+            for i, tu in enumerate(parsed_tool_uses):
+                if cancellation.is_cancelled(session_id):
+                    # Stub out all remaining tool uses so history stays valid
+                    for remaining in parsed_tool_uses[i:]:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": remaining["id"],
+                            "content": json.dumps({"error": "Cancelled by user"}),
+                        })
+                    append_message(conv_id, session_id, {"role": "user", "content": tool_results})
+                    await hooks.fire("on_agent_done", conv_id=conv_id, session_id=session_id, stopped=True)
+                    yield f"data: {json.dumps({'type': 'stopped'})}\n\n"
+                    return
 
-            # on_pre_tool hook — return a dict to override execution
-            override = await hooks.fire("on_pre_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"])
-            if isinstance(override, dict):
-                result = override
-            elif confirmations.is_gated(tu["name"]):
-                req_id = confirmations.register()
-                yield f"data: {json.dumps({'type': 'tool_confirm_request', 'request_id': req_id, 'name': tu['name'], 'input': tu['input']})}\n\n"
-                approved = await confirmations.wait_for(req_id)
-                if not approved:
-                    result = {"error": f"User denied execution of {tu['name']}"}
-                    yield f"data: {json.dumps({'type': 'tool_confirm_denied', 'name': tu['name']})}\n\n"
+                # on_pre_tool hook — return a dict to override execution
+                override = await hooks.fire("on_pre_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"])
+                if isinstance(override, dict):
+                    result = override
+                elif confirmations.is_gated(tu["name"]):
+                    req_id = confirmations.register()
+                    yield f"data: {json.dumps({'type': 'tool_confirm_request', 'request_id': req_id, 'name': tu['name'], 'input': tu['input']})}\n\n"
+                    approved = await confirmations.wait_for(req_id)
+                    if not approved:
+                        result = {"error": f"User denied execution of {tu['name']}"}
+                        yield f"data: {json.dumps({'type': 'tool_confirm_denied', 'name': tu['name']})}\n\n"
+                    else:
+                        result = dispatch_tool(tu["name"], tu["input"], config)
                 else:
                     result = dispatch_tool(tu["name"], tu["input"], config)
-            else:
-                result = dispatch_tool(tu["name"], tu["input"], config)
 
-            await hooks.fire("on_post_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"], result=result)
-            yield f"data: {json.dumps({'type': 'tool_result', 'name': tu['name'], 'result': result})}\n\n"
-            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": json.dumps(result)})
+                await hooks.fire("on_post_tool", conv_id=conv_id, session_id=session_id, tool_name=tu["name"], tool_input=tu["input"], result=result)
+                yield f"data: {json.dumps({'type': 'tool_result', 'name': tu['name'], 'result': result})}\n\n"
+                tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": json.dumps(result)})
+        except Exception as exc:
+            # Stub any tool_uses that didn't get results so history stays valid
+            dispatched_ids = {r["tool_use_id"] for r in tool_results}
+            for tu in parsed_tool_uses:
+                if tu["id"] not in dispatched_ids:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu["id"],
+                        "content": json.dumps({"error": str(exc)}),
+                    })
+            append_message(conv_id, session_id, {"role": "user", "content": tool_results})
+            raise
 
         append_message(conv_id, session_id, {"role": "user", "content": tool_results})
         messages = _prepare_messages(get_history(conv_id, session_id))

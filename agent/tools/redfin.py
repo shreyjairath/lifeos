@@ -1,4 +1,4 @@
-"""Parse a Redfin listing page into structured JSON."""
+"""Parse Redfin listing and search/neighborhood pages into structured JSON."""
 import json
 import re
 
@@ -119,4 +119,93 @@ def parse_redfin_listing(url: str) -> dict:
         "amenities": amenities,
         "description": description,
         "images": images,
+    }
+
+
+def parse_redfin_search(url: str) -> dict:
+    """Parse a Redfin search/neighborhood/filter results page.
+
+    Returns a list of listings with price, beds, baths, sq_ft, and URL.
+    Works by combining positionally-aligned JSON-LD blocks, card prices,
+    and card aria-labels (all 3 appear in the same order in the static HTML).
+    """
+    if not url.startswith(("http://", "https://")):
+        return {"error": "URL must start with http:// or https://"}
+    if "redfin.com" not in url:
+        return {"error": "URL must be a redfin.com URL"}
+
+    try:
+        r = httpx.get(url, headers=_HEADERS, follow_redirects=True, timeout=15)
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        return {"error": f"Failed to fetch page: {e}"}
+
+    html = r.text
+
+    # --- JSON-LD listing blocks (url, address, geo, sq_ft, property_type) ---
+    scripts = re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL
+    )
+    ld_listings = []
+    for s in scripts:
+        try:
+            d = json.loads(s)
+            if isinstance(d, list) and d and "redfin.com" in d[0].get("url", ""):
+                ld_listings.append(d[0])
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    # --- Prices from card elements ---
+    prices_raw = re.findall(r'bp-Homecard__Price--value">(\$[\d,]+)', html)
+
+    # --- Beds/baths from card aria-labels ---
+    aria_labels = re.findall(
+        r'aria-label="Property at ([^"]+, \d+ beds?, [^"]+)"', html
+    )
+
+    # Build listings by zipping all three (same order in HTML)
+    n = min(len(ld_listings), len(prices_raw), len(aria_labels))
+    listings = []
+    for i in range(n):
+        ld = ld_listings[i]
+        addr = ld.get("address", {})
+        geo = ld.get("geo", {})
+
+        price = _parse_int(prices_raw[i])
+        sq_ft = ld.get("floorSize", {}).get("value")
+        price_per_sqft = round(price / sq_ft) if price and sq_ft else None
+
+        # Parse "2352 W Wilson Ave Unit 2E, Chicago, IL 60625, 2 beds, 2 baths"
+        beds = baths = None
+        m = re.search(r"(\d+) beds?", aria_labels[i])
+        if m:
+            beds = int(m.group(1))
+        m = re.search(r"(\d+(?:\.\d+)?) baths?", aria_labels[i])
+        if m:
+            baths = float(m.group(1))
+            if baths == int(baths):
+                baths = int(baths)
+
+        listings.append({
+            "url": ld.get("url"),
+            "address": {
+                "street": addr.get("streetAddress"),
+                "city": addr.get("addressLocality"),
+                "state": addr.get("addressRegion"),
+                "zip": addr.get("postalCode"),
+            },
+            "lat": geo.get("latitude"),
+            "lon": geo.get("longitude"),
+            "price": price,
+            "price_per_sqft": price_per_sqft,
+            "beds": beds,
+            "baths": baths,
+            "sq_ft": sq_ft,
+            "property_type": ld.get("@type"),
+        })
+
+    return {
+        "url": url,
+        "count": len(listings),
+        "listings": listings,
     }

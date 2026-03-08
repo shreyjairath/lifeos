@@ -116,6 +116,7 @@ function toolSummary(name, input) {
     case "list_dir":      return `list_dir  ${input.path ?? ""}`;
     case "browse_page_js":       return `browse_js  ${input.url}`;
     case "run_python":           return `run_python  ${(input.code ?? "").split("\n")[0].slice(0, 60)}`;
+    case "parse_redfin_search":      return `parse_redfin_search  ${input.url}`;
     case "parse_redfin_listing":     return `parse_redfin  ${input.url}`;
     case "show_image":               return `show_image  ${input.url}`;
     case "property_report":         return `property_report  ${input.address}`;
