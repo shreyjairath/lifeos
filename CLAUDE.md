@@ -30,39 +30,44 @@ lifeos/
 │           └── summaries/
 │               └── {timestamp}.md     # Per-session archives
 │
-└── agent/                    # The agent application
-    ├── main.py               # FastAPI server + all API routes
-    ├── config.yaml           # Model, session rotation thresholds
-    ├── core/
-    │   ├── agent.py          # Claude API agentic loop, streaming, reflection
-    │   ├── knowledge.py      # Assembles system prompt from knowledge files
-    │   ├── memory.py         # Conversation + session storage
-    │   ├── events.py         # Event bus for SSE to frontend
-    │   ├── tools.py          # Tool definitions (TOOLS list) + dispatch
-    │   └── system_prompt_parts/
-    │       ├── persona.md    # Agent identity, capabilities
-    │       └── onboarding.md # Shown when knowledge files are incomplete
-    ├── tools/
-    │   ├── projects.py       # CRUD on user/projects/
-    │   ├── files.py          # Read/write named knowledge files
-    │   ├── fs.py             # Filesystem tools (write/read/update/list under project root)
-    │   └── web.py            # DuckDuckGo web search
-    └── static/               # Frontend
-        ├── index.html
-        ├── app.js            # Main entry, sidebar, conversation switching
-        ├── styles.css
-        └── modules/
-            ├── chat.js       # Main chat UI + SSE streaming
-            ├── cc.js         # Claude Code sidecar chat
-            ├── inspector.js  # Request/response JSON inspector
-            ├── events-panel.js # Live event stream panel
-            └── prompt.js     # System prompt parts editor
+├── backend/                  # The agent application
+│   ├── main.py               # FastAPI server + all API routes
+│   ├── config.yaml           # Model, session rotation thresholds
+│   ├── core/
+│   │   ├── llm_client.py     # Anthropic streaming API wrapper
+│   │   ├── tools_client.py   # Tool dispatch, gating, cancellation
+│   │   ├── agent_client.py   # Agentic loop (LLM turns + tool turns)
+│   │   ├── conversation_manager.py  # Session lifecycle, SSE serialization
+│   │   ├── reflection.py     # Session reflection + knowledge base updates
+│   │   ├── knowledge.py      # Assembles system prompt from knowledge files
+│   │   ├── memory.py         # Conversation + session storage
+│   │   ├── events.py         # Event bus for SSE to frontend
+│   │   ├── tools.py          # Tool definitions (TOOLS list) + dispatch
+│   │   └── system_prompt_parts/
+│   │       ├── persona.md    # Agent identity, capabilities
+│   │       └── onboarding.md # Shown when knowledge files are incomplete
+│   └── tools/
+│       ├── projects.py       # CRUD on user/projects/
+│       ├── files.py          # Read/write named knowledge files
+│       ├── fs.py             # Filesystem tools (write/read/update/list under project root)
+│       └── web.py            # DuckDuckGo web search
+│
+└── frontend/                 # Web UI
+    ├── index.html
+    ├── app.js                # Main entry, sidebar, conversation switching
+    ├── styles.css
+    └── modules/
+        ├── chat.js           # Main chat UI + SSE streaming
+        ├── cc.js             # Claude Code sidecar chat
+        ├── inspector.js      # Request/response JSON inspector
+        ├── events-panel.js   # Live event stream panel
+        └── prompt.js         # System prompt parts editor
 ```
 
 ## Running the Agent
 
 ```bash
-cd agent
+cd backend
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=your_key_here
 python run.py
@@ -100,14 +105,14 @@ Reflection runs **only at session rotation**, not after every turn:
 
 ## Adding New Tools
 
-1. Implement in `agent/tools/`
-2. Add tool definition to `TOOLS` in `agent/core/tools.py`
-3. Add dispatch case to `dispatch_tool()` in `agent/core/tools.py`
+1. Implement in `backend/tools/`
+2. Add tool definition to `TOOLS` in `backend/core/tools.py`
+3. Add dispatch case to `dispatch_tool()` in `backend/core/tools.py`
 
 ## Adding New Knowledge Files
 
 1. Create `.md` in `environment/` or `user/` — auto-loaded by `knowledge.py`
-2. Add to `ALLOWED_FILES` in `agent/tools/files.py` if the agent should be able to write it
+2. Add to `ALLOWED_FILES` in `backend/tools/files.py` if the agent should be able to write it
 
 ## Key API Routes
 

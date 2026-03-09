@@ -47,25 +47,6 @@ async def on_llm_response(conv_id: str, session_id: str, input_tokens: int, outp
          input_tokens=input_tokens, output_tokens=output_tokens, stop_reason=stop_reason)
 
 
-async def on_pre_tool(conv_id: str, session_id: str, tool_name: str, tool_input: dict):
-    """Called before a tool is dispatched.
-
-    Return a dict to override the result and skip execution entirely.
-    Return None to proceed normally.
-    """
-    bus.publish({"type": "tool_call", "name": tool_name, "input": tool_input})
-    _log(session_id, "pre_tool", conv_id=conv_id, tool=tool_name,
-         input_preview=json.dumps(tool_input)[:200])
-
-
-async def on_post_tool(conv_id: str, session_id: str, tool_name: str, tool_input: dict, result: dict):
-    """Called after a tool returns its result."""
-    result_str = json.dumps(result) if isinstance(result, dict) else str(result)
-    bus.publish({"type": "tool_result", "name": tool_name, "result": result})
-    _log(session_id, "post_tool", conv_id=conv_id, tool=tool_name,
-         result_preview=result_str[:200])
-
-
 async def on_session_rotate(conv_id: str, old_session_id: str, new_session_id: str, reason: str):
     """Called when a session rotates due to token limit or inactivity."""
     bus.publish({"type": "session_rotate", "session_id": old_session_id,

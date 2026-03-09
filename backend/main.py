@@ -14,8 +14,9 @@ from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from core.agent import run_agent
-from core import confirmations, cancellation
+from core.conversation_manager import handle_message
+from agent_executor import confirmations
+from agent_executor import cancellation
 from core.events import bus
 from core.memory import (
     clear_session, get_display_history, get_all_display_history, list_conversations,
@@ -60,7 +61,7 @@ async def lifespan(app: FastAPI):
     def _init_chrome():
         try:
             from tools.chrome_mcp import connect, get_tool_definitions
-            from core.tools import TOOLS
+            from agent_executor.tools_registry import TOOLS
             if connect(timeout=60):
                 defs = get_tool_definitions()
                 TOOLS.extend(defs)
@@ -76,7 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="lifeos agent", lifespan=lifespan)
 
 # Serve static files
-_static_dir = Path(__file__).parent / "static"
+_static_dir = Path(__file__).parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
@@ -96,7 +97,7 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     return StreamingResponse(
-        run_agent(req.conv_id, req.session_id, req.message, CONFIG),
+        handle_message(req.conv_id, req.session_id, req.message, CONFIG),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -153,7 +154,7 @@ async def get_main_conversation():
 
 @app.get("/api/projects")
 async def get_projects():
-    return list_projects(CONFIG)
+    return list_projects()
 
 
 # ── Knowledge ────────────────────────────────────────────────────────────────

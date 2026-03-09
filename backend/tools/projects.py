@@ -82,7 +82,7 @@ def _build_project_md(name: str, goal: str, context: str = "") -> str:
 """
 
 
-def create_project(name: str, goal: str, context: str = "", config: dict = None) -> dict:
+def create_project(name: str, goal: str, context: str = "") -> dict:
     projects_dir = _projects_dir()
     projects_dir.mkdir(parents=True, exist_ok=True)
     slug = _slugify(name)
@@ -96,7 +96,7 @@ def create_project(name: str, goal: str, context: str = "", config: dict = None)
     return {"created": str(proj_dir), "name": name, "goal": goal}
 
 
-def read_project(name: str, config: dict = None) -> dict:
+def read_project(name: str) -> dict:
     path = _find_project(name)
     if path is None:
         return {"error": f"Project '{name}' not found."}
@@ -127,7 +127,7 @@ def _replace_section(content: str, section: str, new_body: str) -> str:
     return content[:start] + "\n" + new_body.strip() + "\n\n" + content[end:].lstrip("\n")
 
 
-def update_project(name: str, section: str, content: str, config: dict = None) -> dict:
+def update_project(name: str, section: str, content: str) -> dict:
     if section not in SECTIONS:
         return {"error": f"Invalid section '{section}'. Must be one of: {', '.join(SECTIONS)}"}
 
@@ -186,7 +186,7 @@ def list_projects(config: dict = None) -> dict:
     return {"projects": projects}
 
 
-def add_project_file(project: str, filename: str, description: str, content: str, config: dict = None) -> dict:
+def add_project_file(project: str, filename: str, description: str, content: str) -> dict:
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
@@ -223,7 +223,7 @@ def add_project_file(project: str, filename: str, description: str, content: str
     return {"created": str(file_path), "project": proj_dir.name, "filename": filename}
 
 
-def read_project_file(project: str, filename: str, config: dict = None) -> dict:
+def read_project_file(project: str, filename: str) -> dict:
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
@@ -233,7 +233,7 @@ def read_project_file(project: str, filename: str, config: dict = None) -> dict:
     return {"project": path.parent.name, "filename": filename, "content": file_path.read_text(encoding="utf-8")}
 
 
-def update_project_file(project: str, filename: str, content: str, config: dict = None) -> dict:
+def update_project_file(project: str, filename: str, content: str) -> dict:
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}
@@ -244,7 +244,7 @@ def update_project_file(project: str, filename: str, content: str, config: dict 
     return {"updated": str(file_path), "project": path.parent.name, "filename": filename}
 
 
-def delete_project_file(project: str, filename: str, config: dict = None) -> dict:
+def delete_project_file(project: str, filename: str) -> dict:
     path = _find_project(project)
     if path is None:
         return {"error": f"Project '{project}' not found."}

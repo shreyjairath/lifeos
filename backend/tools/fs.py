@@ -1,16 +1,16 @@
-"""Filesystem tools — read/write files anywhere under the project root."""
+"""Filesystem tools — read/write files under .user-data/."""
 from pathlib import Path
 
 from core.events import bus
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+_USER_DATA = Path(__file__).parent.parent.parent / ".user-data"
 
 
 def _resolve_safe(relative_path: str) -> Path:
-    """Resolve path relative to project root, raising if it escapes the root."""
-    resolved = (PROJECT_ROOT / relative_path).resolve()
-    if not resolved.is_relative_to(PROJECT_ROOT.resolve()):
-        raise ValueError(f"Path '{relative_path}' escapes the project root.")
+    """Resolve path relative to .user-data/, raising if it escapes."""
+    resolved = (_USER_DATA / relative_path).resolve()
+    if not resolved.is_relative_to(_USER_DATA.resolve()):
+        raise ValueError(f"Path '{relative_path}' escapes .user-data/.")
     return resolved
 
 
@@ -79,7 +79,7 @@ def list_dir(path: str = ".") -> dict:
             entries.append({
                 "name": entry.name,
                 "type": "dir" if entry.is_dir() else "file",
-                "path": str(entry.relative_to(PROJECT_ROOT)),
+                "path": str(entry.relative_to(_USER_DATA)),
             })
         return {"path": path, "entries": entries}
     except ValueError as e:

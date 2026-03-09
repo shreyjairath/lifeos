@@ -1,13 +1,12 @@
 """Session reflection: knowledge base update, session archive, conversation summary."""
 import json
 import time
-from collections.abc import AsyncGenerator
-
-import anthropic
 
 from core import hooks
 from core.memory import summaries_dir, get_conv_summary, write_conv_summary
-from core.tools import TOOLS, dispatch_tool
+from agent_executor.tools_registry import TOOLS
+from agent_executor.llm_client import LlmClientResult, stream_llm
+from agent_executor.executor import run_loop, AgentAppendEvent
 
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
@@ -56,7 +55,37 @@ Aim for 3-6 paragraphs. Drop stale details that are no longer relevant. Omit sma
 """
 
 
-def build_transcript(history: list) -> str:
+# ── Public API ────────────────────────────────────────────────────────────────
+
+async def rotation_reflect(
+    conv_id: str,
+    history: list,
+    pending_user_message: str = "",
+    session_id: str = "",
+) -> str | None:
+    """Full 3-tier reflection at session rotation. Returns kb reflection summary if any.
+
+    pending_user_message: the user message that triggered rotation, not yet in
+    history. Appended to the transcript so summaries capture what the user was
+    about to say, giving the new session proper context.
+    """
+    transcript = _build_transcript(history)
+    if not transcript:
+        return None
+
+    if pending_user_message:
+        transcript += f"\n\nUSER (pending — triggered session rotation): {pending_user_message}"
+
+    summary = await _kb_reflect(history, conv_id=conv_id, session_id=session_id)
+    await _write_session_summary(conv_id, transcript)
+    await _update_conv_summary(conv_id, transcript)
+    await hooks.fire("on_reflection_done", conv_id=conv_id, session_id=session_id)
+    return summary
+
+
+# ── Private ───────────────────────────────────────────────────────────────────
+
+def _build_transcript(history: list) -> str:
     lines = []
     for msg in history:
         role = msg.get("role", "")
@@ -79,116 +108,65 @@ def build_transcript(history: list) -> str:
     return "\n\n".join(lines)
 
 
-async def kb_reflect(
-    history: list, config: dict, conv_id: str = "", session_id: str = ""
-) -> AsyncGenerator[str, None]:
+async def _kb_reflect(
+    history: list, conv_id: str = "", session_id: str = ""
+) -> str | None:
     """Tier 1: persist new knowledge from session to knowledge base and projects."""
-    transcript = build_transcript(history)
+    transcript = _build_transcript(history)
     if not transcript:
-        return
+        return None
 
-    client = anthropic.Anthropic()
     messages = [{"role": "user", "content": "Conversation to reflect on:\n\n" + transcript}]
+    summary = ""
 
-    response = client.messages.create(
-        model=_HAIKU_MODEL,
-        system=_REFLECT_SYSTEM,
-        tools=_REFLECT_TOOLS,
-        messages=messages,
-        max_tokens=2048,
-    )
-
-    tool_results = []
-    for block in response.content:
-        if block.type == "tool_use":
-            result = dispatch_tool(block.name, block.input, config)
-            tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result)})
-
-    if tool_results:
-        followup = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_REFLECT_SYSTEM,
-            tools=_REFLECT_TOOLS,
-            messages=messages + [
-                {"role": "assistant", "content": response.content},
-                {"role": "user", "content": tool_results},
-            ],
-            max_tokens=512,
-        )
-        summary = "".join(b.text for b in followup.content if hasattr(b, "text")).strip()
-    else:
-        summary = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
+    async for event in run_loop("_reflect", messages, _REFLECT_SYSTEM, _HAIKU_MODEL, tools=_REFLECT_TOOLS):
+        if isinstance(event, AgentAppendEvent) and event.role == "assistant":
+            summary = "".join(
+                b["text"] for b in event.content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
 
     if summary and summary.lower() != "nothing to save":
         await hooks.fire("on_kb_reflect", conv_id=conv_id, session_id=session_id, summary=summary)
-        yield f"data: {json.dumps({'type': 'reflection', 'text': summary})}\n\n"
+        return summary
+    return None
 
 
-def write_session_summary(conv_id: str, transcript: str) -> None:
+async def _write_session_summary(conv_id: str, transcript: str) -> None:
     """Tier 2: archive session as a timestamped summary file."""
     try:
-        client = anthropic.Anthropic()
-        resp = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_SUMMARIZE_SYSTEM,
-            messages=[{"role": "user", "content": transcript}],
-            max_tokens=1024,
-        )
-        summary = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
-        if summary:
+        result = LlmClientResult()
+        async for _ in stream_llm(
+            _HAIKU_MODEL, _SUMMARIZE_SYSTEM,
+            [{"role": "user", "content": transcript}],
+            tools=[], result=result, max_tokens=1024,
+        ):
+            pass
+        if result.full_text:
             sdir = summaries_dir(conv_id)
             sdir.mkdir(parents=True, exist_ok=True)
-            (sdir / f"{int(time.time())}.md").write_text(summary, encoding="utf-8")
+            (sdir / f"{int(time.time())}.md").write_text(result.full_text, encoding="utf-8")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Session summary failed: %s", e)
 
 
-def update_conv_summary(conv_id: str, transcript: str) -> None:
+async def _update_conv_summary(conv_id: str, transcript: str) -> None:
     """Tier 3: merge session into the rolling conversation-level summary."""
     try:
         existing = get_conv_summary(conv_id)
         user_content = f"New session transcript:\n\n{transcript}"
         if existing:
             user_content = f"Existing summary:\n\n{existing}\n\n---\n\n{user_content}"
-        client = anthropic.Anthropic()
-        resp = client.messages.create(
-            model=_HAIKU_MODEL,
-            system=_CONV_SUMMARIZE_SYSTEM,
-            messages=[{"role": "user", "content": user_content}],
-            max_tokens=1024,
-        )
-        summary = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
-        if summary:
-            write_conv_summary(conv_id, summary)
+        result = LlmClientResult()
+        async for _ in stream_llm(
+            _HAIKU_MODEL, _CONV_SUMMARIZE_SYSTEM,
+            [{"role": "user", "content": user_content}],
+            tools=[], result=result, max_tokens=1024,
+        ):
+            pass
+        if result.full_text:
+            write_conv_summary(conv_id, result.full_text)
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Conv summary failed: %s", e)
-
-
-async def rotation_reflect(
-    conv_id: str,
-    history: list,
-    config: dict,
-    pending_user_message: str = "",
-    session_id: str = "",
-) -> AsyncGenerator[str, None]:
-    """Full 3-tier reflection at session rotation.
-
-    pending_user_message: the user message that triggered rotation, not yet in
-    history. Appended to the transcript so summaries capture what the user was
-    about to say, giving the new session proper context.
-    """
-    transcript = build_transcript(history)
-    if not transcript:
-        return
-
-    if pending_user_message:
-        transcript += f"\n\nUSER (pending — triggered session rotation): {pending_user_message}"
-
-    async for chunk in kb_reflect(history, config, conv_id=conv_id, session_id=session_id):
-        yield chunk
-
-    write_session_summary(conv_id, transcript)
-    update_conv_summary(conv_id, transcript)
-    await hooks.fire("on_reflection_done", conv_id=conv_id, session_id=session_id)

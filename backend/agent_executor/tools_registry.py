@@ -329,7 +329,7 @@ TOOLS: list[dict] = [
 ]
 
 
-def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
+def dispatch_tool(tool_name: str, tool_input: dict) -> Any:
     """Route a tool call to its implementation."""
     if tool_name == "create_project":
         return create_project(
@@ -341,21 +341,21 @@ def dispatch_tool(tool_name: str, tool_input: dict, config: dict) -> Any:
     elif tool_name == "list_projects":
         return list_projects(config)
     elif tool_name == "update_project":
-        return update_project(tool_input["name"], tool_input["section"], tool_input["content"], config)
+        return update_project(tool_input["name"], tool_input["section"], tool_input["content"])
     elif tool_name == "read_project":
-        return read_project(tool_input["name"], config)
+        return read_project(tool_input["name"])
     elif tool_name == "add_project_file":
         proj = tool_input.get("project") or tool_input.get("name")
-        return add_project_file(proj, tool_input["filename"], tool_input["description"], tool_input["content"], config)
+        return add_project_file(proj, tool_input["filename"], tool_input.get("description", ""), tool_input.get("content", ""))
     elif tool_name == "read_project_file":
         proj = tool_input.get("project") or tool_input.get("name")
-        return read_project_file(proj, tool_input["filename"], config)
+        return read_project_file(proj, tool_input["filename"])
     elif tool_name == "update_project_file":
         proj = tool_input.get("project") or tool_input.get("name")
-        return update_project_file(proj, tool_input["filename"], tool_input["content"], config)
+        return update_project_file(proj, tool_input["filename"], tool_input.get("content", ""))
     elif tool_name == "delete_project_file":
         proj = tool_input.get("project") or tool_input.get("name")
-        return delete_project_file(proj, tool_input["filename"], config)
+        return delete_project_file(proj, tool_input["filename"])
     elif tool_name == "browse_page":
         return browse_page(tool_input["url"])
     elif tool_name == "browse_page_js":
