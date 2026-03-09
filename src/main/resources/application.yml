@@ -1,0 +1,13 @@
+server:
+  port: 8000
+
+lifeos:
+  model: claude-sonnet-4-6
+  anthropic-api-key: ${ANTHROPIC_API_KEY}
+  paths:
+    environment: ../.user-data/environment
+    user: ../.user-data/user
+    projects: ../.user-data/projects
+  session:
+    token-threshold: 50000
+    time-threshold-hours: 4

@@ -1,13 +1,7 @@
-# Python
-*.venv
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-dist/
+# Java / Gradle
 build/
+.gradle/
+*.class
 
 # Environment
 .env
