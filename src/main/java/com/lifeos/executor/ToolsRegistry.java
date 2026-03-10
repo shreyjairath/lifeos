@@ -18,10 +18,13 @@ public class ToolsRegistry {
     private final WebSearch webSearch;
     private final Browse browse;
     private final Media media;
+    private final Redfin redfin;
+    private final PropertyReport propertyReport;
 
     public ToolsRegistry(
             FileSystem fileSystem, KnowledgeFiles knowledgeFiles, Projects projects,
-            WebSearch webSearch, Browse browse, Media media
+            WebSearch webSearch, Browse browse, Media media, Redfin redfin,
+            PropertyReport propertyReport
     ) {
         this.fileSystem = fileSystem;
         this.knowledgeFiles = knowledgeFiles;
@@ -29,6 +32,8 @@ public class ToolsRegistry {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
+        this.redfin = redfin;
+        this.propertyReport = propertyReport;
     }
 
     @SuppressWarnings("unchecked")
@@ -66,6 +71,9 @@ public class ToolsRegistry {
             // Web
             case "web_search" -> webSearch.search((String) input.get("query"));
             case "browse_page" -> browse.fetch((String) input.get("url"));
+            case "parse_redfin_listing" -> redfin.parseListing((String) input.get("url"));
+            case "parse_redfin_search" -> redfin.parseSearch((String) input.get("url"));
+            case "property_report" -> propertyReport.report((String) input.get("address"));
 
             // Media
             case "show_image" -> media.showImage((String) input.get("url"), (String) input.getOrDefault("caption", ""));
@@ -130,20 +138,32 @@ public class ToolsRegistry {
             tool("browse_page",
                     "Fetch and read the content of a web page.",
                     props(prop("url", "string", "Full URL to fetch")), "url"),
+            tool("parse_redfin_listing",
+                    "Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.",
+                    props(prop("url", "string", "Redfin listing URL")), "url"),
+            tool("parse_redfin_search",
+                    "Parse a Redfin search results page and return all listed properties with price, beds, baths, sq ft, and URL. " +
+                    "IMPORTANT: Use zipcode URLs (e.g. redfin.com/zipcode/60614/filter/...) — neighborhood URLs (/neighborhood/...) do not work and return wrong results. " +
+                    "Filters can be appended: /filter/property-type=condo,min-beds=2,max-price=700k",
+                    props(prop("url", "string", "Redfin zipcode or city search URL (e.g. redfin.com/zipcode/60614 or redfin.com/city/6331/IL/Chicago). Do NOT use /neighborhood/ URLs.")), "url"),
+            tool("property_report",
+                    "Generate a comprehensive property report for any address. Includes building obstruction analysis (distances to adjacent buildings in each cardinal direction), sun exposure, corner unit detection, floor number, street noise, neighborhood walkability, transit access, parks, flood zone, and elevation. Best used before evaluating a condo or apartment.",
+                    props(prop("address", "string", "Full street address including unit number if applicable (e.g. '123 Main St #4N, Chicago, IL')")),
+                    "address"),
             tool("web_search",
                     "Search the web for information.",
                     props(prop("query", "string", "Search query")), "query"),
             tool("read_knowledge", "Read a knowledge base file.",
-                    props(propEnum("file", List.of("identity", "routines", "tools", "services", "integrations"), "Which file")),
+                    props(propEnum("file", List.of("identity", "routines", "environment"), "Which file")),
                     "file"),
             tool("update_knowledge", "Update a knowledge base file.",
                     props(
-                            propEnum("file", List.of("identity", "routines", "tools", "services", "integrations"), "Which file"),
+                            propEnum("file", List.of("identity", "routines", "environment"), "Which file"),
                             prop("content", "string", "Full new content")
                     ), "file", "content"),
             tool("set_onboarding_status", "Mark a knowledge area as done or pending.",
                     props(
-                            propEnum("file", List.of("identity", "routines", "tools", "services", "integrations"), "Knowledge area"),
+                            propEnum("file", List.of("identity", "routines", "environment"), "Knowledge area"),
                             propEnum("status", List.of("pending", "done"), "New status")
                     ), "file", "status"),
             tool("write_file", "Create or overwrite a file under .user-data/.",

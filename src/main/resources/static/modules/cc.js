@@ -86,8 +86,8 @@ async function sendMessage() {
       buffer = lines.pop();
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
+        if (!line.startsWith("data:")) continue;
+        const jsonStr = line.slice(5).trim();
         if (!jsonStr) continue;
         let event;
         try { event = JSON.parse(jsonStr); } catch { continue; }

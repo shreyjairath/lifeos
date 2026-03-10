@@ -34,6 +34,9 @@ dependencies {
     // compileOnly("org.projectlombok:lombok")
     // annotationProcessor("org.projectlombok:lombok")
 
+    // Dev tools — auto-restart on class changes, live reload for static resources
+    developmentOnly("org.springframework.boot:spring-boot-devtools")
+
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")

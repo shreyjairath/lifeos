@@ -14,10 +14,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
-import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Conversation manager: handles an incoming message end-to-end.
@@ -29,22 +30,22 @@ public class ConversationManager {
     private static final Logger log = LoggerFactory.getLogger(ConversationManager.class);
 
     private final Executor executor;
-    private final Memory memory;
+    private final Session session;
     private final Knowledge knowledge;
-    private final Reflection reflection;
+    private final SystemPrompt systemPrompt;
     private final Cancellation cancellation;
     private final Hooks hooks;
     private final EventBus eventBus;
     private final AppConfig config;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ConversationManager(Executor executor, Memory memory, Knowledge knowledge,
-                               Reflection reflection, Cancellation cancellation, Hooks hooks,
+    public ConversationManager(Executor executor, Session session, Knowledge knowledge,
+                               SystemPrompt systemPrompt, Cancellation cancellation, Hooks hooks,
                                EventBus eventBus, AppConfig config) {
         this.executor = executor;
-        this.memory = memory;
+        this.session = session;
         this.knowledge = knowledge;
-        this.reflection = reflection;
+        this.systemPrompt = systemPrompt;
         this.cancellation = cancellation;
         this.hooks = hooks;
         this.eventBus = eventBus;
@@ -52,7 +53,8 @@ public class ConversationManager {
     }
 
     /**
-     * Entry point for a user message. Returns SSE stream.
+     * Public entry point for an incoming user message. Delegates to {@link #handleInner} and
+     * wraps the stream with a top-level error handler that emits an SSE error event on failure.
      */
     public Flux<ServerSentEvent<String>> handleMessage(
             String convId, String sessionId, String message
@@ -71,113 +73,99 @@ public class ConversationManager {
 
     // ── Internal ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Core message handler. Checks whether the current session needs rotation before running the
+     * agent. If rotation is due, runs reflection (KB update, session archive, conv summary) on a
+     * bounded-elastic thread, creates a new session, and emits rotation SSE events before
+     * forwarding the pending message to the new session. If no rotation is needed, runs the agent
+     * directly.
+     */
     private Flux<ServerSentEvent<String>> handleInner(
-            String convId, String sessionIdParam, String message
+            String convId, String sessionId, String message
     ) {
-        // Rotation check
-        var rotation = checkRotation(convId, sessionIdParam);
-        var needsRotation = rotation.shouldRotate();
-        var reason = rotation.reason();
-
-        return Flux.defer(() -> {
-            String sessionId = sessionIdParam;
-
-            if (needsRotation) {
-                var oldHistory = memory.getHistory(convId, sessionId);
-                // Run reflection synchronously (it blocks on LLM calls)
-                var summary = reflection.rotationReflect(convId, oldHistory, message, sessionId).block();
-
-                var preEvents = Flux.<ServerSentEvent<String>>empty();
-                if (summary != null) {
-                    preEvents = Flux.just(sse(Map.of("type", "reflection", "text", summary)));
-                }
-
-                sessionId = memory.newSession(convId);
-                var rotateEvent = sse(Map.of(
-                        "type", "session_rotated", "session_id", sessionId, "reason", reason));
-                hooks.fire("on_session_rotate", Map.of(
-                        "conv_id", convId, "old_session_id", sessionIdParam,
-                        "new_session_id", sessionId, "reason", reason));
-
-                var finalSessionId = sessionId;
-                return Flux.concat(preEvents, Flux.just(rotateEvent),
-                        runAgent(convId, finalSessionId, message));
-            }
-
+        var rotation = session.checkRotation(convId, sessionId);
+        if (!rotation.shouldRotate()) {
             return runAgent(convId, sessionId, message);
-        });
+        }
+
+        var oldHistory = session.getHistory(convId, sessionId);
+        var rotatingSse = Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason())));
+        return rotatingSse.concatWith(Mono.fromCallable(() -> {
+                    var transcript = Session.buildTranscript(oldHistory);
+                    if (message != null && !message.isEmpty()) {
+                        transcript += "\n\nUSER (pending — triggered session rotation): " + message;
+                    }
+                    if (transcript.isEmpty()) return "";
+                    var summary = knowledge.reflect(oldHistory, convId, sessionId);
+                    session.reflect(convId, transcript);
+                    hooks.fire("on_reflection_done", Map.of("conv_id", convId, "session_id", sessionId));
+                    return summary != null ? summary : "";
+                }).subscribeOn(Schedulers.boundedElastic())
+                .flatMapMany(summary -> {
+                    var newSession = session.newSession(convId);
+                    hooks.fire("on_session_rotate", Map.of(
+                            "conv_id", convId, "old_session_id", sessionId,
+                            "new_session_id", newSession, "reason", rotation.reason()));
+
+                    var reflectionSse = summary.isBlank() ? Flux.<ServerSentEvent<String>>empty()
+                            : Flux.just(sse(Map.of("type", "reflection", "text", summary)));
+                    var rotateSse = Flux.just(sse(Map.of(
+                            "type", "session_rotated", "session_id", newSession,
+                            "reason", rotation.reason())));
+
+                    return Flux.concat(reflectionSse, rotateSse, runAgent(convId, newSession, message));
+                }));
     }
 
+    /**
+     * Appends the user message to history, assembles the system prompt, and runs the executor's
+     * agentic loop. Persists each assistant/tool turn as it arrives, tracks token usage, and
+     * emits a terminal {@code done} or {@code stopped} SSE event when the loop completes.
+     */
     @SuppressWarnings("unchecked")
     private Flux<ServerSentEvent<String>> runAgent(String convId, String sessionId, String message) {
         cancellation.clear(sessionId);
         hooks.fire("on_agent_start", Map.of(
                 "conv_id", convId, "session_id", sessionId, "user_message", message));
 
-        var systemPrompt = knowledge.prepareSystemPrompt(convId);
-        memory.appendMessage(convId, sessionId, Map.of("role", "user", "content", message));
+        var prompt = systemPrompt.prepare(convId);
+        session.appendMessage(convId, sessionId, Map.of("role", "user", "content", message));
 
-        var messages = memory.getHistory(convId, sessionId);
+        var messages = session.getHistory(convId, sessionId);
         Executor.prepareMessages(messages);
 
-        var stopped = new boolean[]{false};
+        var stopped = new AtomicBoolean(false);
 
-        return executor.runLoop(sessionId, messages, systemPrompt, config.model())
+        return executor.runLoop(sessionId, messages, prompt, config.model())
                 .doOnNext(event -> {
                     if (event instanceof AgentAppendEvent ae) {
-                        memory.appendMessage(convId, sessionId,
+                        session.appendMessage(convId, sessionId,
                                 Map.of("role", ae.role(), "content", ae.content()));
                     } else if (event instanceof LlmEvent.Response resp) {
-                        memory.updateSessionMeta(convId, sessionId, resp.usage().get("input_tokens"));
+                        session.updateSessionMeta(convId, sessionId, resp.usage().get("input_tokens"));
                         hooks.fire("on_llm_response", Map.of(
                                 "conv_id", convId, "session_id", sessionId,
                                 "input_tokens", resp.usage().get("input_tokens"),
                                 "output_tokens", resp.usage().get("output_tokens"),
                                 "stop_reason", resp.stopReason()));
                     } else if (event instanceof ToolEvent.Cancelled) {
-                        stopped[0] = true;
+                        stopped.set(true);
                     }
                 })
                 .mapNotNull(this::toSse)
                 .concatWith(Flux.defer(() -> {
-                    if (!stopped[0]) {
-                        stopped[0] = cancellation.isCancelled(sessionId);
-                    }
+                    var wasStopped = stopped.get() || cancellation.isCancelled(sessionId);
                     hooks.fire("on_agent_done", Map.of(
-                            "conv_id", convId, "session_id", sessionId, "stopped", stopped[0]));
-                    if (stopped[0]) {
-                        return Flux.just(sse(Map.of("type", "stopped")));
-                    }
-                    return Flux.just(sse(Map.of("type", "done")));
+                            "conv_id", convId, "session_id", sessionId, "stopped", wasStopped));
+                    return Flux.just(sse(Map.of("type", wasStopped ? "stopped" : "done")));
                 }));
     }
 
-    private RotationCheck checkRotation(String convId, String sessionId) {
-        var tokenThreshold = config.session().tokenThreshold();
-        var timeThresholdHours = config.session().timeThresholdHours();
-
-        var meta = memory.getSessionMeta(convId, sessionId);
-        if (meta.isEmpty()) return new RotationCheck(false, "");
-
-        var lastInputTokens = meta.containsKey("last_input_tokens")
-                ? ((Number) meta.get("last_input_tokens")).intValue() : 0;
-        if (lastInputTokens >= tokenThreshold) {
-            return new RotationCheck(true,
-                    "context window (%,d input tokens)".formatted(lastInputTokens));
-        }
-
-        if (meta.containsKey("last_message_at")) {
-            var lastMsg = ((Number) meta.get("last_message_at")).doubleValue();
-            var elapsed = Instant.now().getEpochSecond() - lastMsg;
-            if (elapsed >= timeThresholdHours * 3600) {
-                return new RotationCheck(true,
-                        "inactivity (%.0fh since last message)".formatted(elapsed / 3600));
-            }
-        }
-
-        return new RotationCheck(false, "");
-    }
-
+    /**
+     * Maps a typed {@link ExecutorEvent} to an SSE payload map, or returns {@code null} for events
+     * that should not be forwarded to the client (e.g. internal cancellation signals). Used with
+     * {@code mapNotNull} so null results are silently dropped from the stream.
+     */
     private ServerSentEvent<String> toSse(ExecutorEvent event) {
         Map<String, Object> payload = switch (event) {
             case LlmEvent.Request r -> Map.of("type", "request_json", "payload",
@@ -197,6 +185,7 @@ public class ConversationManager {
         return sse(payload);
     }
 
+    /** Serializes {@code data} to JSON and wraps it in a {@link ServerSentEvent}. */
     private ServerSentEvent<String> sse(Map<String, Object> data) {
         try {
             return ServerSentEvent.<String>builder()
@@ -209,5 +198,4 @@ public class ConversationManager {
         }
     }
 
-    private record RotationCheck(boolean shouldRotate, String reason) {}
 }

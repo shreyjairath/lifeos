@@ -228,13 +228,23 @@ async function sendMessage(getIds, onProjectRefresh) {
       buffer = lines.pop();
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
+        if (!line.startsWith("data:")) continue;
+        const jsonStr = line.slice(5).trim();
         if (!jsonStr) continue;
         let event;
         try { event = JSON.parse(jsonStr); } catch { continue; }
 
-        if (event.type === "session_rotated") {
+        if (event.type === "session_rotating") {
+          removeTypingIndicator();
+          const el = document.createElement("div");
+          el.id = "session-rotating";
+          el.className = "session-rotating-indicator";
+          el.innerHTML = `<span class="rotating-spinner"></span>Rotating session &amp; updating memory…`;
+          messagesEl.appendChild(el);
+          scrollToBottom();
+        } else if (event.type === "session_rotated") {
+          const indicator = document.getElementById("session-rotating");
+          if (indicator) indicator.remove();
           sessionId = event.session_id;
           _onRotate(sessionId);
           const el = document.createElement("div");

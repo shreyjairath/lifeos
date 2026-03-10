@@ -1,5 +1,6 @@
 package com.lifeos.tools;
 
+import com.lifeos.store.KnowledgeStore;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -13,14 +14,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * Project CRUD — folder-based projects at .user-data/projects/{slug}/project.md
+ * Project CRUD — folder-based projects at .user-data/knowledge/projects/{slug}/project.md
  */
 @Component
 public class Projects {
 
-    private static final Path USER_DATA = Path.of(System.getProperty("user.dir"))
-            .resolve("../.user-data").normalize();
-    private static final Path PROJECTS_DIR = USER_DATA.resolve("projects");
     private static final List<String> SECTIONS = List.of(
             "context", "snapshot", "next_action", "waiting_on", "files", "log");
     private static final Map<String, String> SECTION_HEADERS = Map.of(
@@ -31,11 +29,14 @@ public class Projects {
             "files", "## Files",
             "log", "## Log");
 
+    private final KnowledgeStore store;
+
+    public Projects(KnowledgeStore store) { this.store = store; }
+
     public Map<String, Object> create(String name, String goal, String context) {
         try {
-            Files.createDirectories(PROJECTS_DIR);
             var slug = slugify(name);
-            var projDir = PROJECTS_DIR.resolve(slug);
+            var projDir = store.projectDir(slug);
             if (Files.exists(projDir)) {
                 return Map.of("error", "Project '" + name + "' already exists. Use update_project to modify it.");
             }
@@ -90,11 +91,9 @@ public class Projects {
     }
 
     public Map<String, Object> list() {
-        if (!Files.exists(PROJECTS_DIR)) return Map.of("projects", List.of());
         var projects = new ArrayList<Map<String, Object>>();
-        try (Stream<Path> dirs = Files.list(PROJECTS_DIR).sorted()) {
-            for (var projDir : dirs.toList()) {
-                if (!Files.isDirectory(projDir)) continue;
+        try {
+            for (var projDir : store.listProjectDirs()) {
                 var md = projDir.resolve("project.md");
                 if (!Files.exists(md)) continue;
                 var content = Files.readString(md, StandardCharsets.UTF_8);
@@ -213,21 +212,17 @@ public class Projects {
         return name.toLowerCase().strip().replaceAll("[^a-z0-9-]", "-").replaceAll("^-+|-+$", "");
     }
 
-    private static Path findProject(String name) {
+    private Path findProject(String name) {
         var slug = slugify(name);
-        var exact = PROJECTS_DIR.resolve(slug);
+        var exact = store.projectDir(slug);
         if (Files.isDirectory(exact) && Files.exists(exact.resolve("project.md"))) {
             return exact.resolve("project.md");
         }
-        if (!Files.exists(PROJECTS_DIR)) return null;
-        try (Stream<Path> dirs = Files.list(PROJECTS_DIR)) {
-            for (var d : dirs.toList()) {
-                if (Files.isDirectory(d) && d.getFileName().toString().contains(slug)
-                        && Files.exists(d.resolve("project.md"))) {
-                    return d.resolve("project.md");
-                }
+        for (var d : store.listProjectDirs()) {
+            if (d.getFileName().toString().contains(slug) && Files.exists(d.resolve("project.md"))) {
+                return d.resolve("project.md");
             }
-        } catch (IOException ignored) {}
+        }
         return null;
     }
 

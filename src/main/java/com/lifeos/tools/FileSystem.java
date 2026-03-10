@@ -16,7 +16,7 @@ import java.util.stream.Stream;
 public class FileSystem {
 
     private static final Path USER_DATA = Path.of(System.getProperty("user.dir"))
-            .resolve("../.user-data").normalize();
+            .resolve(".user-data").normalize();
 
     public Map<String, Object> writeFile(String path, String content) {
         try {

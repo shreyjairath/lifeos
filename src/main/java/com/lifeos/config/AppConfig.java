@@ -11,8 +11,7 @@ public record AppConfig(
 ) {
     public record Paths(
         String environment,
-        String user,
-        String projects
+        String user
     ) {}
 
     public record Session(

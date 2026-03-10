@@ -2,7 +2,7 @@ package com.lifeos.api;
 
 import com.lifeos.api.dto.ChatRequest;
 import com.lifeos.core.ConversationManager;
-import com.lifeos.core.Memory;
+import com.lifeos.core.Session;
 import com.lifeos.executor.Cancellation;
 import com.lifeos.executor.Confirmations;
 import org.springframework.http.MediaType;
@@ -17,14 +17,14 @@ import java.util.Map;
 public class ChatController {
 
     private final ConversationManager conversationManager;
-    private final Memory memory;
+    private final Session session;
     private final Cancellation cancellation;
     private final Confirmations confirmations;
 
-    public ChatController(ConversationManager conversationManager, Memory memory,
+    public ChatController(ConversationManager conversationManager, Session session,
                           Cancellation cancellation, Confirmations confirmations) {
         this.conversationManager = conversationManager;
-        this.memory = memory;
+        this.session = session;
         this.cancellation = cancellation;
         this.confirmations = confirmations;
     }
@@ -37,19 +37,19 @@ public class ChatController {
 
     @GetMapping("/chat/{convId}")
     public Map<String, Object> getAllChatHistory(@PathVariable String convId) {
-        return memory.getAllDisplayHistory(convId);
+        return session.getAllDisplayHistory(convId);
     }
 
     @GetMapping("/chat/{convId}/{sessionId}")
     public Map<String, Object> getChatHistory(@PathVariable String convId, @PathVariable String sessionId) {
-        var result = memory.getDisplayHistory(convId, sessionId);
+        var result = session.getDisplayHistory(convId, sessionId);
         return Map.of("conv_id", convId, "session_id", sessionId,
                 "messages", result.get("messages"), "total", result.get("total"));
     }
 
     @DeleteMapping("/chat/{convId}/{sessionId}")
     public Map<String, String> clearChat(@PathVariable String convId, @PathVariable String sessionId) {
-        memory.clearSession(convId, sessionId);
+        session.clearSession(convId, sessionId);
         return Map.of("cleared", sessionId);
     }
 
@@ -58,7 +58,7 @@ public class ChatController {
             @PathVariable String convId, @PathVariable String sessionId,
             @RequestBody Map<String, Integer> body
     ) {
-        int remaining = memory.truncateSession(convId, sessionId, body.getOrDefault("index", 0));
+        int remaining = session.truncateSession(convId, sessionId, body.getOrDefault("index", 0));
         return Map.of("session_id", sessionId, "remaining", remaining);
     }
 
