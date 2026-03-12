@@ -16,9 +16,14 @@
 
       <div class="sidebar-spacer"></div>
 
-      <a href="#" id="main-conv-btn" class="main-conv-link">⌂ Main</a>
+      <button id="new-chat-btn" class="new-chat-btn">+ New Chat</button>
 
       <hr class="sidebar-divider">
+
+      <section class="sidebar-section">
+        <h2>Recent</h2>
+        <ul id="conv-list"><li class="empty">No sessions yet</li></ul>
+      </section>
 
       <section class="sidebar-section">
         <h2>Projects</h2>
@@ -95,7 +100,6 @@
     </aside>
   </div>
 
-  <ul id="conv-list" style="display:none"></ul>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

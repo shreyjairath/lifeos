@@ -16,7 +16,7 @@ let currentAgentText = "";
 let currentMsgEl = null;
 let currentToolBlock = null;
 let historyIndex = 0;
-let _getIds = () => ({ convId: null, sessionId: null });
+let _getSessionId = () => null;
 let _onRotate = (_newSessionId) => {};
 
 function scrollToBottom() {
@@ -24,13 +24,12 @@ function scrollToBottom() {
 }
 
 async function rewindTo(msgEl, fromIndex) {
-  const { convId, sessionId } = _getIds();
-  await fetch(`/api/chat/${convId}/${sessionId}/truncate`, {
+  const sessionId = _getSessionId();
+  await fetch(`/api/chat/${sessionId}/truncate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ index: fromIndex }),
   });
-  // Remove this element and everything after it in the DOM
   while (messagesEl.lastChild && messagesEl.lastChild !== msgEl) {
     messagesEl.removeChild(messagesEl.lastChild);
   }
@@ -114,14 +113,11 @@ function toolSummary(name, input) {
     case "update_file":   return `${name}  ${input.path ?? input.name ?? ""}`;
     case "list_projects": return "list_projects";
     case "list_dir":      return `list_dir  ${input.path ?? ""}`;
-    case "browse_page_js":       return `browse_js  ${input.url}`;
-    case "run_python":           return `run_python  ${(input.code ?? "").split("\n")[0].slice(0, 60)}`;
-    case "parse_redfin_search":      return `parse_redfin_search  ${input.url}`;
-    case "parse_redfin_listing":     return `parse_redfin  ${input.url}`;
-    case "show_image":               return `show_image  ${input.url}`;
-    case "property_report":         return `property_report  ${input.address}`;
+    case "parse_redfin_search":  return `parse_redfin_search  ${input.url}`;
+    case "parse_redfin_listing": return `parse_redfin  ${input.url}`;
+    case "show_image":           return `show_image  ${input.url}`;
+    case "property_report":      return `property_report  ${input.address}`;
     case "set_onboarding_status": return `set_onboarding  ${input.file}  →  ${input.status}`;
-    case "claude_code":          return `claude_code  ${(input.prompt ?? "").slice(0, 60)}`;
     default:
       if (name.startsWith("chrome_")) return `${name}  ${input.url ?? input.selector ?? input.script?.slice(0, 40) ?? ""}`.trimEnd();
       return name;
@@ -135,61 +131,25 @@ function addToolBlock(name, input) {
   return block;
 }
 
-function addSessionDivider(sessionIndex, isCurrent) {
-  const el = document.createElement("div");
-  el.className = "session-divider";
-  el.textContent = isCurrent ? `Session ${sessionIndex + 1} (current)` : `Session ${sessionIndex + 1}`;
-  messagesEl.appendChild(el);
-}
-
-export async function loadHistory(convId, sessionId) {
+export async function loadHistory(sessionId) {
   try {
-    const resp = await fetch(`/api/chat/${convId}`);
+    const resp = await fetch(`/api/chat/${sessionId}`);
     if (!resp.ok) return;
     const data = await resp.json();
-
-    if (data.truncated_sessions > 0 && data.conv_summary) {
-      const card = document.createElement("div");
-      card.className = "history-summary-card";
-      card.innerHTML = `
-        <div class="history-summary-header" role="button" aria-expanded="false">
-          <span class="history-summary-label">Earlier history (${data.truncated_sessions} session${data.truncated_sessions !== 1 ? "s" : ""})</span>
-          <span class="history-summary-toggle">▸</span>
-        </div>
-        <div class="history-summary-body" hidden>${renderMarkdown(data.conv_summary)}</div>`;
-      const header = card.querySelector(".history-summary-header");
-      const body = card.querySelector(".history-summary-body");
-      const toggle = card.querySelector(".history-summary-toggle");
-      header.addEventListener("click", () => {
-        const expanded = !body.hidden;
-        body.hidden = expanded;
-        toggle.textContent = expanded ? "▸" : "▾";
-        header.setAttribute("aria-expanded", String(!expanded));
-      });
-      messagesEl.appendChild(card);
+    for (const msg of data.messages ?? []) {
+      const role = msg.role === "assistant" ? "agent" : "user";
+      addMessage(role, msg.text, msg.raw_index);
     }
-
-    const sessions = data.sessions ?? [];
-    const nonEmpty = sessions.filter(s => s.messages.length > 0);
-    nonEmpty.forEach((session, idx) => {
-      if (nonEmpty.length > 1) addSessionDivider(idx, session.is_current);
-      for (const msg of session.messages) {
-        const role = msg.role === "assistant" ? "agent" : "user";
-        const rawIndex = session.is_current ? msg.raw_index : undefined;
-        addMessage(role, msg.text, rawIndex);
-      }
-      if (session.is_current) historyIndex = session.total ?? 0;
-    });
+    historyIndex = data.total ?? 0;
   } catch (e) {
     console.error("Failed to load history", e);
   }
 }
 
-async function sendMessage(getIds, onProjectRefresh) {
-  const { convId } = getIds();
-  let { sessionId } = getIds();
-  if (!convId || !sessionId) {
-    addMessage("agent", "⚠ No active conversation. Click a project to start one.");
+async function sendMessage(getSessionId, onProjectRefresh) {
+  let sessionId = getSessionId();
+  if (!sessionId) {
+    addMessage("agent", "⚠ No active session.");
     return;
   }
   const text = inputEl.value.trim();
@@ -207,7 +167,7 @@ async function sendMessage(getIds, onProjectRefresh) {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conv_id: convId, session_id: sessionId, message: text }),
+      body: JSON.stringify({ session_id: sessionId, message: text }),
     });
     if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
 
@@ -385,7 +345,7 @@ async function sendMessage(getIds, onProjectRefresh) {
           currentAgentBubble = null;
           currentAgentText = "";
           currentToolBlock = null;
-          fetch(`/api/chat/${convId}/${sessionId}`)
+          fetch(`/api/chat/${sessionId}`)
             .then(r => r.json())
             .then(d => { historyIndex = d.total ?? historyIndex; })
             .catch(() => {});
@@ -401,7 +361,7 @@ async function sendMessage(getIds, onProjectRefresh) {
   inputEl.focus();
 }
 
-export function reset(convId, sessionId) {
+export function reset(sessionId) {
   historyIndex = 0;
   currentAgentBubble = null;
   currentAgentText = "";
@@ -410,8 +370,8 @@ export function reset(convId, sessionId) {
   messagesEl.innerHTML = "";
 }
 
-export function init(getIds, onProjectRefresh, onRotate) {
-  _getIds = getIds;
+export function init(getSessionId, onProjectRefresh, onRotate) {
+  _getSessionId = getSessionId;
   if (onRotate) _onRotate = onRotate;
   inputEl.addEventListener("input", () => {
     inputEl.style.height = "auto";
@@ -420,15 +380,15 @@ export function init(getIds, onProjectRefresh, onRotate) {
   inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(getIds, onProjectRefresh);
+      sendMessage(getSessionId, onProjectRefresh);
     }
   });
-  sendBtn.addEventListener("click", () => sendMessage(getIds, onProjectRefresh));
+  sendBtn.addEventListener("click", () => sendMessage(getSessionId, onProjectRefresh));
   if (stopBtn) {
     stopBtn.addEventListener("click", () => {
-      const { convId, sessionId } = getIds();
-      if (convId && sessionId) {
-        fetch(`/api/chat/${convId}/${sessionId}/stop`, { method: "POST" });
+      const sessionId = getSessionId();
+      if (sessionId) {
+        fetch(`/api/chat/${sessionId}/stop`, { method: "POST" });
       }
     });
   }

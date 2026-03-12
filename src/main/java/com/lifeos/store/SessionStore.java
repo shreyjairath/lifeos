@@ -13,23 +13,54 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * Raw file I/O for the memory subtree: .user-data/memory/conversations/{convId}/
- * No locking — callers (Memory) are responsible for concurrency control.
+ * Raw file I/O for the sessions subtree: .user-data/sessions/{sessionId}/
+ * No locking — caller (Session) is responsible for concurrency control.
+ *
+ * Layout:
+ *   .user-data/sessions/
+ *     pointers.json         ← {"main": "session-abc", "project-slug": "session-def"}
+ *     {session_id}/
+ *       meta.json           ← {id, name, pointer_key, created_at, last_message_at,
+ *                                last_input_tokens, parent_session_id}
+ *       messages.json       ← Anthropic message array
+ *       summary.md          ← written at rotation time
  */
 @Component
 public class SessionStore {
 
-    public record SessionSummary(String content, long epochSeconds) {}
-
-    private static final Path CONV_ROOT = Path.of(System.getProperty("user.dir"))
-            .resolve(".user-data/session/conversations").normalize();
+    private static final Path ROOT = Path.of(System.getProperty("user.dir"))
+            .resolve(".user-data/sessions").normalize();
+    private static final Path POINTERS = ROOT.resolve("pointers.json");
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    // ── Pointers ──────────────────────────────────────────────────────────────
+
+    public Map<String, String> loadPointers() {
+        if (!Files.exists(POINTERS)) return new LinkedHashMap<>();
+        try {
+            return mapper.readValue(Files.readString(POINTERS, StandardCharsets.UTF_8),
+                    new TypeReference<LinkedHashMap<String, String>>() {});
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
+        }
+    }
+
+    public void savePointers(Map<String, String> pointers) {
+        try {
+            Files.createDirectories(ROOT);
+            Files.writeString(POINTERS,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(pointers),
+                    StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to save pointers", e);
+        }
+    }
+
     // ── Meta ──────────────────────────────────────────────────────────────────
 
-    public Map<String, Object> loadMeta(String convId) {
-        var path = convDir(convId).resolve("meta.json");
+    public Map<String, Object> loadMeta(String sessionId) {
+        var path = sessionDir(sessionId).resolve("meta.json");
         if (!Files.exists(path)) return new LinkedHashMap<>();
         try {
             return mapper.readValue(Files.readString(path, StandardCharsets.UTF_8),
@@ -39,21 +70,22 @@ public class SessionStore {
         }
     }
 
-    public void saveMeta(String convId, Map<String, Object> meta) {
-        var path = convDir(convId).resolve("meta.json");
+    public void saveMeta(String sessionId, Map<String, Object> meta) {
+        var path = sessionDir(sessionId).resolve("meta.json");
         try {
             Files.createDirectories(path.getParent());
-            Files.writeString(path, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(meta),
+            Files.writeString(path,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(meta),
                     StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to save meta for " + convId, e);
+            throw new UncheckedIOException("Failed to save meta for " + sessionId, e);
         }
     }
 
-    // ── Sessions ──────────────────────────────────────────────────────────────
+    // ── Messages ──────────────────────────────────────────────────────────────
 
-    public List<Map<String, Object>> loadSession(String convId, String sessionId) {
-        var path = convDir(convId).resolve("sessions").resolve(sessionId + ".json");
+    public List<Map<String, Object>> loadMessages(String sessionId) {
+        var path = sessionDir(sessionId).resolve("messages.json");
         if (!Files.exists(path)) return new ArrayList<>();
         try {
             return mapper.readValue(Files.readString(path, StandardCharsets.UTF_8),
@@ -63,21 +95,22 @@ public class SessionStore {
         }
     }
 
-    public void saveSession(String convId, String sessionId, List<Map<String, Object>> messages) {
-        var path = convDir(convId).resolve("sessions").resolve(sessionId + ".json");
+    public void saveMessages(String sessionId, List<Map<String, Object>> messages) {
+        var path = sessionDir(sessionId).resolve("messages.json");
         try {
             Files.createDirectories(path.getParent());
-            Files.writeString(path, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(messages),
+            Files.writeString(path,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(messages),
                     StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to save session " + convId + "/" + sessionId, e);
+            throw new UncheckedIOException("Failed to save messages for " + sessionId, e);
         }
     }
 
-    // ── Summaries ─────────────────────────────────────────────────────────────
+    // ── Summary ───────────────────────────────────────────────────────────────
 
-    public String readConvSummary(String convId) {
-        var path = convDir(convId).resolve("summary.md");
+    public String readSummary(String sessionId) {
+        var path = sessionDir(sessionId).resolve("summary.md");
         if (!Files.exists(path)) return "";
         try {
             return Files.readString(path, StandardCharsets.UTF_8).strip();
@@ -86,60 +119,38 @@ public class SessionStore {
         }
     }
 
-    public void writeConvSummary(String convId, String content) {
-        var path = convDir(convId).resolve("summary.md");
+    public void writeSummary(String sessionId, String content) {
+        var path = sessionDir(sessionId).resolve("summary.md");
         try {
             Files.createDirectories(path.getParent());
             Files.writeString(path, content, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to write conv summary for " + convId, e);
+            throw new UncheckedIOException("Failed to write summary for " + sessionId, e);
         }
     }
 
-    public void writeSessionSummary(String convId, long epochSeconds, String content) {
-        var sdir = convDir(convId).resolve("summaries");
-        try {
-            Files.createDirectories(sdir);
-            Files.writeString(sdir.resolve(epochSeconds + ".md"), content, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to write session summary for " + convId, e);
-        }
-    }
+    // ── Listing ───────────────────────────────────────────────────────────────
 
-    public Optional<SessionSummary> readLastSessionSummary(String convId) {
-        var sdir = convDir(convId).resolve("summaries");
-        if (!Files.exists(sdir)) return Optional.empty();
-        try (Stream<Path> files = Files.list(sdir).sorted()) {
-            var mdFiles = files.filter(p -> p.toString().endsWith(".md")).toList();
-            if (mdFiles.isEmpty()) return Optional.empty();
-            var last = mdFiles.getLast();
-            var content = Files.readString(last, StandardCharsets.UTF_8).strip();
-            if (content.isEmpty()) return Optional.empty();
-            var ts = Long.parseLong(stem(last));
-            return Optional.of(new SessionSummary(content, ts));
-        } catch (Exception e) {
-            return Optional.empty();
-        }
-    }
-
-    // ── Directory listing ─────────────────────────────────────────────────────
-
-    public List<Path> listConvDirs() {
-        if (!Files.exists(CONV_ROOT)) return List.of();
-        try (Stream<Path> dirs = Files.list(CONV_ROOT).sorted()) {
+    public List<Path> listSessionDirs() {
+        if (!Files.exists(ROOT)) return List.of();
+        try (Stream<Path> dirs = Files.list(ROOT).sorted()) {
             return dirs.filter(Files::isDirectory).toList();
         } catch (IOException e) {
             return List.of();
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private Path convDir(String convId) { return CONV_ROOT.resolve(convId); }
-
-    private static String stem(Path path) {
-        var name = path.getFileName().toString();
-        var dot = name.lastIndexOf('.');
-        return dot > 0 ? name.substring(0, dot) : name;
+    public void deleteSession(String sessionId) {
+        var dir = sessionDir(sessionId);
+        if (!Files.exists(dir)) return;
+        try (Stream<Path> files = Files.walk(dir)) {
+            files.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try { Files.delete(p); } catch (IOException ignored) {}
+            });
+        } catch (IOException ignored) {}
     }
+
+    // ── Path helpers ──────────────────────────────────────────────────────────
+
+    public Path sessionDir(String sessionId) { return ROOT.resolve(sessionId); }
 }

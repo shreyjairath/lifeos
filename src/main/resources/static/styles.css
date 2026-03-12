@@ -50,12 +50,14 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .active-conv { background: var(--accent-dim) !important; font-weight: 600; }
 .project-status { font-size: 10px; color: var(--muted); margin-top: 1px; }
 
-a.main-conv-link {
-  display: block; padding: 5px 24px; font-size: 14px;
-  color: var(--text); text-decoration: none; border-radius: 5px;
-  transition: background 0.1s;
+button.new-chat-btn {
+  display: block; width: calc(100% - 24px); margin: 0 12px;
+  padding: 5px 8px; font-size: 13px;
+  background: transparent; color: var(--text);
+  border: none; border-radius: 5px;
+  cursor: pointer; text-align: left; transition: background 0.1s;
 }
-a.main-conv-link:hover { background: var(--border); }
+button.new-chat-btn:hover { background: var(--border); }
 
 /* ── Main ── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }

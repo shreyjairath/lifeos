@@ -8,7 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.io.UncheckedIOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -16,17 +15,17 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
- * Conversation and session management. File-based JSON storage.
+ * Session management. Flat session model — no conversation wrapper.
  *
- * Layout:
- *   .user-data/memory/conversations/{conv_id}/
- *     meta.json, sessions/{session_id}.json, summaries/{timestamp}.md, summary.md
+ * Each session lives at .user-data/sessions/{session_id}/.
+ * Sessions are ordered chronologically by created_at.
+ * Rotation creates a new session with parent_session_id pointing to the old one.
+ * Pointers.json maps logical keys ("main", "project-slug") to current session IDs.
  */
 @Component
 public class Session {
 
     private static final Logger log = LoggerFactory.getLogger(Session.class);
-    private static final int DISPLAY_SESSIONS = 3;
     private static final String HAIKU_MODEL = "claude-haiku-4-5-20251001";
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm").withZone(ZoneId.systemDefault());
@@ -42,16 +41,80 @@ public class Session {
         this.store = store;
     }
 
-    // ── Public API ───────────────────────────────────────────────────────────────
+    // ── Session lifecycle ─────────────────────────────────────────────────────
+
+    /** Gets or creates the session for a given pointer key (e.g. "main", "project-home-search"). */
+    public String getOrCreate(String pointerKey) {
+        lock.writeLock().lock();
+        try {
+            var pointers = store.loadPointers();
+            var sessionId = pointers.get(pointerKey);
+            if (sessionId != null && store.sessionDir(sessionId).toFile().isDirectory()) {
+                return sessionId;
+            }
+            sessionId = newSessionId();
+            var meta = buildMeta(pointerKey, null);
+            store.saveMeta(sessionId, meta);
+            store.saveMessages(sessionId, new ArrayList<>());
+            pointers.put(pointerKey, sessionId);
+            store.savePointers(pointers);
+            return sessionId;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public String createNew() {
+        lock.writeLock().lock();
+        try {
+            pruneEmpty();
+            var sessionId = newSessionId();
+            var meta = buildMeta("chat-" + sessionId, null);
+            store.saveMeta(sessionId, meta);
+            store.saveMessages(sessionId, new ArrayList<>());
+            return sessionId;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public String getOrCreateForProject(String projectName) {
+        return getOrCreate("project-" + slugify(projectName));
+    }
+
+    /**
+     * Creates a new session linked to the parent (called on rotation).
+     * Updates the pointer so future requests go to the new session.
+     */
+    @SuppressWarnings("unchecked")
+    public String rotate(String oldSessionId) {
+        lock.writeLock().lock();
+        try {
+            var oldMeta = store.loadMeta(oldSessionId);
+            var pointerKey = (String) oldMeta.getOrDefault("pointer_key", "main");
+
+            var newSessionId = newSessionId();
+            var meta = buildMeta(pointerKey, oldSessionId);
+            store.saveMeta(newSessionId, meta);
+            store.saveMessages(newSessionId, new ArrayList<>());
+
+            var pointers = store.loadPointers();
+            pointers.put(pointerKey, newSessionId);
+            store.savePointers(pointers);
+            return newSessionId;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
 
     public record RotationCheck(boolean shouldRotate, String reason) {}
 
-    public RotationCheck checkRotation(String convId, String sessionId) {
+    public RotationCheck checkRotation(String sessionId) {
+        var meta = getSessionMeta(sessionId);
+        if (meta.isEmpty()) return new RotationCheck(false, "");
+
         var tokenThreshold = config.session().tokenThreshold();
         var timeThresholdHours = config.session().timeThresholdHours();
-
-        var meta = getSessionMeta(convId, sessionId);
-        if (meta.isEmpty()) return new RotationCheck(false, "");
 
         var lastInputTokens = meta.containsKey("last_input_tokens")
                 ? ((Number) meta.get("last_input_tokens")).intValue() : 0;
@@ -65,235 +128,155 @@ public class Session {
             var elapsed = Instant.now().getEpochSecond() - lastMsg;
             if (elapsed >= timeThresholdHours * 3600) {
                 return new RotationCheck(true,
-                        "inactivity (%.0fh since last message)".formatted(elapsed / 3600));
+                        "inactivity (%.0fh since last message)".formatted(elapsed / 3600.0));
             }
         }
 
         return new RotationCheck(false, "");
     }
 
-    public record ConvSession(String convId, String sessionId) {}
+    // ── Messages ──────────────────────────────────────────────────────────────
 
-    public ConvSession getOrCreateMain() {
-        return getOrCreateForProject("__main__");
-    }
-
-    public ConvSession createConversation(String name, String projectName) {
-        lock.writeLock().lock();
-        try {
-            var convId = newConvId();
-            var sessionId = newSessionId();
-            var meta = new LinkedHashMap<String, Object>();
-            meta.put("name", name);
-            meta.put("project_name", projectName);
-            meta.put("created_at", epochSeconds());
-            meta.put("sessions", new ArrayList<>(List.of(sessionId)));
-            meta.put("current_session", sessionId);
-            meta.put("session_meta", new LinkedHashMap<>());
-            store.saveMeta(convId, meta);
-            store.saveSession(convId, sessionId, new ArrayList<>());
-            return new ConvSession(convId, sessionId);
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    public ConvSession getOrCreateForProject(String projectName) {
-        lock.writeLock().lock();
-        try {
-            for (var convDir : store.listConvDirs()) {
-                try {
-                    var convId = convDir.getFileName().toString();
-                    var meta = store.loadMeta(convId);
-                    if (projectName.equals(meta.get("project_name"))) {
-                        var sessionId = (String) meta.getOrDefault("current_session",
-                                ((List<String>) meta.get("sessions")).getLast());
-                        return new ConvSession(convId, sessionId);
-                    }
-                } catch (Exception ignored) {}
-            }
-            // Create new
-            var convId = newConvId();
-            var sessionId = newSessionId();
-            var meta = new LinkedHashMap<String, Object>();
-            meta.put("name", projectName);
-            meta.put("project_name", projectName);
-            meta.put("created_at", epochSeconds());
-            meta.put("sessions", new ArrayList<>(List.of(sessionId)));
-            meta.put("current_session", sessionId);
-            meta.put("session_meta", new LinkedHashMap<>());
-            store.saveMeta(convId, meta);
-            store.saveSession(convId, sessionId, new ArrayList<>());
-            return new ConvSession(convId, sessionId);
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    public List<Map<String, Object>> listConversations() {
-        var result = new ArrayList<Map<String, Object>>();
-        for (var convDir : store.listConvDirs()) {
-            var convId = convDir.getFileName().toString();
-            var meta = store.loadMeta(convId);
-            if (meta.isEmpty()) continue;
-            result.add(Map.of(
-                    "id", convId,
-                    "name", meta.getOrDefault("name", convId),
-                    "project_name", meta.getOrDefault("project_name", ""),
-                    "created_at", meta.getOrDefault("created_at", 0),
-                    "current_session", meta.getOrDefault("current_session", "")
-            ));
-        }
-        result.sort(Comparator.comparingDouble(m -> ((Number) m.get("created_at")).doubleValue()));
-        return result;
-    }
-
-    public List<Map<String, Object>> getHistory(String convId, String sessionId) {
+    public List<Map<String, Object>> getHistory(String sessionId) {
         lock.readLock().lock();
         try {
-            return new ArrayList<>(store.loadSession(convId, sessionId));
+            return new ArrayList<>(store.loadMessages(sessionId));
         } finally {
             lock.readLock().unlock();
         }
     }
 
-    public void appendMessage(String convId, String sessionId, Map<String, Object> message) {
+    public void appendMessage(String sessionId, Map<String, Object> message) {
         lock.writeLock().lock();
         try {
-            var messages = store.loadSession(convId, sessionId);
+            var messages = store.loadMessages(sessionId);
+            if (messages.isEmpty() && "user".equals(message.get("role"))) {
+                var meta = store.loadMeta(sessionId);
+                if (!meta.containsKey("title")) {
+                    meta.put("title", extractTitle(message));
+                    store.saveMeta(sessionId, meta);
+                }
+            }
             messages.add(message);
-            store.saveSession(convId, sessionId, messages);
+            store.saveMessages(sessionId, messages);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    @SuppressWarnings("unchecked")
-    public String newSession(String convId) {
+    public void clearSession(String sessionId) {
         lock.writeLock().lock();
         try {
-            var sessionId = newSessionId();
-            var meta = store.loadMeta(convId);
-            ((List<String>) meta.computeIfAbsent("sessions", k -> new ArrayList<>())).add(sessionId);
-            meta.put("current_session", sessionId);
-            store.saveMeta(convId, meta);
-            store.saveSession(convId, sessionId, new ArrayList<>());
-            return sessionId;
+            store.saveMessages(sessionId, new ArrayList<>());
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    public void clearSession(String convId, String sessionId) {
+    public int truncateSession(String sessionId, int fromIndex) {
         lock.writeLock().lock();
         try {
-            store.saveSession(convId, sessionId, new ArrayList<>());
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    public int truncateSession(String convId, String sessionId, int fromIndex) {
-        lock.writeLock().lock();
-        try {
-            var messages = store.loadSession(convId, sessionId);
+            var messages = store.loadMessages(sessionId);
             var truncated = new ArrayList<>(messages.subList(0, Math.min(fromIndex, messages.size())));
-            store.saveSession(convId, sessionId, truncated);
+            store.saveMessages(sessionId, truncated);
             return truncated.size();
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> getSessionMeta(String convId, String sessionId) {
+    // ── Meta ──────────────────────────────────────────────────────────────────
+
+    public Map<String, Object> getSessionMeta(String sessionId) {
         lock.readLock().lock();
         try {
-            var meta = store.loadMeta(convId);
-            var sessionMeta = (Map<String, Object>) meta.getOrDefault("session_meta", Map.of());
-            var entry = (Map<String, Object>) sessionMeta.get(sessionId);
-            return entry != null ? entry : Map.of();
+            return new LinkedHashMap<>(store.loadMeta(sessionId));
         } finally {
             lock.readLock().unlock();
         }
     }
 
-    @SuppressWarnings("unchecked")
-    public void updateSessionMeta(String convId, String sessionId, int inputTokens) {
+    public void updateSessionMeta(String sessionId, int inputTokens) {
         lock.writeLock().lock();
         try {
-            var meta = store.loadMeta(convId);
-            var sessionMeta = (Map<String, Object>) meta.computeIfAbsent("session_meta", k -> new LinkedHashMap<>());
-            var entry = (Map<String, Object>) sessionMeta.computeIfAbsent(sessionId, k -> {
-                var m = new LinkedHashMap<String, Object>();
-                m.put("created_at", epochSeconds());
-                return m;
-            });
-            entry.put("last_message_at", epochSeconds());
-            entry.put("last_input_tokens", inputTokens);
-            store.saveMeta(convId, meta);
+            var meta = store.loadMeta(sessionId);
+            meta.put("last_message_at", epochSeconds());
+            meta.put("last_input_tokens", inputTokens);
+            store.saveMeta(sessionId, meta);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    public String getConvSummary(String convId) {
-        return store.readConvSummary(convId);
+    // ── Listing ───────────────────────────────────────────────────────────────
+
+    public List<Map<String, Object>> listSessions() {
+        var result = new ArrayList<Map<String, Object>>();
+        for (var dir : store.listSessionDirs()) {
+            var sessionId = dir.getFileName().toString();
+            var meta = store.loadMeta(sessionId);
+            if (meta.isEmpty()) continue;
+            if (store.loadMessages(sessionId).isEmpty()) continue;
+            result.add(Map.of(
+                    "id", sessionId,
+                    "name", meta.getOrDefault("name", sessionId),
+                    "title", meta.getOrDefault("title", meta.getOrDefault("name", sessionId)),
+                    "pointer_key", meta.getOrDefault("pointer_key", ""),
+                    "created_at", meta.getOrDefault("created_at", 0),
+                    "parent_session_id", meta.getOrDefault("parent_session_id", "")
+            ));
+        }
+        result.sort(Comparator.comparingDouble(m -> ((Number) m.get("created_at")).doubleValue()));
+        return result;
     }
 
-    public void writeConvSummary(String convId, String content) {
-        try {
-            store.writeConvSummary(convId, content);
-        } catch (UncheckedIOException e) {
-            log.warn("Failed to write conv summary: {}", e.getMessage());
-        }
+    // ── Display history ───────────────────────────────────────────────────────
+
+    public Map<String, Object> getDisplayHistory(String sessionId) {
+        var history = getHistory(sessionId);
+        var messages = buildDisplayMessages(history);
+        return Map.of("messages", messages, "total", history.size(), "session_id", sessionId);
     }
+
+    // ── Summary / context ─────────────────────────────────────────────────────
 
     public record SessionSummary(String content, String dateStr) {}
 
-    public Optional<SessionSummary> getLastSessionSummary(String convId) {
-        return store.readLastSessionSummary(convId)
-                .map(s -> new SessionSummary(s.content(),
-                        DATE_FMT.format(Instant.ofEpochSecond(s.epochSeconds()))));
+    /** Returns the parent session's summary, for injection into the system prompt. */
+    public Optional<SessionSummary> getParentSummary(String sessionId) {
+        var meta = getSessionMeta(sessionId);
+        var parentId = (String) meta.get("parent_session_id");
+        if (parentId == null || parentId.isEmpty()) return Optional.empty();
+
+        var content = store.readSummary(parentId);
+        if (content.isEmpty()) return Optional.empty();
+
+        var parentMeta = store.loadMeta(parentId);
+        var createdAt = parentMeta.containsKey("created_at")
+                ? ((Number) parentMeta.get("created_at")).longValue() : 0L;
+        var dateStr = createdAt > 0
+                ? DATE_FMT.format(java.time.Instant.ofEpochSecond(createdAt)) : "unknown";
+        return Optional.of(new SessionSummary(content, dateStr));
     }
 
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> getAllDisplayHistory(String convId) {
-        var meta = store.loadMeta(convId);
-        var currentSession = (String) meta.getOrDefault("current_session", "");
-        var sessions = (List<String>) meta.getOrDefault("sessions", List.of());
+    // ── Reflection ────────────────────────────────────────────────────────────
 
-        int truncated = Math.max(0, sessions.size() - DISPLAY_SESSIONS);
-        var visible = sessions.subList(truncated, sessions.size());
-
-        var result = new ArrayList<Map<String, Object>>();
-        for (var sid : visible) {
-            var messages = store.loadSession(convId, sid);
-            var display = buildDisplayMessages(messages);
-            result.add(Map.of(
-                    "session_id", sid,
-                    "is_current", sid.equals(currentSession),
-                    "total", messages.size(),
-                    "messages", display
-            ));
+    /** Archives this session by writing a summary to its summary.md. */
+    public void reflect(String sessionId, String transcript) {
+        try {
+            var result = new LlmClient.LlmResult();
+            llmClient.stream(HAIKU_MODEL, Knowledge.loadPromptPart("summarize-session.md"),
+                    List.of(Map.<String, Object>of("role", "user", "content", transcript)),
+                    List.of(), 1024, result).blockLast();
+            if (!result.getFullText().isEmpty()) {
+                store.writeSummary(sessionId, result.getFullText());
+            }
+        } catch (Exception e) {
+            log.warn("Session archive failed for {}: {}", sessionId, e.getMessage());
         }
-
-        var response = new LinkedHashMap<String, Object>();
-        response.put("sessions", result);
-        response.put("current_session", currentSession);
-        response.put("truncated_sessions", truncated);
-        if (truncated > 0) {
-            response.put("conv_summary", getConvSummary(convId));
-        }
-        return response;
     }
 
-    public Map<String, Object> getDisplayHistory(String convId, String sessionId) {
-        var history = getHistory(convId, sessionId);
-        var display = buildDisplayMessages(history);
-        return Map.of("messages", display, "total", history.size());
-    }
+    // ── Transcript ────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     public static String buildTranscript(List<Map<String, Object>> history) {
@@ -325,46 +308,16 @@ public class Session {
         return String.join("\n\n", lines);
     }
 
-    /** Archives the session and refreshes the rolling conversation summary. */
-    public void reflect(String convId, String transcript) {
-        archiveSession(convId, transcript);
-        refreshConvSummary(convId, transcript);
-    }
+    // ── Private ───────────────────────────────────────────────────────────────
 
-    public void archiveSession(String convId, String transcript) {
-        try {
-            var result = new LlmClient.LlmResult();
-            llmClient.stream(HAIKU_MODEL, Knowledge.loadPromptPart("summarize-session.md"),
-                    List.of(Map.<String, Object>of("role", "user", "content", transcript)),
-                    List.of(), 1024, result).blockLast();
-            if (!result.getFullText().isEmpty()) {
-                store.writeSessionSummary(convId, Instant.now().getEpochSecond(), result.getFullText());
-            }
-        } catch (Exception e) {
-            log.warn("Session archive failed: {}", e.getMessage());
-        }
+    private Map<String, Object> buildMeta(String pointerKey, String parentSessionId) {
+        var meta = new LinkedHashMap<String, Object>();
+        meta.put("pointer_key", pointerKey);
+        meta.put("name", displayName(pointerKey));
+        meta.put("created_at", epochSeconds());
+        if (parentSessionId != null) meta.put("parent_session_id", parentSessionId);
+        return meta;
     }
-
-    public void refreshConvSummary(String convId, String transcript) {
-        try {
-            var existing = getConvSummary(convId);
-            var userContent = "New session transcript:\n\n" + transcript;
-            if (!existing.isEmpty()) {
-                userContent = "Existing summary:\n\n" + existing + "\n\n---\n\n" + userContent;
-            }
-            var result = new LlmClient.LlmResult();
-            llmClient.stream(HAIKU_MODEL, Knowledge.loadPromptPart("summarize-conv.md"),
-                    List.of(Map.<String, Object>of("role", "user", "content", userContent)),
-                    List.of(), 1024, result).blockLast();
-            if (!result.getFullText().isEmpty()) {
-                writeConvSummary(convId, result.getFullText());
-            }
-        } catch (Exception e) {
-            log.warn("Conv summary refresh failed: {}", e.getMessage());
-        }
-    }
-
-    // ── Private ──────────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> buildDisplayMessages(List<Map<String, Object>> messages) {
@@ -373,7 +326,6 @@ public class Session {
             var msg = messages.get(i);
             var role = (String) msg.get("role");
             if (!"user".equals(role) && !"assistant".equals(role)) continue;
-
             var content = msg.get("content");
             if (content instanceof String text) {
                 display.add(Map.of("role", role, "text", text, "raw_index", i));
@@ -385,15 +337,57 @@ public class Session {
                     }
                 }
                 var text = String.join(" ", textParts);
-                if (!text.isEmpty()) {
-                    display.add(Map.of("role", role, "text", text, "raw_index", i));
-                }
+                if (!text.isEmpty()) display.add(Map.of("role", role, "text", text, "raw_index", i));
             }
         }
         return display;
     }
 
-    private static String newConvId() { return "conv-" + UUID.randomUUID().toString().substring(0, 12); }
-    private static String newSessionId() { return "session-" + UUID.randomUUID().toString().substring(0, 12); }
+    private static String displayName(String pointerKey) {
+        if ("main".equals(pointerKey)) return "Main";
+        if (pointerKey.startsWith("project-")) {
+            return pointerKey.substring(8).replace("-", " ");
+        }
+        return pointerKey;
+    }
+
+    /** Deletes session directories that have no messages. Called before creating a new session. */
+    private void pruneEmpty() {
+        for (var dir : store.listSessionDirs()) {
+            var sessionId = dir.getFileName().toString();
+            if (store.loadMessages(sessionId).isEmpty()) {
+                store.deleteSession(sessionId);
+                log.debug("Pruned empty session {}", sessionId);
+            }
+        }
+    }
+
+    private static String slugify(String name) {
+        return name.toLowerCase().strip().replaceAll("[^a-z0-9-]", "-").replaceAll("^-+|-+$", "");
+    }
+
+    private static String newSessionId() {
+        return "session-" + UUID.randomUUID().toString().substring(0, 12);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String extractTitle(Map<String, Object> message) {
+        var content = message.get("content");
+        String text = null;
+        if (content instanceof String s) {
+            text = s;
+        } else if (content instanceof List<?> blocks) {
+            for (var block : blocks) {
+                if (block instanceof Map<?, ?> b && "text".equals(b.get("type"))) {
+                    text = (String) b.get("text");
+                    break;
+                }
+            }
+        }
+        if (text == null || text.isBlank()) return "New session";
+        text = text.strip();
+        return text.length() <= 50 ? text : text.substring(0, 47) + "…";
+    }
+
     private static double epochSeconds() { return Instant.now().getEpochSecond(); }
 }

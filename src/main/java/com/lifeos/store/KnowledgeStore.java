@@ -57,16 +57,6 @@ public class KnowledgeStore {
         }
     }
 
-    public List<Path> listProjectDirs() {
-        var projectsDir = KNOWLEDGE.resolve("projects");
-        if (!Files.exists(projectsDir)) return List.of();
-        try (Stream<Path> dirs = Files.list(projectsDir).sorted()) {
-            return dirs.filter(Files::isDirectory).toList();
-        } catch (IOException e) {
-            return List.of();
-        }
-    }
-
     // ── Onboarding status ─────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
@@ -83,10 +73,6 @@ public class KnowledgeStore {
     }
 
     // ── Path helpers ──────────────────────────────────────────────────────────
-
-    public Path projectDir(String slug) {
-        return KNOWLEDGE.resolve("projects").resolve(slug);
-    }
 
     public Path knowledgeRoot() { return KNOWLEDGE; }
 }

@@ -4,14 +4,11 @@ import * as Inspector from "./modules/inspector.js";
 import * as EventsPanel from "./modules/events-panel.js";
 import * as Prompt from "./modules/prompt.js";
 
-// ── Conversation + Session ────────────────────────────────────────────────────
-let CONV_ID = localStorage.getItem("lifeos-conv-id") || null;
+// ── Session ───────────────────────────────────────────────────────────────────
 let SESSION_ID = localStorage.getItem("lifeos-session-id") || null;
 
-function setConversation(convId, sessionId) {
-  CONV_ID = convId;
+function setSession(sessionId) {
   SESSION_ID = sessionId;
-  localStorage.setItem("lifeos-conv-id", convId);
   localStorage.setItem("lifeos-session-id", sessionId);
 }
 
@@ -19,17 +16,17 @@ function setConversation(convId, sessionId) {
 const projectListEl = document.getElementById("project-list");
 const inputEl = document.getElementById("input");
 
-async function openProjectConversation(projectName) {
-  const resp = await fetch("/api/conversations/for-project", {
+async function openProjectSession(projectName) {
+  const resp = await fetch("/api/sessions/for-project", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_name: projectName }),
   });
   const data = await resp.json();
-  setConversation(data.conv_id, data.session_id);
-  Chat.reset(data.conv_id, data.session_id);
-  await Chat.loadHistory(data.conv_id, data.session_id);
-  await loadConversations();
+  setSession(data.session_id);
+  Chat.reset(data.session_id);
+  await Chat.loadHistory(data.session_id);
+  await loadSessions();
   inputEl.value = "";
   inputEl.focus();
 }
@@ -47,7 +44,7 @@ async function loadProjects() {
       const li = document.createElement("li");
       li.className = "project-item";
       li.innerHTML = `<div>${p.name.replace(/-/g, " ")}</div><div class="project-status">${p.status}</div>`;
-      li.addEventListener("click", () => openProjectConversation(p.name));
+      li.addEventListener("click", () => openProjectSession(p.name));
       projectListEl.appendChild(li);
     }
   } catch (e) {
@@ -64,50 +61,47 @@ document.getElementById("knowledge-list").addEventListener("click", (e) => {
   inputEl.focus();
 });
 
-// ── Conversations sidebar ─────────────────────────────────────────────────────
+// ── Sessions sidebar ──────────────────────────────────────────────────────────
 const convListEl = document.getElementById("conv-list");
 
-async function loadConversations() {
+async function loadSessions() {
   try {
-    const resp = await fetch("/api/conversations");
+    const resp = await fetch("/api/sessions");
     const data = await resp.json();
     convListEl.innerHTML = "";
-    if (!data.conversations || data.conversations.length === 0) {
-      convListEl.innerHTML = '<li class="empty">No conversations yet</li>';
+    if (!data.sessions || data.sessions.length === 0) {
+      convListEl.innerHTML = '<li class="empty">No sessions yet</li>';
       return;
     }
-    for (const c of [...data.conversations].reverse()) {
+    for (const s of [...data.sessions].reverse().slice(0, 3)) {
       const li = document.createElement("li");
-      li.className = "project-item" + (c.id === CONV_ID ? " active-conv" : "");
-      li.textContent = c.name.replace(/-/g, " ");
+      li.className = "project-item" + (s.id === SESSION_ID ? " active-conv" : "");
+      li.textContent = s.title || s.name;
       li.addEventListener("click", async () => {
-        setConversation(c.id, c.current_session);
-        Chat.reset(c.id, c.current_session);
-        await Chat.loadHistory(c.id, c.current_session);
-        await loadConversations();
+        setSession(s.id);
+        Chat.reset(s.id);
+        await Chat.loadHistory(s.id);
+        await loadSessions();
         inputEl.focus();
       });
       convListEl.appendChild(li);
     }
   } catch (e) {
-    console.error("Failed to load conversations", e);
+    console.error("Failed to load sessions", e);
   }
 }
 
-// ── Main conversation ─────────────────────────────────────────────────────────
-async function openMainConversation() {
-  const resp = await fetch("/api/conversations/main");
+// ── New chat ──────────────────────────────────────────────────────────────────
+async function openNewChat() {
+  const resp = await fetch("/api/sessions", { method: "POST" });
   const data = await resp.json();
-  setConversation(data.conv_id, data.session_id);
-  Chat.reset(data.conv_id, data.session_id);
-  await Chat.loadHistory(data.conv_id, data.session_id);
+  setSession(data.session_id);
+  Chat.reset(data.session_id);
+  await loadSessions();
   inputEl.focus();
 }
 
-document.getElementById("main-conv-btn").addEventListener("click", (e) => {
-  e.preventDefault();
-  openMainConversation();
-});
+document.getElementById("new-chat-btn").addEventListener("click", openNewChat);
 
 // ── Sidecar tab switching ─────────────────────────────────────────────────────
 const PANELS = {
@@ -136,19 +130,19 @@ ispTabs.forEach(tab => {
 (async () => {
   Inspector.init();
   Chat.init(
-    () => ({ convId: CONV_ID, sessionId: SESSION_ID }),
+    () => SESSION_ID,
     loadProjects,
-    (newSessionId) => setConversation(CONV_ID, newSessionId),
+    (newSessionId) => setSession(newSessionId),
   );
   CC.init();
   Prompt.init();
-  if (!CONV_ID || !SESSION_ID) {
-    await openMainConversation();
+  if (!SESSION_ID) {
+    await openNewChat();
   } else {
-    await Chat.loadHistory(CONV_ID, SESSION_ID);
+    await Chat.loadHistory(SESSION_ID);
   }
   await loadProjects();
-  await loadConversations();
+  await loadSessions();
   await CC.loadHistory();
   await Prompt.load();
   EventsPanel.connect();

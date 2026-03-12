@@ -1,7 +1,7 @@
 package com.lifeos.api;
 
 import com.lifeos.api.dto.ChatRequest;
-import com.lifeos.core.ConversationManager;
+import com.lifeos.core.ChatManager;
 import com.lifeos.core.Session;
 import com.lifeos.executor.Cancellation;
 import com.lifeos.executor.Confirmations;
@@ -16,14 +16,14 @@ import java.util.Map;
 @RequestMapping("/api")
 public class ChatController {
 
-    private final ConversationManager conversationManager;
+    private final ChatManager chatManager;
     private final Session session;
     private final Cancellation cancellation;
     private final Confirmations confirmations;
 
-    public ChatController(ConversationManager conversationManager, Session session,
+    public ChatController(ChatManager chatManager, Session session,
                           Cancellation cancellation, Confirmations confirmations) {
-        this.conversationManager = conversationManager;
+        this.chatManager = chatManager;
         this.session = session;
         this.cancellation = cancellation;
         this.confirmations = confirmations;
@@ -31,39 +31,31 @@ public class ChatController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request) {
-        return conversationManager.handleMessage(
-                request.convId(), request.sessionId(), request.message());
+        return chatManager.handleMessage(request.sessionId(), request.message());
     }
 
-    @GetMapping("/chat/{convId}")
-    public Map<String, Object> getAllChatHistory(@PathVariable String convId) {
-        return session.getAllDisplayHistory(convId);
+    @GetMapping("/chat/{sessionId}")
+    public Map<String, Object> getChatHistory(@PathVariable String sessionId) {
+        return session.getDisplayHistory(sessionId);
     }
 
-    @GetMapping("/chat/{convId}/{sessionId}")
-    public Map<String, Object> getChatHistory(@PathVariable String convId, @PathVariable String sessionId) {
-        var result = session.getDisplayHistory(convId, sessionId);
-        return Map.of("conv_id", convId, "session_id", sessionId,
-                "messages", result.get("messages"), "total", result.get("total"));
-    }
-
-    @DeleteMapping("/chat/{convId}/{sessionId}")
-    public Map<String, String> clearChat(@PathVariable String convId, @PathVariable String sessionId) {
-        session.clearSession(convId, sessionId);
+    @DeleteMapping("/chat/{sessionId}")
+    public Map<String, String> clearChat(@PathVariable String sessionId) {
+        session.clearSession(sessionId);
         return Map.of("cleared", sessionId);
     }
 
-    @PostMapping("/chat/{convId}/{sessionId}/truncate")
+    @PostMapping("/chat/{sessionId}/truncate")
     public Map<String, Object> truncateChat(
-            @PathVariable String convId, @PathVariable String sessionId,
+            @PathVariable String sessionId,
             @RequestBody Map<String, Integer> body
     ) {
-        int remaining = session.truncateSession(convId, sessionId, body.getOrDefault("index", 0));
+        int remaining = session.truncateSession(sessionId, body.getOrDefault("index", 0));
         return Map.of("session_id", sessionId, "remaining", remaining);
     }
 
-    @PostMapping("/chat/{convId}/{sessionId}/stop")
-    public Map<String, Boolean> stop(@PathVariable String convId, @PathVariable String sessionId) {
+    @PostMapping("/chat/{sessionId}/stop")
+    public Map<String, Boolean> stop(@PathVariable String sessionId) {
         cancellation.cancel(sessionId);
         return Map.of("ok", true);
     }

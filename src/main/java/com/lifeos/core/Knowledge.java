@@ -4,6 +4,7 @@ import com.lifeos.executor.Executor;
 import com.lifeos.executor.ToolsRegistry;
 import com.lifeos.executor.events.AgentAppendEvent;
 import com.lifeos.store.KnowledgeStore;
+import com.lifeos.store.ProjectStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,19 +34,22 @@ public class Knowledge {
     private final ToolsRegistry toolsRegistry;
     private final Hooks hooks;
     private final KnowledgeStore store;
+    private final ProjectStore projectStore;
 
-    public Knowledge(EventBus eventBus, Executor executor, ToolsRegistry toolsRegistry, Hooks hooks, KnowledgeStore store) {
+    public Knowledge(EventBus eventBus, Executor executor, ToolsRegistry toolsRegistry, Hooks hooks,
+                     KnowledgeStore store, ProjectStore projectStore) {
         this.eventBus = eventBus;
         this.executor = executor;
         this.toolsRegistry = toolsRegistry;
         this.hooks = hooks;
         this.store = store;
+        this.projectStore = projectStore;
     }
 
     /**
      * Runs Haiku to update the knowledge base from the session history. Returns summary or null.
      */
-    public String reflect(List<Map<String, Object>> history, String convId, String sessionId) {
+    public String reflect(List<Map<String, Object>> history, String sessionId) {
         var transcript = Session.buildTranscript(history);
         if (transcript.isEmpty()) return null;
 
@@ -67,7 +71,7 @@ public class Knowledge {
                 .block();
 
         if (!summary.isEmpty() && !"nothing to save".equalsIgnoreCase(summary.strip())) {
-            hooks.fire("on_kb_reflect", Map.of("conv_id", convId, "session_id", sessionId, "summary", summary));
+            hooks.fire("on_kb_reflect", Map.of("session_id", sessionId, "summary", summary));
             return summary;
         }
         return null;
@@ -123,12 +127,12 @@ public class Knowledge {
     }
 
     private String readProjects() {
-        var projectDirs = store.listProjectDirs();
+        var projectDirs = projectStore.listProjectDirs();
         if (projectDirs.isEmpty()) return "## Active Projects\n\nNo active projects yet.";
         var projects = new ArrayList<String>();
         for (var dir : projectDirs) {
             var slug = dir.getFileName().toString();
-            var content = store.readText("projects/" + slug, "project.md").strip();
+            var content = projectStore.readProjectMd(slug).strip();
             eventBus.publish(Map.of("type", "knowledge_file", "file", slug,
                     "label", "Projects", "status", content.isEmpty() ? "empty" : "loaded",
                     "chars", content.length()));

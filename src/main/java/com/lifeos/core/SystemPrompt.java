@@ -2,11 +2,10 @@ package com.lifeos.core;
 
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.Map;
 
 /**
- * Assembles the full system prompt from parts: persona, knowledge, onboarding, session context.
+ * Assembles the full system prompt: persona + knowledge + onboarding + parent session context.
  */
 @Component
 public class SystemPrompt {
@@ -21,7 +20,7 @@ public class SystemPrompt {
         this.eventBus = eventBus;
     }
 
-    public String prepare(String convId) {
+    public String prepare(String sessionId) {
         eventBus.publish(Map.of("type", "boot_start"));
 
         var persona = Knowledge.loadPromptPart("persona.md");
@@ -35,38 +34,17 @@ public class SystemPrompt {
             system = persona + "\n\n" + knowledgeSection;
         }
 
-        var sessionContext = loadSessionContext(convId);
-        if (!sessionContext.isEmpty()) {
-            system += "\n\n" + sessionContext;
+        var parentSummary = session.getParentSummary(sessionId);
+        if (parentSummary.isPresent()) {
+            var s = parentSummary.get();
+            eventBus.publish(Map.of("type", "knowledge_file", "file", "last_session",
+                    "label", "Last Session", "status", "loaded", "chars", s.content().length()));
+            system += "\n\n# Session Context\n\n## Last Session — " + s.dateStr() + "\n\n" + s.content();
         }
 
         system = system.strip();
         eventBus.publish(Map.of("type", "system_prompt", "chars", system.length()));
         eventBus.publish(Map.of("type", "boot_done"));
         return system;
-    }
-
-
-    // ── Private ──────────────────────────────────────────────────────────────────
-
-    private String loadSessionContext(String convId) {
-        if (convId == null || convId.isEmpty()) return "";
-        var sections = new ArrayList<String>();
-
-        var convSummary = session.getConvSummary(convId);
-        if (!convSummary.isEmpty()) {
-            eventBus.publish(Map.of("type", "knowledge_file", "file", "conv_summary",
-                    "label", "Conversation Summary", "status", "loaded", "chars", convSummary.length()));
-            sections.add("## Conversation Summary\n\n" + convSummary);
-        }
-
-        session.getLastSessionSummary(convId).ifPresent(s -> {
-            eventBus.publish(Map.of("type", "knowledge_file", "file", "last_session",
-                    "label", "Last Session", "status", "loaded", "chars", s.content().length()));
-            sections.add("## Last Session — " + s.dateStr() + "\n\n" + s.content());
-        });
-
-        if (sections.isEmpty()) return "";
-        return "# Session Context\n\n" + String.join("\n\n", sections);
     }
 }
