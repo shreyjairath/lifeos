@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -84,6 +86,11 @@ public class ToolsRegistry {
 
             // Media
             case "show_image" -> media.showImage((String) input.get("url"), (String) input.getOrDefault("caption", ""));
+
+            // Utility
+            case "get_current_datetime" -> Map.of(
+                    "datetime", ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z")),
+                    "iso8601", ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
 
             default -> Map.of("error", "Unknown tool: " + toolName);
         };
@@ -222,7 +229,9 @@ public class ToolsRegistry {
                     props(prop("path", "string", "Relative path (defaults to root)")), new String[]{}),
             tool("show_image", "Display an image inline in the chat.",
                     props(prop("url", "string", "Image URL"), prop("caption", "string", "Optional caption")),
-                    "url")
+                    "url"),
+            tool("get_current_datetime", "Get the current date and time.",
+                    props(), new String[]{})
     );
 
 
