@@ -1,11 +1,13 @@
 """Tool definitions and dispatch for the agent."""
+import json
+from pathlib import Path
 from typing import Any
 
 from tools.projects import (
     create_project, list_projects, update_project, read_project,
     add_project_file, read_project_file, update_project_file, delete_project_file,
 )
-from tools.files import read_knowledge, update_knowledge, set_onboarding_status
+from tools.knowledge_files import list_notes, read_note, write_note, delete_note, grep_notes
 from tools.fs import write_file, read_file, update_file, list_dir
 from tools.web import web_search
 from tools.browse import browse_page
@@ -15,6 +17,9 @@ from tools.run_python import run_python
 from tools.property_report import property_report
 from tools.media import show_image
 from tools.redfin import parse_redfin_listing, parse_redfin_search
+
+_USER_DATA = Path(__file__).parent.parent.parent / ".user-data"
+_DISABLED_TOOLS_FILE = _USER_DATA / "disabled-tools.json"
 
 TOOLS: list[dict] = [
     {
@@ -65,7 +70,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "add_project_file",
-        "description": "Attach a named document to a project. Use when a project needs structured data that would clutter project.md — e.g. a property shortlist, a workout plan, a spec doc.",
+        "description": "Attach a named document to a project.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -115,8 +120,58 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "list_notes",
+        "description": "List all note files in the agent's notes directory.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "read_note",
+        "description": "Read the content of a note file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Note filename, e.g. user.md"},
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "write_note",
+        "description": "Write (create or overwrite) a note file. Use for persisting knowledge about the user.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Note filename, e.g. user.md, preferences.md"},
+                "content": {"type": "string", "description": "Full content to write"},
+            },
+            "required": ["filename", "content"],
+        },
+    },
+    {
+        "name": "delete_note",
+        "description": "Delete a note file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Note filename to delete"},
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "grep_notes",
+        "description": "Search notes for a keyword or pattern.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Regex or keyword to search for"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "browse_page",
-        "description": "Fetch and read the content of a web page. Use after web_search when you need the full content of a specific URL, not just a snippet. Also use when given a direct URL to retrieve listings, articles, or any web content.",
+        "description": "Fetch and read the content of a web page.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -127,7 +182,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "browse_page_js",
-        "description": "Fetch and read a JS-rendered or SPA page using a headless browser. Use when browse_page returns empty or insufficient content because the page requires JavaScript to render (React, Vue, Angular apps, etc.).",
+        "description": "Fetch and read a JS-rendered or SPA page using a headless browser.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -138,7 +193,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "web_search",
-        "description": "Search the web for information. Use for research, finding resources, looking up facts.",
+        "description": "Search the web for information.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -148,62 +203,12 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "read_knowledge",
-        "description": "Read a knowledge base file about the user or environment.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "file": {
-                    "type": "string",
-                    "enum": ["identity", "routines", "tools", "services", "integrations"],
-                    "description": "Which knowledge file to read",
-                },
-            },
-            "required": ["file"],
-        },
-    },
-    {
-        "name": "update_knowledge",
-        "description": "Update a knowledge base file. Use to persist new information the user shares about themselves or their environment.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "file": {
-                    "type": "string",
-                    "enum": ["identity", "routines", "tools", "services", "integrations"],
-                },
-                "content": {"type": "string", "description": "Full new content for the file"},
-            },
-            "required": ["file", "content"],
-        },
-    },
-    {
-        "name": "set_onboarding_status",
-        "description": "Mark a knowledge area as done or pending in onboarding. Call with status='done' once you have a solid understanding of that area.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "file": {
-                    "type": "string",
-                    "enum": ["identity", "routines", "tools", "services", "integrations"],
-                    "description": "The knowledge area to update",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "done"],
-                    "description": "Mark as done when you have a solid understanding of this area",
-                },
-            },
-            "required": ["file", "status"],
-        },
-    },
-    {
         "name": "write_file",
-        "description": "Create or overwrite a file anywhere under the project root. Use for creating new files or fully replacing file contents.",
+        "description": "Create or overwrite a file anywhere under the project root.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path relative to project root, e.g. 'notes/ideas.md'"},
+                "path": {"type": "string", "description": "Path relative to project root"},
                 "content": {"type": "string", "description": "Full file content to write"},
             },
             "required": ["path", "content"],
@@ -222,7 +227,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "update_file",
-        "description": "Edit a file by replacing a specific string with new content. Fails if old_str is not found or is ambiguous.",
+        "description": "Edit a file by replacing a specific string with new content.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -245,18 +250,18 @@ TOOLS: list[dict] = [
     },
     {
         "name": "property_report",
-        "description": "Analyze sun exposure for a property address. Returns street orientation, front/rear/left/right compass directions, open distances to neighboring buildings, and whether each side blocks light. Useful for evaluating real estate.",
+        "description": "Analyze sun exposure for a property address.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "address": {"type": "string", "description": "Full street address (e.g. '801 Hinman Ave #1, Evanston, IL')"},
+                "address": {"type": "string", "description": "Full street address"},
             },
             "required": ["address"],
         },
     },
     {
         "name": "parse_redfin_search",
-        "description": "Parse a Redfin search, neighborhood, or filter results page. Returns all listed properties with price, beds, baths, sq ft, and URL. Use when the user provides a Redfin search URL rather than a single listing.",
+        "description": "Parse a Redfin search or neighborhood results page.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -267,7 +272,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "parse_redfin_listing",
-        "description": "Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.",
+        "description": "Parse a Redfin listing URL and return structured property data.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -278,19 +283,19 @@ TOOLS: list[dict] = [
     },
     {
         "name": "show_image",
-        "description": "Display an image inline in the chat UI. Use when you have an image URL worth showing — e.g. a map, photo, diagram, or chart found during research. The image renders directly in the conversation.",
+        "description": "Display an image inline in the chat UI.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "Direct image URL (must start with http:// or https://)"},
-                "caption": {"type": "string", "description": "Optional caption shown below the image"},
+                "url": {"type": "string", "description": "Direct image URL"},
+                "caption": {"type": "string", "description": "Optional caption"},
             },
             "required": ["url"],
         },
     },
     {
         "name": "run_python",
-        "description": "Execute a Python snippet and get stdout/stderr back. Always ask user permission before running. Use for: geocoding, bearing calculations, math, data processing.",
+        "description": "Execute a Python snippet and get stdout/stderr back. Always ask user permission before running.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -303,25 +308,13 @@ TOOLS: list[dict] = [
         "name": "claude_code",
         "description": (
             "Delegate a software engineering task to Claude Code (the AI coding agent). "
-            "Describe WHAT to build — the feature, tool, or product spec — not HOW to implement it. "
-            "Claude Code will figure out the implementation. "
-            "Runs in the lifeos project directory by default."
+            "Describe WHAT to build — not HOW. Runs in the lifeos project directory by default."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": (
-                        "What to build: the feature, tool, or product spec. "
-                        "Include goals, inputs/outputs, and constraints. "
-                        "Do NOT specify implementation details — Claude Code decides those."
-                    ),
-                },
-                "working_dir": {
-                    "type": "string",
-                    "description": "Absolute path to run Claude Code in. Omit to use the lifeos root.",
-                },
+                "prompt": {"type": "string", "description": "What to build"},
+                "working_dir": {"type": "string", "description": "Absolute path to run Claude Code in (optional)"},
             },
             "required": ["prompt"],
         },
@@ -329,17 +322,43 @@ TOOLS: list[dict] = [
 ]
 
 
+# ── Tool disabling ────────────────────────────────────────────────────────────
+
+def load_disabled_tools() -> set[str]:
+    if not _DISABLED_TOOLS_FILE.exists():
+        return set()
+    try:
+        data = json.loads(_DISABLED_TOOLS_FILE.read_text(encoding="utf-8"))
+        return set(data) if isinstance(data, list) else set()
+    except (json.JSONDecodeError, OSError):
+        return set()
+
+
+def save_disabled_tools(disabled: set[str]) -> None:
+    _DISABLED_TOOLS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _DISABLED_TOOLS_FILE.write_text(json.dumps(sorted(disabled), indent=2), encoding="utf-8")
+
+
+def all_tool_names() -> list[str]:
+    return [t["name"] for t in TOOLS]
+
+
+def get_tools() -> list[dict]:
+    """Return TOOLS filtered by the disabled list."""
+    disabled = load_disabled_tools()
+    if not disabled:
+        return TOOLS
+    return [t for t in TOOLS if t["name"] not in disabled]
+
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
 def dispatch_tool(tool_name: str, tool_input: dict) -> Any:
     """Route a tool call to its implementation."""
     if tool_name == "create_project":
-        return create_project(
-            tool_input["name"],
-            tool_input["goal"],
-            tool_input.get("context", ""),
-            config,
-        )
+        return create_project(tool_input["name"], tool_input["goal"], tool_input.get("context", ""))
     elif tool_name == "list_projects":
-        return list_projects(config)
+        return list_projects()
     elif tool_name == "update_project":
         return update_project(tool_input["name"], tool_input["section"], tool_input["content"])
     elif tool_name == "read_project":
@@ -356,18 +375,22 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> Any:
     elif tool_name == "delete_project_file":
         proj = tool_input.get("project") or tool_input.get("name")
         return delete_project_file(proj, tool_input["filename"])
+    elif tool_name == "list_notes":
+        return list_notes()
+    elif tool_name == "read_note":
+        return read_note(tool_input["filename"])
+    elif tool_name == "write_note":
+        return write_note(tool_input["filename"], tool_input["content"])
+    elif tool_name == "delete_note":
+        return delete_note(tool_input["filename"])
+    elif tool_name == "grep_notes":
+        return grep_notes(tool_input["query"])
     elif tool_name == "browse_page":
         return browse_page(tool_input["url"])
     elif tool_name == "browse_page_js":
         return browse_page_js(tool_input["url"])
     elif tool_name == "web_search":
         return web_search(tool_input["query"])
-    elif tool_name == "read_knowledge":
-        return read_knowledge(tool_input["file"])
-    elif tool_name == "update_knowledge":
-        return update_knowledge(tool_input["file"], tool_input["content"])
-    elif tool_name == "set_onboarding_status":
-        return set_onboarding_status(tool_input["file"], tool_input["status"])
     elif tool_name == "write_file":
         return write_file(tool_input["path"], tool_input["content"])
     elif tool_name == "read_file":

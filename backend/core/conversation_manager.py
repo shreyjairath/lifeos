@@ -1,10 +1,9 @@
-"""Conversation manager: handles an incoming message end-to-end.
+"""Handles an incoming message end-to-end (flat session model).
 
-Owns: session lifecycle, history setup, system prompt assembly, SSE serialization, error handling.
+Owns: session rotation, history, system prompt, SSE serialization, error handling.
 Delegates the agentic loop to executor.run_loop.
 """
 import json
-import time
 from collections.abc import AsyncGenerator
 
 from core.events import bus
@@ -16,8 +15,11 @@ from agent_executor.tools_client import (
     ToolsClientConfirmRequestEvent, ToolsClientConfirmDeniedEvent,
     ToolsClientResultEvent, ToolsClientCancelledEvent,
 )
-from core.memory import append_message, get_history, get_session_meta, new_session, update_session_meta
-from core.reflection import rotation_reflect
+from core.memory import (
+    append_message, get_history, get_session_meta, rotate_session,
+    update_session_meta, check_rotation,
+)
+from core.reflection_manager import run as reflection_run
 from agent_executor import cancellation
 from core import hooks
 from agent_executor.executor import run_loop, prepare_messages, AgentAppendEvent
@@ -26,14 +28,13 @@ from agent_executor.executor import run_loop, prepare_messages, AgentAppendEvent
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def handle_message(
-    conv_id: str,
     session_id: str,
     message: str,
     config: dict,
 ) -> AsyncGenerator[str, None]:
     """Entry point for a user message. Yields SSE-formatted strings."""
     try:
-        async for chunk in _handle_inner(conv_id, session_id, message, config):
+        async for chunk in _handle_inner(session_id, message, config):
             yield chunk
     except Exception as e:
         import traceback
@@ -45,36 +46,39 @@ async def handle_message(
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 async def _handle_inner(
-    conv_id: str,
     session_id: str,
     message: str,
     config: dict,
 ) -> AsyncGenerator[str, None]:
-    should_rotate, reason = _check_rotation(conv_id, session_id, config)
+    should_rotate, reason = check_rotation(session_id, config)
     if should_rotate:
         old_session_id = session_id
-        old_history = get_history(conv_id, session_id)
-        summary = await rotation_reflect(conv_id, old_history, pending_user_message=message, session_id=old_session_id)
+        old_history = get_history(old_session_id)
+        yield f"data: {json.dumps({'type': 'session_rotating', 'reason': reason})}\n\n"
+        summary = await reflection_run(
+            old_session_id, old_history,
+            pending_user_message=message, config=config,
+        )
         if summary:
             yield f"data: {json.dumps({'type': 'reflection', 'text': summary})}\n\n"
-        session_id = new_session(conv_id)
+        session_id = rotate_session(old_session_id)
         yield f"data: {json.dumps({'type': 'session_rotated', 'session_id': session_id, 'reason': reason})}\n\n"
-        await hooks.fire("on_session_rotate", conv_id=conv_id, old_session_id=old_session_id, new_session_id=session_id, reason=reason)
+        await hooks.fire("on_session_rotate", old_session_id=old_session_id, new_session_id=session_id, reason=reason)
 
     cancellation.clear(session_id)
-    await hooks.fire("on_agent_start", conv_id=conv_id, session_id=session_id, user_message=message)
+    await hooks.fire("on_agent_start", session_id=session_id, user_message=message)
 
-    system_prompt = prepare_system_prompt(config, conv_id)
-    append_message(conv_id, session_id, {"role": "user", "content": message})
-    messages = prepare_messages(get_history(conv_id, session_id))
+    system_prompt = prepare_system_prompt(config, session_id)
+    append_message(session_id, {"role": "user", "content": message})
+    messages = prepare_messages(get_history(session_id))
 
     stopped = False
     async for event in run_loop(session_id, messages, system_prompt, config["model"]):
         if isinstance(event, AgentAppendEvent):
-            append_message(conv_id, session_id, {"role": event.role, "content": event.content})
+            append_message(session_id, {"role": event.role, "content": event.content})
         elif isinstance(event, LlmClientResponseEvent):
-            update_session_meta(conv_id, session_id, input_tokens=event.usage["input_tokens"])
-            await hooks.fire("on_llm_response", conv_id=conv_id, session_id=session_id,
+            update_session_meta(session_id, input_tokens=event.usage["input_tokens"])
+            await hooks.fire("on_llm_response", session_id=session_id,
                              input_tokens=event.usage["input_tokens"],
                              output_tokens=event.usage["output_tokens"],
                              stop_reason=event.stop_reason)
@@ -87,31 +91,11 @@ async def _handle_inner(
     if not stopped:
         stopped = cancellation.is_cancelled(session_id)
 
-    await hooks.fire("on_agent_done", conv_id=conv_id, session_id=session_id, stopped=stopped)
+    await hooks.fire("on_agent_done", session_id=session_id, stopped=stopped)
     if stopped:
         yield f"data: {json.dumps({'type': 'stopped'})}\n\n"
     else:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-
-def _check_rotation(conv_id: str, session_id: str, config: dict) -> tuple[bool, str]:
-    cfg = config.get("session", {})
-    token_threshold = cfg.get("token_threshold", 50_000)
-    time_threshold_hours = cfg.get("time_threshold_hours", 4)
-
-    meta = get_session_meta(conv_id, session_id)
-    if not meta:
-        return False, ""
-
-    if meta.get("last_input_tokens", 0) >= token_threshold:
-        return True, f"context window ({meta['last_input_tokens']:,} input tokens)"
-
-    last_msg = meta.get("last_message_at")
-    if last_msg and (time.time() - last_msg) >= time_threshold_hours * 3600:
-        hours = (time.time() - last_msg) / 3600
-        return True, f"inactivity ({hours:.0f}h since last message)"
-
-    return False, ""
 
 
 def _to_sse(event) -> str:

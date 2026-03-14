@@ -8,7 +8,7 @@ from agent_executor.llm_client import (
 from agent_executor.tools_client import (
     ToolsClientResult, invoke_tools, ToolsClientEvent,
 )
-from agent_executor.tools_registry import TOOLS
+from agent_executor.tools_registry import get_tools
 from agent_executor import cancellation
 
 
@@ -38,7 +38,7 @@ async def run_loop(
     Yields typed events. Caller persists history via AgentAppendEvent.
     """
     local = list(messages)
-    _tools = tools if tools is not None else TOOLS
+    _tools = tools if tools is not None else get_tools()
 
     while True:
         if cancellation.is_cancelled(session_id):

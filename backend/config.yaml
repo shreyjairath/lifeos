@@ -12,3 +12,6 @@ server:
 session:
   token_threshold: 50000   # rotate after this many cumulative tokens
   time_threshold_hours: 4  # rotate if last message was this many hours ago
+
+reflect:
+  projects_enabled: false   # set true to run ProjectsReflector at session rotation

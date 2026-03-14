@@ -1,122 +1,158 @@
-"""Load environment/ and user/ knowledge base files into a system prompt."""
+"""Assemble the system prompt from notes, projects, active instructions, and session context."""
+import datetime
+import re
 from pathlib import Path
 
 from core.events import bus
-from tools.files import USER_DATA, read_status, ONBOARDING_FILES
 
-_PARTS_DIR = Path(__file__).parent / "system_prompt_parts"
+_USER_DATA = Path(__file__).parent.parent.parent / ".user-data"
+_NOTES_DIR = _USER_DATA / "knowledge" / "notes"
+_PROJECTS_DIR = _USER_DATA / "projects"
+_PROMPT_PARTS_FS = _USER_DATA / "prompt-parts"
+_ACTIVE_INSTRUCTIONS_FILE = _PROMPT_PARTS_FS / ".active-instructions"
+_PARTS_CLASSPATH = Path(__file__).parent / "system_prompt_parts"
 
+_DEFAULT_INSTRUCTIONS = "assistant-instructions.md"
 
-def _load_part(name: str) -> str:
-    return (_PARTS_DIR / name).read_text(encoding="utf-8").strip()
-
-
-def _prepare_knowledge() -> str:
-    parts = [
-        _read_dir(USER_DATA / "environment", "Environment"),
-        _read_dir(USER_DATA / "user", "About User"),
-        _read_projects(USER_DATA / "projects"),
-    ]
-    return "\n\n".join(p for p in parts if p)
+_SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+\.md$")
 
 
-def prepare_system_prompt(config: dict, conv_id: str = None) -> str:
-    """Assemble the full system prompt from knowledge files and prompt parts.
+# ── Active instructions ───────────────────────────────────────────────────────
 
-    Loads user and environment knowledge, checks onboarding status, and
-    selects the appropriate persona + onboarding template. Publishes boot
-    events to the event bus as each step completes.
-    """
+def load_active_instructions() -> str:
+    """Return the filename of the currently active instructions file."""
+    if _ACTIVE_INSTRUCTIONS_FILE.exists():
+        name = _ACTIVE_INSTRUCTIONS_FILE.read_text(encoding="utf-8").strip()
+        if name and _SAFE_NAME.match(name):
+            return name
+    return _DEFAULT_INSTRUCTIONS
+
+
+def save_active_instructions(name: str) -> None:
+    _PROMPT_PARTS_FS.mkdir(parents=True, exist_ok=True)
+    _ACTIVE_INSTRUCTIONS_FILE.write_text(name, encoding="utf-8")
+
+
+def load_prompt_part(name: str) -> str:
+    """Load a prompt part: filesystem override takes priority over classpath."""
+    fs_path = _PROMPT_PARTS_FS / name
+    if fs_path.exists():
+        return fs_path.read_text(encoding="utf-8").strip()
+    cp_path = _PARTS_CLASSPATH / name
+    if cp_path.exists():
+        return cp_path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+# ── System prompt assembly ────────────────────────────────────────────────────
+
+def prepare_system_prompt(config: dict, session_id: str = None) -> str:
+    """Assemble the full system prompt."""
     bus.publish({"type": "boot_start"})
 
-    knowledge = _prepare_knowledge()
-    incomplete_onboarding = _incomplete_onboarding_topics()
+    instructions = load_prompt_part(load_active_instructions())
+    notes = _read_notes()
+    projects = _read_projects()
+    session_context = _load_session_context(session_id)
 
-    session_context = _load_session_context(conv_id)
-
-    if incomplete_onboarding:
-        onboarding_block = _onboarding_prompt(incomplete_onboarding)
-        system = f"{_load_part('persona.md')}\n\n{knowledge}\n\n{onboarding_block}"
-    else:
-        system = f"{_load_part('persona.md')}\n\n{knowledge}"
-
+    parts = [instructions]
+    if notes:
+        parts.append(notes)
+    if projects:
+        parts.append(projects)
     if session_context:
-        system += f"\n\n{session_context}"
+        parts.append(session_context)
 
-    system = system.strip()
+    system = "\n\n".join(p for p in parts if p).strip()
     bus.publish({"type": "system_prompt", "chars": len(system)})
     bus.publish({"type": "boot_done"})
     return system
 
 
-def _load_session_context(conv_id: str = None) -> str:
-    if not conv_id:
-        return ""
-    from core.memory import get_conv_summary, summaries_dir
-    sections = []
+# ── Notes ─────────────────────────────────────────────────────────────────────
 
-    conv_summary = get_conv_summary(conv_id)
-    if conv_summary:
-        bus.publish({"type": "knowledge_file", "file": "conv_summary", "label": "Conversation Summary", "status": "loaded", "chars": len(conv_summary)})
-        sections.append(f"## Conversation Summary\n\n{conv_summary}")
-
-    sdir = summaries_dir(conv_id)
-    if sdir.exists():
-        files = sorted(sdir.glob("*.md"))
-        if files:
-            import datetime
-            last = files[-1]
-            content = last.read_text(encoding="utf-8").strip()
-            if content:
-                date_str = datetime.datetime.fromtimestamp(int(last.stem)).strftime("%b %d, %Y %H:%M")
-                bus.publish({"type": "knowledge_file", "file": "last_session", "label": "Last Session", "status": "loaded", "chars": len(content)})
-                sections.append(f"## Last Session — {date_str}\n\n{content}")
-
-    if not sections:
-        return ""
-    return "# Session Context\n\n" + "\n\n".join(sections)
-
-
-def _incomplete_onboarding_topics() -> list[str]:
-    """Return knowledge areas not yet marked done. Publishes onboarding status for each to the event bus."""
-    onboarding = read_status().get("onboarding", {})
-    for topic in ONBOARDING_FILES:
-        bus.publish({"type": "onboarding_status", "file": topic, "status": onboarding.get(topic, "pending")})
-    return [topic for topic in ONBOARDING_FILES if onboarding.get(topic, "pending") != "done"]
-
-
-def _onboarding_prompt(incomplete_topics: list[str]) -> str:
-    topics_list = ", ".join(incomplete_topics)
-    return _load_part("onboarding.md").format(pending_files=topics_list)
-
-
-def _read_dir(dir_path: Path, label: str) -> str:
-    """Read all .md files in a directory and return as a labeled block."""
-    if not dir_path.exists():
+def _read_notes() -> str:
+    if not _NOTES_DIR.exists():
         return ""
     sections = []
-    for md_file in sorted(dir_path.glob("*.md")):
+    for md_file in sorted(_NOTES_DIR.glob("*.md")):
         content = md_file.read_text(encoding="utf-8").strip()
         status = "loaded" if content else "empty"
-        bus.publish({"type": "knowledge_file", "file": md_file.stem, "label": label, "status": status, "chars": len(content)})
+        bus.publish({"type": "knowledge_file", "file": md_file.stem, "label": "Notes", "status": status, "chars": len(content)})
         if content:
-            title = md_file.stem.replace("-", " ").replace("_", " ").title()
-            sections.append(f"### {title}\n{content}")
+            sections.append(f"### {md_file.name}\n{content}")
     if not sections:
         return ""
-    return f"## {label}\n\n" + "\n\n".join(sections)
+    return "## Notes\n\n" + "\n\n".join(sections)
 
 
-def _read_projects(projects_path: Path) -> str:
-    """Read all project files."""
-    if not projects_path.exists():
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+def _read_projects() -> str:
+    if not _PROJECTS_DIR.exists():
         return ""
     projects = []
-    for md_file in sorted(projects_path.glob("*.md")):
-        content = md_file.read_text(encoding="utf-8").strip()
-        bus.publish({"type": "knowledge_file", "file": md_file.stem, "label": "Projects", "status": "loaded" if content else "empty", "chars": len(content)})
+    for proj_dir in sorted(_PROJECTS_DIR.iterdir()):
+        if not proj_dir.is_dir():
+            continue
+        md = proj_dir / "project.md"
+        if not md.exists():
+            continue
+        content = md.read_text(encoding="utf-8").strip()
+        bus.publish({"type": "knowledge_file", "file": proj_dir.name, "label": "Projects", "status": "loaded" if content else "empty", "chars": len(content)})
         if content:
-            projects.append(f"### {md_file.stem}\n{content}")
+            projects.append(content)
     if not projects:
-        return "## Active Projects\n\nNo active projects yet."
-    return "## Active Projects\n\n" + "\n\n".join(projects)
+        return ""
+    return "## Active Projects\n\n" + "\n\n---\n\n".join(projects)
+
+
+# ── Session context ───────────────────────────────────────────────────────────
+
+def _load_session_context(session_id: str = None) -> str:
+    if not session_id:
+        return ""
+    from core.memory import get_parent_summary, get_session_meta
+    meta = get_session_meta(session_id)
+    parent_id = meta.get("parent_session_id") if meta else None
+    if not parent_id:
+        return ""
+
+    summary = get_parent_summary(session_id)
+    if not summary:
+        return ""
+
+    # Use parent's created_at for date label
+    from core.memory import _load_meta
+    parent_meta = _load_meta(parent_id)
+    ts = parent_meta.get("created_at", 0)
+    date_str = datetime.datetime.fromtimestamp(ts).strftime("%b %d, %Y %H:%M") if ts else ""
+
+    label = f"## Last Session — {date_str}" if date_str else "## Last Session"
+    bus.publish({"type": "knowledge_file", "file": "last_session", "label": "Session Context", "status": "loaded", "chars": len(summary)})
+    return f"# Session Context\n\n{label}\n\n{summary}"
+
+
+# ── Prompt parts listing ──────────────────────────────────────────────────────
+
+_CLASSPATH_PARTS = {
+    "assistant-instructions.md",
+    "assistant-instructions-simple.md",
+    "reflect-notes.md",
+    "reflect-projects.md",
+    "summarize-session.md",
+}
+
+
+def list_prompt_parts() -> list[dict]:
+    """Return all prompt part names with their active status."""
+    active = load_active_instructions()
+    names = set(_CLASSPATH_PARTS)
+    if _PROMPT_PARTS_FS.exists():
+        for p in _PROMPT_PARTS_FS.glob("*.md"):
+            if _SAFE_NAME.match(p.name):
+                names.add(p.name)
+    return sorted(
+        [{"name": n, "active": n == active} for n in names],
+        key=lambda x: x["name"],
+    )
