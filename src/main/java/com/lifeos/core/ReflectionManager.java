@@ -36,13 +36,9 @@ public class ReflectionManager {
      * Runs all reflection agents for the given session.
      * Returns a combined human-readable summary of what was persisted, or null if nothing.
      */
-    public String run(String sessionId, List<Map<String, Object>> history, String pendingMessage) {
+    public String run(String sessionId, List<Map<String, Object>> history) {
         var transcript = SessionManager.buildTranscript(history);
         if (transcript.isBlank()) return null;
-
-        if (pendingMessage != null && !pendingMessage.isEmpty()) {
-            transcript += "\n\nUSER (pending — triggered session rotation): " + pendingMessage;
-        }
 
         var notesSummary    = notesReflector.run(transcript);
         var projectsSummary = config.reflect() != null && config.reflect().projectsEnabled()

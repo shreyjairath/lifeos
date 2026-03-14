@@ -69,7 +69,7 @@ public class ChatManager {
         var rotatingSse = Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason())));
 
         return rotatingSse.concatWith(Mono.fromCallable(() -> {
-            var summary = reflectionManager.run(sessionId, oldHistory, message);
+            var summary = reflectionManager.run(sessionId, oldHistory);
             hooks.fire("on_reflection_done", Map.of("session_id", sessionId));
             return summary != null ? summary : "";
         }).subscribeOn(Schedulers.boundedElastic())
