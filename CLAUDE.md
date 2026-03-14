@@ -113,13 +113,35 @@ Assembled fresh on every request by `SystemPrompt.java`:
   [## Last Session — <date>]  ← most recent session summary
 ```
 
-## Continuous Learning
+## Knowledge Evolution Flow
 
-Reflection runs **only at session rotation**, not after every turn:
+Reflection runs **only at session rotation** (50k tokens or 4h inactivity), never after individual turns.
 
-1. **Knowledge update**: Haiku reviews the session transcript and uses `list_notes`/`read_note`/`write_note`/`delete_note` to persist new facts about the user, and `update_project` to keep project state current.
-2. **Session archive**: The session is summarized and stored.
-3. **Conversation summary**: Rolling `summary.md` is updated to carry context forward.
+### Trigger
+`ChatManager` detects rotation via `SessionManager.checkRotation()`. Before starting the new session it calls `ReflectionManager.run()` and emits a `reflection` SSE event to the frontend (rendered as a "Memory" bubble in chat).
+
+### Reflection pipeline (sequential, all Haiku)
+
+1. **`NotesReflector`** — reads the full session transcript, then uses `list_notes` / `read_note` / `write_note` / `delete_note` / `grep_notes` / `get_current_datetime` to update `.user-data/knowledge/notes/*.md`. Prompt: `reflect-notes.md` (therapist/coach persona writing internal clinical notes). Returns a bullet summary of what was saved.
+
+2. **`ProjectsReflector`** — updates project files using project CRUD tools + `get_current_datetime`. Controlled by `reflect.projects-enabled` in `application.yml` (default: `false`).
+
+3. **`SessionSummarizer`** — no tools; writes a prose `summary.md` for the just-ended session. This summary is injected into the next session's system prompt as `# Session Context`.
+
+### How notes enter the system prompt
+On every request, `Knowledge.getKnowledgeSection()` reads all `*.md` files from `.user-data/knowledge/notes/` and injects them as:
+```
+## Previous Notes
+### <filename without .md>
+<file content>
+```
+Notes are loaded fresh on every turn — so updates from the last reflection are immediately visible to the main agent.
+
+### Prompt-part overrides
+`Knowledge.loadPromptPart(name)` checks `.user-data/prompt-parts/{name}` first (user override), then falls back to classpath `/prompt-parts/{name}`. This lets you customize `reflect-notes.md`, `assistant-instructions.md`, etc. without touching the source.
+
+### Known quirk — Haiku double-escapes newlines
+Haiku sometimes writes `\\n` (literal backslash-n) in `write_note` content instead of real newlines. Fixed in `AgentNotesStore.writeNote()` which calls `content.replace("\\n", "\n")` before writing to disk.
 
 ## Adding New Tools
 
