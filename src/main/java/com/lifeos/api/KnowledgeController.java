@@ -12,14 +12,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api")
 public class KnowledgeController {
 
-    private static final List<String> ALLOWED_FILES = List.of(
-            "identity", "routines", "tools", "services", "integrations");
+    private static final List<String> ALLOWED_FILES = List.of("agent-notes");
 
     private final KnowledgeFiles knowledgeFiles;
     private final EventBus eventBus;
@@ -55,27 +53,45 @@ public class KnowledgeController {
 
     // ── Prompt parts ─────────────────────────────────────────────────────────────
 
+    private static final List<String> PROMPT_PARTS = List.of("system-instructions.md", "onboarding.md");
+    private static final Path PROMPT_PARTS_DIR = Path.of(System.getProperty("user.dir"))
+            .resolve(".user-data/prompt-parts").normalize();
+
     @GetMapping("/prompt-parts")
     public Map<String, Object> listPromptParts() {
-        try (var stream = getClass().getResourceAsStream("/prompt-parts/")) {
-            // Resource listing isn't straightforward; return known parts
-            return Map.of("parts", List.of("persona.md", "onboarding.md"));
-        } catch (Exception e) {
-            return Map.of("parts", List.of());
-        }
+        return Map.of("parts", PROMPT_PARTS);
     }
 
     @GetMapping("/prompt-parts/{name}")
     public Map<String, Object> getPromptPart(@PathVariable String name) {
-        try (var stream = getClass().getResourceAsStream("/prompt-parts/" + name)) {
-            if (stream == null) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Prompt part '" + name + "' not found");
+        if (!PROMPT_PARTS.contains(name))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown prompt part: " + name);
+        // User override takes precedence over classpath default
+        var override = PROMPT_PARTS_DIR.resolve(name);
+        try {
+            if (Files.exists(override)) {
+                return Map.of("name", name, "content", Files.readString(override, StandardCharsets.UTF_8));
             }
-            var content = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            return Map.of("name", name, "content", content);
+            try (var stream = getClass().getResourceAsStream("/prompt-parts/" + name)) {
+                if (stream == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found: " + name);
+                return Map.of("name", name, "content", new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+            }
         } catch (ResponseStatusException e) {
             throw e;
-        } catch (Exception e) {
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+        }
+    }
+
+    @PutMapping("/prompt-parts/{name}")
+    public Map<String, Object> putPromptPart(@PathVariable String name, @RequestBody Map<String, String> body) {
+        if (!PROMPT_PARTS.contains(name))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown prompt part: " + name);
+        try {
+            Files.createDirectories(PROMPT_PARTS_DIR);
+            Files.writeString(PROMPT_PARTS_DIR.resolve(name), body.getOrDefault("content", ""), StandardCharsets.UTF_8);
+            return Map.of("name", name, "status", "saved");
+        } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
         }
     }

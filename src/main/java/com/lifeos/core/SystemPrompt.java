@@ -23,7 +23,7 @@ public class SystemPrompt {
     public String prepare(String sessionId) {
         eventBus.publish(Map.of("type", "boot_start"));
 
-        var persona = Knowledge.loadPromptPart("persona.md");
+        var persona = Knowledge.loadPromptPart("system-instructions.md");
         var knowledgeSection = knowledge.getKnowledgeSection();
         var incompleteTopics = knowledge.incompleteOnboardingTopics();
 

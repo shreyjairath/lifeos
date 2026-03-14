@@ -55,11 +55,12 @@ public class ToolsRegistry {
                     projName(input), (String) input.get("filename"), (String) input.getOrDefault("content", ""));
             case "delete_project_file" -> projects.deleteFile(projName(input), (String) input.get("filename"));
 
-            // Knowledge
-            case "read_knowledge" -> knowledgeFiles.read((String) input.get("file"));
-            case "update_knowledge" -> knowledgeFiles.update((String) input.get("file"), (String) input.get("content"));
-            case "set_onboarding_status" -> knowledgeFiles.setOnboardingStatus(
-                    (String) input.get("file"), (String) input.get("status"));
+            // Notes
+            case "list_notes"  -> knowledgeFiles.listNotes();
+            case "read_note"   -> knowledgeFiles.readNote((String) input.get("file"));
+            case "write_note"  -> knowledgeFiles.writeNote((String) input.get("file"), (String) input.get("content"));
+            case "delete_note" -> knowledgeFiles.deleteNote((String) input.get("file"));
+            case "grep_notes"  -> knowledgeFiles.grepNotes((String) input.get("pattern"));
 
             // Filesystem
             case "write_file" -> fileSystem.writeFile((String) input.get("path"), (String) input.get("content"));
@@ -153,19 +154,27 @@ public class ToolsRegistry {
             tool("web_search",
                     "Search the web for information.",
                     props(prop("query", "string", "Search query")), "query"),
-            tool("read_knowledge", "Read a knowledge base file.",
-                    props(propEnum("file", List.of("identity", "routines", "environment"), "Which file")),
+            tool("list_notes",
+                    "List all files in your notes directory — your persistent memory store. Use this to see what you've saved before reading or updating a specific note.",
+                    props(), new String[]{}),
+            tool("read_note",
+                    "Read a specific note file from your notes directory. Use this to recall saved information about the user, preferences, ongoing context, or anything else you've stored.",
+                    props(prop("file", "string", "Filename (e.g. 'user.md', 'preferences.md')")),
                     "file"),
-            tool("update_knowledge", "Update a knowledge base file.",
+            tool("write_note",
+                    "Create or overwrite a note file in your notes directory — your persistent memory. Use this to save anything worth remembering about the user, preferences, environment." ,
                     props(
-                            propEnum("file", List.of("identity", "routines", "environment"), "Which file"),
-                            prop("content", "string", "Full new content")
+                            prop("file", "string", "Filename (e.g. 'user.md')"),
+                            prop("content", "string", "Full file content")
                     ), "file", "content"),
-            tool("set_onboarding_status", "Mark a knowledge area as done or pending.",
-                    props(
-                            propEnum("file", List.of("identity", "routines", "environment"), "Knowledge area"),
-                            propEnum("status", List.of("pending", "done"), "New status")
-                    ), "file", "status"),
+            tool("delete_note",
+                    "Delete a note file from your notes directory.",
+                    props(prop("file", "string", "Filename to delete")),
+                    "file"),
+            tool("grep_notes",
+                    "Search across all your note files using a regex pattern. Returns matching lines with filenames and line numbers. Useful for finding specific facts without reading every file.",
+                    props(prop("pattern", "string", "Regex pattern to search for (case-insensitive)")),
+                    "pattern"),
             tool("write_file", "Create or overwrite a file under .user-data/.",
                     props(prop("path", "string", "Relative path"), prop("content", "string", "File content")),
                     "path", "content"),

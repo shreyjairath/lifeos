@@ -157,7 +157,9 @@ public class Session {
                     store.saveMeta(sessionId, meta);
                 }
             }
-            messages.add(message);
+            var tagged = new LinkedHashMap<>(message);
+            tagged.putIfAbsent("_ts", epochSeconds());
+            messages.add(tagged);
             store.saveMessages(sessionId, messages);
         } finally {
             lock.writeLock().unlock();
@@ -327,8 +329,9 @@ public class Session {
             var role = (String) msg.get("role");
             if (!"user".equals(role) && !"assistant".equals(role)) continue;
             var content = msg.get("content");
+            var ts = msg.containsKey("_ts") ? ((Number) msg.get("_ts")).longValue() : 0L;
             if (content instanceof String text) {
-                display.add(Map.of("role", role, "text", text, "raw_index", i));
+                display.add(Map.of("role", role, "text", text, "raw_index", i, "ts", ts));
             } else if (content instanceof List<?> blocks) {
                 var textParts = new ArrayList<String>();
                 for (var block : blocks) {
@@ -337,7 +340,7 @@ public class Session {
                     }
                 }
                 var text = String.join(" ", textParts);
-                if (!text.isEmpty()) display.add(Map.of("role", role, "text", text, "raw_index", i));
+                if (!text.isEmpty()) display.add(Map.of("role", role, "text", text, "raw_index", i, "ts", ts));
             }
         }
         return display;

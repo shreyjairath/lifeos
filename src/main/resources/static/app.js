@@ -44,7 +44,7 @@ async function loadProjects() {
       const li = document.createElement("li");
       li.className = "project-item";
       li.innerHTML = `<div>${p.name.replace(/-/g, " ")}</div><div class="project-status">${p.status}</div>`;
-      li.addEventListener("click", () => openProjectSession(p.name));
+      li.addEventListener("click", () => { closeSidebar(); openProjectSession(p.name); });
       projectListEl.appendChild(li);
     }
   } catch (e) {
@@ -57,7 +57,7 @@ document.getElementById("knowledge-list").addEventListener("click", (e) => {
   const link = e.target.closest("[data-file]");
   if (!link) return;
   e.preventDefault();
-  inputEl.value = `Show me my ${link.dataset.file} knowledge file`;
+  inputEl.value = `Show me my agent notes`;
   inputEl.focus();
 });
 
@@ -78,6 +78,7 @@ async function loadSessions() {
       li.className = "project-item" + (s.id === SESSION_ID ? " active-conv" : "");
       li.textContent = s.title || s.name;
       li.addEventListener("click", async () => {
+        closeSidebar();
         setSession(s.id);
         Chat.reset(s.id);
         await Chat.loadHistory(s.id);
@@ -102,6 +103,15 @@ async function openNewChat() {
 }
 
 document.getElementById("new-chat-btn").addEventListener("click", openNewChat);
+document.getElementById("new-chat-mobile").addEventListener("click", () => { closeSidebar(); openNewChat(); });
+
+// ── Mobile sidebar ─────────────────────────────────────────────────────────────
+const sidebar = document.getElementById("sidebar");
+const overlay = document.getElementById("sidebar-overlay");
+function openSidebar()  { sidebar.classList.add("open"); overlay.classList.add("open"); }
+function closeSidebar() { sidebar.classList.remove("open"); overlay.classList.remove("open"); }
+document.getElementById("hamburger").addEventListener("click", openSidebar);
+overlay.addEventListener("click", closeSidebar);
 
 // ── Sidecar tab switching ─────────────────────────────────────────────────────
 const PANELS = {

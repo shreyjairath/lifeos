@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -21,11 +22,11 @@ import java.util.*;
 public class Knowledge {
 
     private static final Logger log = LoggerFactory.getLogger(Knowledge.class);
-    private static final List<String> ONBOARDING_FILES = List.of(
-            "identity", "routines", "environment");
+    private static final List<String> ONBOARDING_FILES = List.of();
     private static final String HAIKU_MODEL = "claude-haiku-4-5-20251001";
     private static final Set<String> REFLECT_TOOL_NAMES = Set.of(
-            "update_knowledge", "create_project", "update_project", "write_file", "update_file",
+            "list_notes", "read_note", "write_note", "delete_note",
+            "create_project", "update_project", "write_file", "update_file",
             "list_projects", "read_project",
             "add_project_file", "read_project_file", "update_project_file", "delete_project_file");
 
@@ -79,10 +80,22 @@ public class Knowledge {
 
     public String getKnowledgeSection() {
         var parts = new ArrayList<String>();
-        var env = readDir("environment", "Environment");
-        if (!env.isEmpty()) parts.add(env);
-        var user = readDir("user", "About User");
-        if (!user.isEmpty()) parts.add(user);
+        var noteFiles = store.listNotes();
+        if (!noteFiles.isEmpty()) {
+            var sections = new ArrayList<String>();
+            for (var filename : noteFiles) {
+                var content = store.readNote(filename);
+                if (content == null || content.isBlank()) continue;
+                var title = filename.replaceAll("\\.md$", "").replace("-", " ").replace("_", " ");
+                title = title.substring(0, 1).toUpperCase() + title.substring(1);
+                sections.add("### " + title + "\n" + content.strip());
+                eventBus.publish(Map.of("type", "knowledge_file", "file", filename,
+                        "label", "Notes", "status", "loaded", "chars", content.length()));
+            }
+            if (!sections.isEmpty()) {
+                parts.add("## Notes\n\n" + String.join("\n\n", sections));
+            }
+        }
         var projects = readProjects();
         if (!projects.isEmpty()) parts.add(projects);
         return String.join("\n\n", parts);
@@ -145,6 +158,10 @@ public class Knowledge {
     }
 
     static String loadPromptPart(String name) {
+        var override = Path.of(System.getProperty("user.dir")).resolve(".user-data/prompt-parts/" + name);
+        if (Files.exists(override)) {
+            try { return Files.readString(override, StandardCharsets.UTF_8).strip(); } catch (IOException ignored) {}
+        }
         try (var stream = Knowledge.class.getResourceAsStream("/prompt-parts/" + name)) {
             if (stream == null) return "";
             return new String(stream.readAllBytes(), StandardCharsets.UTF_8).strip();

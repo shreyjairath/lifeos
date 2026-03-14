@@ -1,132 +1,148 @@
 # lifeos — Claude Code Configuration
 
-lifeos is a personal life-OS agent. It is a FastAPI backend + vanilla JS frontend that wraps Claude (via the Anthropic SDK) into a persistent, self-learning personal assistant. Claude Code sessions here act as the development partner.
+lifeos is a personal life-OS agent. It is a Spring Boot (Java 25) + WebFlux backend with a vanilla JS frontend that wraps Claude (via raw Anthropic HTTP API) into a persistent, self-learning personal assistant.
 
 ## Product Vision
 
-An agent that knows you deeply and grows with you over time. It maintains a knowledge base about the user (identity, routines, services, projects), learns from every conversation, and can take action through tools. The long-term vision: autocomplete everything in a person's life that can be automated or assisted.
+An agent that knows you deeply and grows with you over time. It maintains notes about the user, tracks active projects, learns from every conversation, and can take action through tools. The long-term vision: autocomplete everything in a person's life that can be automated or assisted.
 
 ## Project Structure
 
 ```
-lifeos/
-├── environment/              # Knowledge: world the agent operates in
-│   ├── tools.md              # Available tools description
-│   ├── services.md           # External services the user has
-│   └── integrations.md       # API keys, auth, MCP connections
+lifeos/                          # Project root IS the Java application
 │
-├── user/                     # Knowledge: about the user
-│   ├── identity.md           # Who they are, values, goals, context
-│   ├── routines.md           # Daily/weekly patterns
-│   └── projects/             # One .md file per active project (auto-managed)
-│
-├── .user-data/               # Runtime data (gitignored)
-│   └── conversations/
-│       └── {conv_id}/
-│           ├── meta.json         # name, project_name, sessions[], current_session
-│           ├── summary.md        # Rolling conversation-level summary (updated at rotation)
-│           ├── sessions/
-│           │   └── {session_id}.json  # Full message history
-│           └── summaries/
-│               └── {timestamp}.md     # Per-session archives
-│
-├── backend/                  # The agent application
-│   ├── main.py               # FastAPI server + all API routes
-│   ├── config.yaml           # Model, session rotation thresholds
+├── src/main/java/com/lifeos/
+│   ├── api/                     # REST controllers
+│   │   ├── ChatController       # POST /api/chat (SSE stream)
+│   │   ├── ConversationController
+│   │   ├── KnowledgeController  # /api/knowledge, /api/prompt-parts
+│   │   └── CcController         # /api/cc/chat (Claude Code sidecar)
+│   ├── config/
+│   │   └── AppConfig            # @ConfigurationProperties record
 │   ├── core/
-│   │   ├── llm_client.py     # Anthropic streaming API wrapper
-│   │   ├── tools_client.py   # Tool dispatch, gating, cancellation
-│   │   ├── agent_client.py   # Agentic loop (LLM turns + tool turns)
-│   │   ├── conversation_manager.py  # Session lifecycle, SSE serialization
-│   │   ├── reflection.py     # Session reflection + knowledge base updates
-│   │   ├── knowledge.py      # Assembles system prompt from knowledge files
-│   │   ├── memory.py         # Conversation + session storage
-│   │   ├── events.py         # Event bus for SSE to frontend
-│   │   ├── tools.py          # Tool definitions (TOOLS list) + dispatch
-│   │   └── system_prompt_parts/
-│   │       ├── persona.md    # Agent identity, capabilities
-│   │       └── onboarding.md # Shown when knowledge files are incomplete
+│   │   ├── ChatManager          # Session lifecycle, SSE serialization, rotation
+│   │   ├── Knowledge            # System prompt assembly + reflection runner
+│   │   ├── Session              # Message history, session summarization
+│   │   ├── SystemPrompt         # Builds the full system prompt per request
+│   │   ├── EventBus             # SSE event bus (GET /api/events)
+│   │   └── Hooks                # Shell hooks (on_kb_reflect, on_session_rotate, etc.)
+│   ├── executor/
+│   │   ├── LlmClient            # Raw HTTP streaming to Anthropic API
+│   │   ├── Executor             # Agentic loop (LLM turns + tool turns)
+│   │   ├── ToolsClient          # Tool dispatch, gating, confirmation
+│   │   ├── ToolsRegistry        # Tool definitions (Anthropic format) + dispatch
+│   │   ├── Cancellation         # Per-session stop support
+│   │   ├── Confirmations        # Tool confirmation request/response
+│   │   └── events/              # Typed executor events (LlmEvent, ToolEvent, AgentAppendEvent)
+│   ├── store/
+│   │   ├── KnowledgeStore       # File I/O for .user-data/knowledge/ and notes/
+│   │   ├── ProjectStore         # File I/O for .user-data/projects/
+│   │   └── SessionStore         # File I/O for .user-data/conversations/
 │   └── tools/
-│       ├── projects.py       # CRUD on user/projects/
-│       ├── files.py          # Read/write named knowledge files
-│       ├── fs.py             # Filesystem tools (write/read/update/list under project root)
-│       └── web.py            # DuckDuckGo web search
+│       ├── KnowledgeFiles       # Notes dir tools (list/read/write/delete/grep)
+│       ├── Projects             # Project CRUD
+│       ├── FileSystem           # General file tools under .user-data/
+│       ├── WebSearch            # DuckDuckGo search
+│       ├── Browse               # Web page fetch (Jsoup)
+│       ├── Media                # Image display
+│       ├── Redfin               # Redfin listing/search parser
+│       └── PropertyReport       # Property analysis tool
 │
-└── frontend/                 # Web UI
-    ├── index.html
-    ├── app.js                # Main entry, sidebar, conversation switching
-    ├── styles.css
-    └── modules/
-        ├── chat.js           # Main chat UI + SSE streaming
-        ├── cc.js             # Claude Code sidecar chat
-        ├── inspector.js      # Request/response JSON inspector
-        ├── events-panel.js   # Live event stream panel
-        └── prompt.js         # System prompt parts editor
+├── src/main/resources/
+│   ├── application.yml          # server.port, lifeos.model, lifeos.anthropic-api-key, lifeos.paths, lifeos.session
+│   ├── prompt-parts/
+│   │   ├── system-instructions.md  # Agent identity and capabilities
+│   │   ├── onboarding.md           # (unused — onboarding disabled)
+│   │   ├── reflect.md              # Haiku memory agent prompt (runs at session rotation)
+│   │   └── summarize-session.md    # Haiku session summarization prompt
+│   └── static/                  # Served by Spring Boot at /
+│       ├── index.html
+│       ├── app.js               # Main entry, sidebar, session switching
+│       ├── styles.css
+│       └── modules/
+│           ├── chat.js          # Chat UI + SSE streaming
+│           ├── cc.js            # Claude Code sidecar chat
+│           ├── inspector.js     # Request/response JSON inspector
+│           ├── events-panel.js  # Live event stream panel
+│           └── prompt.js        # System prompt parts editor
+│
+├── .user-data/                  # Runtime data (gitignored)
+│   ├── conversations/
+│   │   └── {conv_id}/
+│   │       ├── meta.json            # name, project_name, sessions[], current_session
+│   │       ├── summary.md           # Rolling conversation-level summary
+│   │       └── sessions/
+│   │           └── {session_id}.json  # Full message history (messages tagged with _ts)
+│   ├── knowledge/
+│   │   └── notes/               # Agent notes directory (persistent memory)
+│   │       └── *.md             # One file per topic (e.g. user.md, preferences.md)
+│   ├── projects/
+│   │   └── {slug}/
+│   │       ├── project.md       # Structured project doc (goal, snapshot, next_action, etc.)
+│   │       └── data/            # Project file attachments
+│   └── prompt-parts/            # User overrides for prompt-parts (takes precedence over classpath)
+│
+└── build.gradle.kts             # Spring Boot 3.5.3, Java 25, WebFlux, Jackson, Jsoup
 ```
 
-## Running the Agent
+## Running
 
 ```bash
-cd backend
-pip install -r requirements.txt
+export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
 export ANTHROPIC_API_KEY=your_key_here
-python run.py
+./gradlew bootRun
 # Open http://localhost:8000
 ```
 
 ## Conversation + Session Model
 
-- **Conversation**: a named container scoped to a topic or project. The main conversation (`project_name: "__main__"`) always exists. Project conversations are created when the user clicks a project in the sidebar.
-- **Session**: a window of message history within a conversation. Sessions rotate automatically when they hit 50k tokens or 4h of inactivity.
+- **Conversation**: a named container scoped to a topic or project. A main conversation always exists; project conversations are created when the user opens a project.
+- **Session**: a time-bounded window of messages within a conversation. Rotates at 50k tokens or 4h inactivity.
 - **Data**: stored in `.user-data/conversations/{conv_id}/` — not in memory.
 
 ## System Prompt Structure
 
-Assembled fresh on every request by `knowledge.py`:
+Assembled fresh on every request by `SystemPrompt.java`:
 
 ```
-[persona.md]
-[## Environment]  ← all .md files in environment/
-[## About User]   ← all .md files in user/
-[## Active Projects] ← all .md files in user/projects/
-[Onboarding block]   ← only if identity/routines/services incomplete
-[# Session Context]  ← only if conv has history
-  [## Conversation Summary]  ← summary.md (rolling, updated at rotation)
-  [## Last Session — <date>] ← most recent summaries/{ts}.md
+[system-instructions.md]
+[## Notes]        ← all files in .user-data/knowledge/notes/
+[## Active Projects] ← all project.md files in .user-data/projects/
+[# Session Context]  ← only if conversation has history
+  [## Conversation Summary]   ← summary.md (rolling, updated at rotation)
+  [## Last Session — <date>]  ← most recent session summary
 ```
 
 ## Continuous Learning
 
 Reflection runs **only at session rotation**, not after every turn:
 
-1. **Tier 1 — Knowledge base update**: Haiku reviews the session and uses tools to persist new facts (identity, routines, services, projects).
-2. **Tier 2 — Session archive**: Haiku writes a timestamped summary to `summaries/{ts}.md`.
-3. **Tier 3 — Conversation summary**: Haiku merges the existing `summary.md` with the new session into an updated rolling summary.
+1. **Knowledge update**: Haiku reviews the session transcript and uses `list_notes`/`read_note`/`write_note`/`delete_note` to persist new facts about the user, and `update_project` to keep project state current.
+2. **Session archive**: The session is summarized and stored.
+3. **Conversation summary**: Rolling `summary.md` is updated to carry context forward.
 
 ## Adding New Tools
 
-1. Implement in `backend/tools/`
-2. Add tool definition to `TOOLS` in `backend/core/tools.py`
-3. Add dispatch case to `dispatch_tool()` in `backend/core/tools.py`
-
-## Adding New Knowledge Files
-
-1. Create `.md` in `environment/` or `user/` — auto-loaded by `knowledge.py`
-2. Add to `ALLOWED_FILES` in `backend/tools/files.py` if the agent should be able to write it
+1. Implement in `src/main/java/com/lifeos/tools/`
+2. Inject into `ToolsRegistry` constructor
+3. Add tool definition to `TOOLS` list in `ToolsRegistry.getTools()`
+4. Add dispatch case to `ToolsRegistry.dispatch()`
 
 ## Key API Routes
 
 | Method | Route | Purpose |
 |--------|-------|---------|
 | POST | `/api/chat` | Send message, stream SSE response |
-| GET | `/api/chat/{conv_id}/{session_id}` | Load chat history |
-| DELETE | `/api/chat/{conv_id}/{session_id}` | Clear session |
-| POST | `/api/chat/{conv_id}/{session_id}/truncate` | Rewind chat to index |
-| GET | `/api/conversations` | List all conversations |
+| POST | `/api/chat/{convId}/{sessionId}/stop` | Cancel in-progress response |
+| POST | `/api/chat/{convId}/{sessionId}/tool-confirm` | Confirm/deny a tool call |
+| GET | `/api/chat/{convId}/{sessionId}` | Load chat history |
+| DELETE | `/api/chat/{convId}/{sessionId}` | Clear session |
+| GET | `/api/conversations` | List conversations |
 | GET | `/api/conversations/main` | Get/create main conversation |
 | POST | `/api/conversations/for-project` | Get/create project conversation |
+| GET | `/api/sessions` | List recent sessions |
 | GET | `/api/projects` | List projects |
-| GET/PUT | `/api/knowledge/{file_key}` | Read/write knowledge files |
+| GET/PUT | `/api/knowledge/{fileKey}` | Read/write knowledge (legacy single-file view) |
 | GET/PUT | `/api/prompt-parts/{name}` | Read/write system prompt parts |
-| GET | `/api/events` | SSE event stream |
+| GET | `/api/events` | SSE event bus stream |
 | POST | `/api/cc/chat` | Claude Code sidecar chat |

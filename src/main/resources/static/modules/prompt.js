@@ -27,7 +27,7 @@ export async function load() {
     btn.addEventListener("click", () => selectFile(name));
     promptFileList.appendChild(btn);
   }
-  const defaultFile = data.parts.includes("persona.md") ? "persona.md" : data.parts[0];
+  const defaultFile = data.parts.includes("system-instructions.md") ? "system-instructions.md" : data.parts[0];
   if (defaultFile) selectFile(defaultFile);
 }
 

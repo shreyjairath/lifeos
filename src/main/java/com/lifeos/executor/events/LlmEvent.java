@@ -12,8 +12,9 @@ public sealed interface LlmEvent extends ExecutorEvent
     record Request(
         String model,
         int maxTokens,
-        int messageCount,
-        String system
+        String system,
+        List<Map<String, Object>> messages,
+        List<Map<String, Object>> tools
     ) implements LlmEvent {}
 
     record Text(String text) implements LlmEvent {}

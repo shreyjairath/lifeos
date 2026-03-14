@@ -37,7 +37,18 @@ async function rewindTo(msgEl, fromIndex) {
   historyIndex = fromIndex;
 }
 
-export function addMessage(role, content, msgIndex) {
+function formatTs(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
+      d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+export function addMessage(role, content, msgIndex, ts) {
   const msg = document.createElement("div");
   msg.className = `msg ${role}`;
 
@@ -48,6 +59,13 @@ export function addMessage(role, content, msgIndex) {
   label.className = "msg-label";
   label.textContent = role === "user" ? "You" : "Agent";
   header.appendChild(label);
+
+  if (ts) {
+    const time = document.createElement("span");
+    time.className = "msg-ts";
+    time.textContent = formatTs(ts);
+    header.appendChild(time);
+  }
 
   if (role === "user" && msgIndex !== undefined) {
     const rewindBtn = document.createElement("button");
@@ -138,7 +156,7 @@ export async function loadHistory(sessionId) {
     const data = await resp.json();
     for (const msg of data.messages ?? []) {
       const role = msg.role === "assistant" ? "agent" : "user";
-      addMessage(role, msg.text, msg.raw_index);
+      addMessage(role, msg.text, msg.raw_index, msg.ts);
     }
     historyIndex = data.total ?? 0;
   } catch (e) {
@@ -159,7 +177,7 @@ async function sendMessage(getSessionId, onProjectRefresh) {
   setAgentRunning(true);
 
   const userMsgIndex = historyIndex;
-  addMessage("user", text, userMsgIndex);
+  addMessage("user", text, userMsgIndex, Math.floor(Date.now() / 1000));
   historyIndex += 1;
   addTypingIndicator();
 

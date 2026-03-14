@@ -143,7 +143,7 @@ public class ChatManager {
         Map<String, Object> payload = switch (event) {
             case LlmEvent.Request r -> Map.of("type", "request_json", "payload",
                     Map.of("model", r.model(), "max_tokens", r.maxTokens(),
-                            "messages", r.messageCount(), "system", r.system()));
+                            "system", r.system(), "messages", r.messages(), "tools", r.tools()));
             case LlmEvent.Text t -> Map.of("type", "text", "text", t.text());
             case LlmEvent.ToolCall tc -> Map.of("type", "tool_call", "name", tc.name(), "input", tc.input());
             case LlmEvent.Response r -> Map.of("type", "response_json", "payload",

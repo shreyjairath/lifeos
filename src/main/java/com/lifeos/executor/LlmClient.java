@@ -67,7 +67,7 @@ public class LlmClient {
             LlmResult result
     ) {
         return Flux.create(sink -> {
-            sink.next(new LlmEvent.Request(model, maxTokens, messages.size(), system));
+            sink.next(new LlmEvent.Request(model, maxTokens, system, messages, tools != null ? tools : List.of()));
 
             streamExecutor.submit(() -> {
                 try {
@@ -140,7 +140,12 @@ public class LlmClient {
         var body = new LinkedHashMap<String, Object>();
         body.put("model", model);
         body.put("system", system);
-        body.put("messages", messages);
+        body.put("messages", messages.stream()
+                .map(m -> m.entrySet().stream()
+                        .filter(e -> !e.getKey().startsWith("_"))
+                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                                (a, b) -> a, LinkedHashMap::new)))
+                .toList());
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);
         }
