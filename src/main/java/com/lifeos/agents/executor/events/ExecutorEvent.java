@@ -1,4 +1,4 @@
-package com.lifeos.executor.events;
+package com.lifeos.agents.executor.events;
 
 /**
  * Marker interface for all events emitted by the executor pipeline.

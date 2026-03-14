@@ -1,5 +1,6 @@
 import { renderMarkdown } from "./utils.js";
 import { setPendingRequest, resolveWithResponse } from "./inspector.js";
+import * as Voice from "./voice.js";
 
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("input");
@@ -18,6 +19,7 @@ let currentToolBlock = null;
 let historyIndex = 0;
 let _getSessionId = () => null;
 let _onRotate = (_newSessionId) => {};
+let _onProjectRefresh = () => {};
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -282,6 +284,7 @@ async function sendMessage(getSessionId, onProjectRefresh) {
           scrollToBottom();
         } else if (event.type === "tool_confirm_request") {
           removeTypingIndicator();
+          Voice.cancelSpeech();
           const confirm = document.createElement("div");
           confirm.className = "tool-confirm";
           confirm.innerHTML = `
@@ -354,15 +357,19 @@ async function sendMessage(getSessionId, onProjectRefresh) {
           addMessage("agent", `⚠ Error: ${event.text}${event.detail ? "\n\n" + event.detail : ""}`);
         } else if (event.type === "stopped") {
           removeTypingIndicator();
+          Voice.cancelSpeech();
           currentMsgEl = null;
           currentAgentBubble = null;
           currentAgentText = "";
           currentToolBlock = null;
         } else if (event.type === "done") {
+          removeTypingIndicator();
+          const spokenText = currentAgentText;
           currentMsgEl = null;
           currentAgentBubble = null;
           currentAgentText = "";
           currentToolBlock = null;
+          Voice.onAgentDone(spokenText);
           fetch(`/api/chat/${sessionId}`)
             .then(r => r.json())
             .then(d => { historyIndex = d.total ?? historyIndex; })
@@ -390,7 +397,12 @@ export function reset(sessionId) {
 
 export function init(getSessionId, onProjectRefresh, onRotate) {
   _getSessionId = getSessionId;
+  if (onProjectRefresh) _onProjectRefresh = onProjectRefresh;
   if (onRotate) _onRotate = onRotate;
+  Voice.init((text) => {
+    inputEl.value = text;
+    sendMessage(_getSessionId, _onProjectRefresh);
+  });
   inputEl.addEventListener("input", () => {
     inputEl.style.height = "auto";
     inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + "px";

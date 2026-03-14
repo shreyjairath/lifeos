@@ -2,13 +2,12 @@ package com.lifeos.core;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.config.AppConfig;
-import com.lifeos.executor.Cancellation;
-import com.lifeos.executor.Executor;
-import com.lifeos.executor.events.AgentAppendEvent;
-import com.lifeos.executor.events.ExecutorEvent;
-import com.lifeos.executor.events.LlmEvent;
-import com.lifeos.executor.events.ToolEvent;
+import com.lifeos.agents.AssistantAgent;
+import com.lifeos.core.ReflectionManager;
+import com.lifeos.agents.executor.Cancellation;
+import com.lifeos.agents.executor.events.ExecutorEvent;
+import com.lifeos.agents.executor.events.LlmEvent;
+import com.lifeos.agents.executor.events.ToolEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
@@ -21,34 +20,29 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Handles an incoming message end-to-end: rotation check, reflection, agent loop, SSE.
+ * Orchestrates an incoming message: rotation check, reflection, agent run, SSE serialization.
  */
 @Component
 public class ChatManager {
 
     private static final Logger log = LoggerFactory.getLogger(ChatManager.class);
 
-    private final Executor executor;
-    private final Session session;
-    private final Knowledge knowledge;
-    private final SystemPrompt systemPrompt;
+    private final AssistantAgent assistantAgent;
+    private final ReflectionManager reflectionManager;
+    private final SessionManager session;
     private final Cancellation cancellation;
     private final Hooks hooks;
     private final EventBus eventBus;
-    private final AppConfig config;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ChatManager(Executor executor, Session session, Knowledge knowledge,
-                               SystemPrompt systemPrompt, Cancellation cancellation, Hooks hooks,
-                               EventBus eventBus, AppConfig config) {
-        this.executor = executor;
+    public ChatManager(AssistantAgent assistantAgent, ReflectionManager reflectionManager,
+                       SessionManager session, Cancellation cancellation, Hooks hooks, EventBus eventBus) {
+        this.assistantAgent = assistantAgent;
+        this.reflectionManager = reflectionManager;
         this.session = session;
-        this.knowledge = knowledge;
-        this.systemPrompt = systemPrompt;
         this.cancellation = cancellation;
         this.hooks = hooks;
         this.eventBus = eventBus;
-        this.config = config;
     }
 
     public Flux<ServerSentEvent<String>> handleMessage(String sessionId, String message) {
@@ -75,13 +69,7 @@ public class ChatManager {
         var rotatingSse = Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason())));
 
         return rotatingSse.concatWith(Mono.fromCallable(() -> {
-            var transcript = Session.buildTranscript(oldHistory);
-            if (message != null && !message.isEmpty()) {
-                transcript += "\n\nUSER (pending — triggered session rotation): " + message;
-            }
-            if (transcript.isEmpty()) return "";
-            var summary = knowledge.reflect(oldHistory, sessionId);
-            session.reflect(sessionId, transcript);
+            var summary = reflectionManager.run(sessionId, oldHistory, message);
             hooks.fire("on_reflection_done", Map.of("session_id", sessionId));
             return summary != null ? summary : "";
         }).subscribeOn(Schedulers.boundedElastic())
@@ -104,24 +92,13 @@ public class ChatManager {
     }
 
     private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message) {
-        cancellation.clear(sessionId);
         hooks.fire("on_agent_start", Map.of("session_id", sessionId, "user_message", message));
-
-        var prompt = systemPrompt.prepare(sessionId);
-        session.appendMessage(sessionId, Map.of("role", "user", "content", message));
-
-        var messages = session.getHistory(sessionId);
-        Executor.prepareMessages(messages);
 
         var stopped = new AtomicBoolean(false);
 
-        return executor.runLoop(sessionId, messages, prompt, config.model())
+        return assistantAgent.run(sessionId, message)
                 .doOnNext(event -> {
-                    if (event instanceof AgentAppendEvent ae) {
-                        session.appendMessage(sessionId,
-                                Map.of("role", ae.role(), "content", ae.content()));
-                    } else if (event instanceof LlmEvent.Response resp) {
-                        session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
+                    if (event instanceof LlmEvent.Response resp) {
                         hooks.fire("on_llm_response", Map.of(
                                 "session_id", sessionId,
                                 "input_tokens", resp.usage().get("input_tokens"),

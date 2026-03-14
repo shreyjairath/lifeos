@@ -52,6 +52,8 @@
       <div id="messages"></div>
       <div id="input-area">
         <textarea id="input" placeholder="Ask your agent anything…" rows="1"></textarea>
+        <button id="mic-btn" title="Tap to speak" aria-label="Microphone">🎤</button>
+        <button id="voice-mode-btn" title="Voice mode — auto-listen after agent responds" aria-label="Voice mode">🔊</button>
         <button id="stop-btn" style="display:none">Stop</button>
         <button id="send-btn">Send</button>
       </div>
@@ -74,6 +76,7 @@
         <div id="prompt-editor-area">
           <textarea id="prompt-editor" spellcheck="false"></textarea>
           <div id="prompt-editor-footer">
+            <button id="prompt-set-active-btn">Set as active</button>
             <span id="prompt-save-status"></span>
             <button id="prompt-save-btn">Save</button>
           </div>

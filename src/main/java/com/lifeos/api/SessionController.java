@@ -1,6 +1,6 @@
 package com.lifeos.api;
 
-import com.lifeos.core.Session;
+import com.lifeos.core.SessionManager;
 import com.lifeos.tools.Projects;
 import org.springframework.web.bind.annotation.*;
 
@@ -10,10 +10,10 @@ import java.util.Map;
 @RequestMapping("/api")
 public class SessionController {
 
-    private final Session session;
+    private final SessionManager session;
     private final Projects projects;
 
-    public SessionController(Session session, Projects projects) {
+    public SessionController(SessionManager session, Projects projects) {
         this.session = session;
         this.projects = projects;
     }

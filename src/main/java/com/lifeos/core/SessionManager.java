@@ -2,7 +2,6 @@ package com.lifeos.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.config.AppConfig;
-import com.lifeos.executor.LlmClient;
 import com.lifeos.store.SessionStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,21 +22,18 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Pointers.json maps logical keys ("main", "project-slug") to current session IDs.
  */
 @Component
-public class Session {
+public class SessionManager {
 
-    private static final Logger log = LoggerFactory.getLogger(Session.class);
-    private static final String HAIKU_MODEL = "claude-haiku-4-5-20251001";
+    private static final Logger log = LoggerFactory.getLogger(SessionManager.class);
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm").withZone(ZoneId.systemDefault());
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final AppConfig config;
-    private final LlmClient llmClient;
     private final SessionStore store;
 
-    public Session(AppConfig config, LlmClient llmClient, SessionStore store) {
+    public SessionManager(AppConfig config, SessionStore store) {
         this.config = config;
-        this.llmClient = llmClient;
         this.store = store;
     }
 
@@ -259,23 +255,6 @@ public class Session {
         var dateStr = createdAt > 0
                 ? DATE_FMT.format(java.time.Instant.ofEpochSecond(createdAt)) : "unknown";
         return Optional.of(new SessionSummary(content, dateStr));
-    }
-
-    // ── Reflection ────────────────────────────────────────────────────────────
-
-    /** Archives this session by writing a summary to its summary.md. */
-    public void reflect(String sessionId, String transcript) {
-        try {
-            var result = new LlmClient.LlmResult();
-            llmClient.stream(HAIKU_MODEL, Knowledge.loadPromptPart("summarize-session.md"),
-                    List.of(Map.<String, Object>of("role", "user", "content", transcript)),
-                    List.of(), 1024, result).blockLast();
-            if (!result.getFullText().isEmpty()) {
-                store.writeSummary(sessionId, result.getFullText());
-            }
-        } catch (Exception e) {
-            log.warn("Session archive failed for {}: {}", sessionId, e.getMessage());
-        }
     }
 
     // ── Transcript ────────────────────────────────────────────────────────────

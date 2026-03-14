@@ -1,10 +1,16 @@
-package com.lifeos.executor;
+package com.lifeos.agents.executor;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.tools.*;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Tool definitions (Anthropic format) and dispatch routing.
@@ -84,7 +90,35 @@ public class ToolsRegistry {
     }
 
     public List<Map<String, Object>> getTools() {
-        return TOOLS;
+        var disabled = loadDisabledTools();
+        if (disabled.isEmpty()) return TOOLS;
+        return TOOLS.stream().filter(t -> !disabled.contains(t.get("name"))).toList();
+    }
+
+    // ── Disabled tools persistence ────────────────────────────────────────────
+
+    private static final Path DISABLED_FILE = Path.of(System.getProperty("user.dir"))
+            .resolve(".user-data/disabled-tools.json").normalize();
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public static Set<String> loadDisabledTools() {
+        if (!Files.exists(DISABLED_FILE)) return Set.of();
+        try {
+            return MAPPER.readValue(Files.readString(DISABLED_FILE, StandardCharsets.UTF_8),
+                    new TypeReference<LinkedHashSet<String>>() {});
+        } catch (Exception e) {
+            return Set.of();
+        }
+    }
+
+    public static void saveDisabledTools(Set<String> names) throws IOException {
+        Files.createDirectories(DISABLED_FILE.getParent());
+        Files.writeString(DISABLED_FILE, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(names),
+                StandardCharsets.UTF_8);
+    }
+
+    public List<String> allToolNames() {
+        return TOOLS.stream().map(t -> (String) t.get("name")).toList();
     }
 
 

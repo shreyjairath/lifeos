@@ -1,4 +1,4 @@
-package com.lifeos.executor.events;
+package com.lifeos.agents.executor.events;
 
 import java.util.Map;
 

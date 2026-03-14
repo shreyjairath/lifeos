@@ -1,8 +1,8 @@
-package com.lifeos.executor;
+package com.lifeos.agents.executor;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.executor.events.ToolEvent;
+import com.lifeos.agents.executor.events.ToolEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

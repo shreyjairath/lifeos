@@ -2,8 +2,8 @@ package com.lifeos.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.config.AppConfig;
-import com.lifeos.executor.LlmClient;
-import com.lifeos.executor.events.LlmEvent;
+import com.lifeos.agents.executor.LlmClient;
+import com.lifeos.agents.executor.events.LlmEvent;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;

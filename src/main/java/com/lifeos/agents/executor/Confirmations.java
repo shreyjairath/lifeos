@@ -1,4 +1,4 @@
-package com.lifeos.executor;
+package com.lifeos.agents.executor;
 
 import org.springframework.stereotype.Component;
 

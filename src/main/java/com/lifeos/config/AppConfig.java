@@ -7,7 +7,8 @@ public record AppConfig(
     String model,
     String anthropicApiKey,
     Paths paths,
-    Session session
+    Session session,
+    Reflect reflect
 ) {
     public record Paths(
         String environment,
@@ -17,5 +18,9 @@ public record AppConfig(
     public record Session(
         int tokenThreshold,
         int timeThresholdHours
+    ) {}
+
+    public record Reflect(
+        boolean projectsEnabled
     ) {}
 }

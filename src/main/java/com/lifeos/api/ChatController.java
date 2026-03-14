@@ -2,9 +2,9 @@ package com.lifeos.api;
 
 import com.lifeos.api.dto.ChatRequest;
 import com.lifeos.core.ChatManager;
-import com.lifeos.core.Session;
-import com.lifeos.executor.Cancellation;
-import com.lifeos.executor.Confirmations;
+import com.lifeos.core.SessionManager;
+import com.lifeos.agents.executor.Cancellation;
+import com.lifeos.agents.executor.Confirmations;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -17,11 +17,11 @@ import java.util.Map;
 public class ChatController {
 
     private final ChatManager chatManager;
-    private final Session session;
+    private final SessionManager session;
     private final Cancellation cancellation;
     private final Confirmations confirmations;
 
-    public ChatController(ChatManager chatManager, Session session,
+    public ChatController(ChatManager chatManager, SessionManager session,
                           Cancellation cancellation, Confirmations confirmations) {
         this.chatManager = chatManager;
         this.session = session;

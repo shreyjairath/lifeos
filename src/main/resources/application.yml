@@ -22,3 +22,5 @@ lifeos:
   session:
     token-threshold: 50000
     time-threshold-hours: 4
+  reflect:
+    projects-enabled: false

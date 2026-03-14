@@ -133,6 +133,7 @@ ispTabs.forEach(tab => {
     if (PANELS[which]) PANELS[which].classList.remove("hidden");
     if (which === "inspector") inspectorCopy.style.display = "";
     if (which === "cc") document.getElementById("cc-input").focus();
+    if (which === "prompt") Prompt.load();
   });
 });
 

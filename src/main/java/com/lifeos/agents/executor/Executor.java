@@ -1,8 +1,8 @@
-package com.lifeos.executor;
+package com.lifeos.agents.executor;
 
-import com.lifeos.executor.events.AgentAppendEvent;
-import com.lifeos.executor.events.ExecutorEvent;
-import com.lifeos.executor.events.ToolEvent;
+import com.lifeos.agents.executor.events.AgentAppendEvent;
+import com.lifeos.agents.executor.events.ExecutorEvent;
+import com.lifeos.agents.executor.events.ToolEvent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 

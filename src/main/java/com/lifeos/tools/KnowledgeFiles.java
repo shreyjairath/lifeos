@@ -1,6 +1,6 @@
 package com.lifeos.tools;
 
-import com.lifeos.store.KnowledgeStore;
+import com.lifeos.store.AgentNotesStore;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -11,9 +11,9 @@ import java.util.Map;
 @Component
 public class KnowledgeFiles {
 
-    private final KnowledgeStore store;
+    private final AgentNotesStore store;
 
-    public KnowledgeFiles(KnowledgeStore store) { this.store = store; }
+    public KnowledgeFiles(AgentNotesStore store) { this.store = store; }
 
     public Map<String, Object> listNotes() {
         return Map.of("files", store.listNotes());
@@ -52,6 +52,11 @@ public class KnowledgeFiles {
     }
 
     // Legacy single-file access used by KnowledgeController /api/knowledge/agent-notes
+    public Map<String, Object> update(String fileKey, String content) {
+        if (!"agent-notes".equals(fileKey)) return Map.of("error", "Unknown file: " + fileKey);
+        return writeNote(fileKey, content);
+    }
+
     public Map<String, Object> read(String fileKey) {
         if (!"agent-notes".equals(fileKey)) return Map.of("error", "Unknown file: " + fileKey);
         var files = store.listNotes();

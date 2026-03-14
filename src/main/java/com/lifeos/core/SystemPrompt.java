@@ -11,10 +11,10 @@ import java.util.Map;
 public class SystemPrompt {
 
     private final Knowledge knowledge;
-    private final Session session;
+    private final SessionManager session;
     private final EventBus eventBus;
 
-    public SystemPrompt(Knowledge knowledge, Session session, EventBus eventBus) {
+    public SystemPrompt(Knowledge knowledge, SessionManager session, EventBus eventBus) {
         this.knowledge = knowledge;
         this.session = session;
         this.eventBus = eventBus;
@@ -23,16 +23,9 @@ public class SystemPrompt {
     public String prepare(String sessionId) {
         eventBus.publish(Map.of("type", "boot_start"));
 
-        var persona = Knowledge.loadPromptPart("system-instructions.md");
+        var persona = Knowledge.loadPromptPart(Knowledge.loadActiveInstructions());
         var knowledgeSection = knowledge.getKnowledgeSection();
-        var incompleteTopics = knowledge.incompleteOnboardingTopics();
-
-        String system;
-        if (!incompleteTopics.isEmpty()) {
-            system = persona + "\n\n" + knowledgeSection + "\n\n" + knowledge.getOnboardingSection(incompleteTopics);
-        } else {
-            system = persona + "\n\n" + knowledgeSection;
-        }
+        var system = persona + "\n\n" + knowledgeSection;
 
         var parentSummary = session.getParentSummary(sessionId);
         if (parentSummary.isPresent()) {
