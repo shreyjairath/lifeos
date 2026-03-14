@@ -1,7 +1,6 @@
 package com.lifeos.agents;
 
 import com.lifeos.core.Knowledge;
-import com.lifeos.core.SessionManager;
 import com.lifeos.agents.executor.Executor;
 import com.lifeos.agents.executor.ToolsRegistry;
 import com.lifeos.agents.executor.events.AgentAppendEvent;
@@ -37,11 +36,10 @@ public class ProjectsReflector {
     }
 
     /**
-     * Runs the projects reflection agent over the given session history.
+     * Runs the projects reflection agent over the given transcript.
      * Returns a short summary of what was updated, or null if nothing.
      */
-    public String run(List<Map<String, Object>> history) {
-        var transcript = SessionManager.buildTranscript(history);
+    public String run(String transcript) {
         if (transcript.isBlank()) return null;
 
         var tools = toolsRegistry.getTools().stream()

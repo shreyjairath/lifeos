@@ -44,9 +44,9 @@ public class ReflectionManager {
             transcript += "\n\nUSER (pending — triggered session rotation): " + pendingMessage;
         }
 
-        var notesSummary    = notesReflector.run(history);
+        var notesSummary    = notesReflector.run(transcript);
         var projectsSummary = config.reflect() != null && config.reflect().projectsEnabled()
-                ? projectsReflector.run(history) : null;
+                ? projectsReflector.run(transcript) : null;
         sessionSummarizer.run(sessionId, transcript);
 
         var parts = new ArrayList<String>();
