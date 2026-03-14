@@ -24,7 +24,8 @@ public class NotesReflector {
     private static final Logger log = LoggerFactory.getLogger(NotesReflector.class);
     private static final String MODEL = "claude-haiku-4-5-20251001";
     private static final Set<String> TOOLS = Set.of(
-            "list_notes", "read_note", "write_note", "delete_note", "grep_notes");
+            "list_notes", "read_note", "write_note", "delete_note", "grep_notes",
+            "get_current_datetime");
 
     private final Executor executor;
     private final ToolsRegistry toolsRegistry;

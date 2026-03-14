@@ -25,7 +25,8 @@ public class ProjectsReflector {
     private static final String MODEL = "claude-haiku-4-5-20251001";
     private static final Set<String> TOOLS = Set.of(
             "list_projects", "read_project", "create_project", "update_project",
-            "add_project_file", "read_project_file", "update_project_file", "delete_project_file");
+            "add_project_file", "read_project_file", "update_project_file", "delete_project_file",
+            "get_current_datetime");
 
     private final Executor executor;
     private final ToolsRegistry toolsRegistry;
