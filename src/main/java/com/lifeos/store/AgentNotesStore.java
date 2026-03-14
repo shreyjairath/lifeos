@@ -47,6 +47,9 @@ public class AgentNotesStore {
     public void writeNote(String filename, String content) {
         var path = NOTES.resolve(filename);
         try {
+            // Haiku sometimes double-escapes newlines (\\n instead of \n in JSON),
+            // resulting in literal backslash-n. Unescape common sequences before writing.
+            content = content.replace("\\n", "\n").replace("\\t", "\t");
             Files.createDirectories(NOTES);
             Files.writeString(path, content, StandardCharsets.UTF_8);
         } catch (IOException e) {
