@@ -126,6 +126,12 @@ function toolSummary(name, input) {
     case "read_project_file":
     case "update_project_file":
     case "delete_project_file": return `${name}  ${input.name ?? input.project}  /  ${input.filename}`;
+    case "list_notes":       return `list_notes`;
+    case "read_note":        return `read_note  ${input.file}`;
+    case "write_note":       return `write_note  ${input.file}`;
+    case "delete_note":      return `delete_note  ${input.file}`;
+    case "grep_notes":       return `grep_notes  "${input.pattern}"`;
+    case "get_current_datetime": return `get_current_datetime`;
     case "update_knowledge": return `update_knowledge  ${input.file}`;
     case "read_knowledge":   return `read_knowledge  ${input.file}`;
     case "write_file":
