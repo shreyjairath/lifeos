@@ -1,7 +1,7 @@
 package com.lifeos.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.core.EventBus;
+import com.lifeos.core.helpers.EventBus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;

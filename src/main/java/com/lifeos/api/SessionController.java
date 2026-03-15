@@ -1,22 +1,17 @@
 package com.lifeos.api;
 
-import com.lifeos.core.SessionManager;
-import com.lifeos.agents.shared_tools.Projects;
+import com.lifeos.core.managers.SessionManager;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api")
 public class SessionController {
 
     private final SessionManager session;
-    private final Projects projects;
 
-    public SessionController(SessionManager session, Projects projects) {
-        this.session = session;
-        this.projects = projects;
-    }
+    public SessionController(SessionManager session) { this.session = session; }
 
     @GetMapping("/sessions")
     public Map<String, Object> listSessions() {
@@ -26,16 +21,5 @@ public class SessionController {
     @PostMapping("/sessions")
     public Map<String, String> createSession() {
         return Map.of("session_id", session.createNew());
-    }
-
-    @PostMapping("/sessions/for-project")
-    public Map<String, String> sessionForProject(@RequestBody Map<String, String> body) {
-        var projectName = body.getOrDefault("project_name", "");
-        return Map.of("session_id", session.getOrCreateForProject(projectName));
-    }
-
-    @GetMapping("/projects")
-    public Map<String, Object> getProjects() {
-        return projects.list();
     }
 }

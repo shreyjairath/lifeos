@@ -19,7 +19,8 @@ let currentToolBlock = null;
 let historyIndex = 0;
 let _getSessionId = () => null;
 let _onRotate = (_newSessionId) => {};
-let _onProjectRefresh = () => {};
+let _onDone = () => {};
+let _getAgent = () => "main";
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -117,21 +118,19 @@ export function removeTypingIndicator() {
 
 function toolSummary(name, input) {
   switch (name) {
+    case "main_bash":      return `$ ${input.command}`;
+    case "therapist_bash": return `$ ${input.command}`;
     case "web_search":    return `web_search  "${input.query}"`;
     case "browse_page":   return `browse  ${input.url}`;
-    case "create_project":
-    case "update_project":
-    case "read_project":  return `${name}  ${input.name}`;
-    case "add_project_file":
-    case "read_project_file":
-    case "update_project_file":
-    case "delete_project_file": return `${name}  ${input.name ?? input.project}  /  ${input.filename}`;
     case "list_notes":       return `list_notes`;
     case "read_note":        return `read_note  ${input.file}`;
     case "write_note":       return `write_note  ${input.file}`;
     case "delete_note":      return `delete_note  ${input.file}`;
     case "grep_notes":       return `grep_notes  "${input.pattern}"`;
     case "get_current_datetime": return `get_current_datetime`;
+    case "set_reminder":    return `set_reminder  ${input.time}  "${input.message}"`;
+    case "list_reminders":  return `list_reminders`;
+    case "delete_reminder": return `delete_reminder  ${input.id}`;
     case "list_therapist_notes":  return `list_therapist_notes`;
     case "read_therapist_note":   return `read_therapist_note  ${input.file}`;
     case "write_therapist_note":  return `write_therapist_note  ${input.file}`;
@@ -145,7 +144,6 @@ function toolSummary(name, input) {
     case "write_file":
     case "read_file":
     case "update_file":   return `${name}  ${input.path ?? input.name ?? ""}`;
-    case "list_projects": return "list_projects";
     case "list_dir":      return `list_dir  ${input.path ?? ""}`;
     case "parse_redfin_search":  return `parse_redfin_search  ${input.url}`;
     case "parse_redfin_listing": return `parse_redfin  ${input.url}`;
@@ -161,8 +159,16 @@ function toolSummary(name, input) {
 function addToolBlock(name, input) {
   const block = document.createElement("div");
   block.className = "tool-block";
-  block.textContent = `⚙ ${toolSummary(name, input)}`;
+  const line = document.createElement("div");
+  line.textContent = `⚙ ${toolSummary(name, input)}`;
+  block.appendChild(line);
   return block;
+}
+
+function appendToolLine(block, name, input) {
+  const line = document.createElement("div");
+  line.textContent = `⚙ ${toolSummary(name, input)}`;
+  block.appendChild(line);
 }
 
 export async function loadHistory(sessionId) {
@@ -180,7 +186,7 @@ export async function loadHistory(sessionId) {
   }
 }
 
-async function sendMessage(getSessionId, onProjectRefresh) {
+async function sendMessage(getSessionId) {
   let sessionId = getSessionId();
   if (!sessionId) {
     addMessage("agent", "⚠ No active session.");
@@ -201,7 +207,7 @@ async function sendMessage(getSessionId, onProjectRefresh) {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, message: text }),
+      body: JSON.stringify({ session_id: sessionId, message: text, agent: _getAgent() }),
     });
     if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
 
@@ -293,7 +299,7 @@ async function sendMessage(getSessionId, onProjectRefresh) {
             currentToolBlock = addToolBlock(event.name, event.input);
             currentMsgEl.appendChild(currentToolBlock);
           } else {
-            currentToolBlock.textContent = `⚙ ${toolSummary(event.name, event.input)}`;
+            appendToolLine(currentToolBlock, event.name, event.input);
           }
           scrollToBottom();
         } else if (event.type === "tool_confirm_request") {
@@ -326,9 +332,6 @@ async function sendMessage(getSessionId, onProjectRefresh) {
           confirm.querySelector(".allow").addEventListener("click", () => respond(true));
           confirm.querySelector(".deny").addEventListener("click", () => respond(false));
         } else if (event.type === "tool_result") {
-          if (["create_project", "update_project", "list_projects"].includes(event.name)) {
-            onProjectRefresh();
-          }
           if (event.name === "show_image" && event.result?.ok) {
             if (!currentMsgEl) {
               currentMsgEl = document.createElement("div");
@@ -384,6 +387,7 @@ async function sendMessage(getSessionId, onProjectRefresh) {
           currentAgentText = "";
           currentToolBlock = null;
           Voice.onAgentDone(spokenText);
+          _onDone();
           fetch(`/api/chat/${sessionId}`)
             .then(r => r.json())
             .then(d => { historyIndex = d.total ?? historyIndex; })
@@ -409,13 +413,14 @@ export function reset(sessionId) {
   messagesEl.innerHTML = "";
 }
 
-export function init(getSessionId, onProjectRefresh, onRotate) {
+export function init(getSessionId, onRotate, getAgent, onDone) {
   _getSessionId = getSessionId;
-  if (onProjectRefresh) _onProjectRefresh = onProjectRefresh;
   if (onRotate) _onRotate = onRotate;
+  if (getAgent) _getAgent = getAgent;
+  if (onDone) _onDone = onDone;
   Voice.init((text) => {
     inputEl.value = text;
-    sendMessage(_getSessionId, _onProjectRefresh);
+    sendMessage(_getSessionId);
   });
   inputEl.addEventListener("input", () => {
     inputEl.style.height = "auto";
@@ -424,10 +429,10 @@ export function init(getSessionId, onProjectRefresh, onRotate) {
   inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(getSessionId, onProjectRefresh);
+      sendMessage(getSessionId);
     }
   });
-  sendBtn.addEventListener("click", () => sendMessage(getSessionId, onProjectRefresh));
+  sendBtn.addEventListener("click", () => sendMessage(getSessionId));
   if (stopBtn) {
     stopBtn.addEventListener("click", () => {
       const sessionId = getSessionId();

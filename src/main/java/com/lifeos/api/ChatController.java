@@ -1,10 +1,10 @@
 package com.lifeos.api;
 
 import com.lifeos.api.dto.ChatRequest;
-import com.lifeos.core.ChatManager;
-import com.lifeos.core.SessionManager;
-import com.lifeos.agents.executor.Cancellation;
-import com.lifeos.agents.executor.Confirmations;
+import com.lifeos.core.managers.ChatManager;
+import com.lifeos.core.managers.SessionManager;
+import com.lifeos.core.agents.executor.Cancellation;
+import com.lifeos.core.agents.executor.Confirmations;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -31,7 +31,7 @@ public class ChatController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request) {
-        return chatManager.handleMessage(request.sessionId(), request.message());
+        return chatManager.handleMessage(request.sessionId(), request.message(), request.agent());
     }
 
     @GetMapping("/chat/{sessionId}")

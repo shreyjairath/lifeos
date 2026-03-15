@@ -4,6 +4,27 @@ import * as Inspector from "./modules/inspector.js";
 import * as EventsPanel from "./modules/events-panel.js";
 import * as Prompt from "./modules/prompt.js";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// ── Agent selection ───────────────────────────────────────────────────────────
+let ACTIVE_AGENT = localStorage.getItem("lifeos-agent") || "main";
+
+document.querySelectorAll(".agent-btn").forEach(btn => {
+  btn.classList.toggle("active", btn.dataset.agent === ACTIVE_AGENT);
+  btn.addEventListener("click", () => {
+    ACTIVE_AGENT = btn.dataset.agent;
+    localStorage.setItem("lifeos-agent", ACTIVE_AGENT);
+    document.querySelectorAll(".agent-btn").forEach(b => b.classList.toggle("active", b === btn));
+    inputEl.placeholder = ACTIVE_AGENT === "therapist" ? "Talk to your therapist…" : "Ask your agent anything…";
+  });
+});
+
 // ── Session ───────────────────────────────────────────────────────────────────
 let SESSION_ID = localStorage.getItem("lifeos-session-id") || null;
 
@@ -12,47 +33,8 @@ function setSession(sessionId) {
   localStorage.setItem("lifeos-session-id", sessionId);
 }
 
-// ── Projects ──────────────────────────────────────────────────────────────────
-const projectListEl = document.getElementById("project-list");
-const inputEl = document.getElementById("input");
-
-async function openProjectSession(projectName) {
-  const resp = await fetch("/api/sessions/for-project", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_name: projectName }),
-  });
-  const data = await resp.json();
-  setSession(data.session_id);
-  Chat.reset(data.session_id);
-  await Chat.loadHistory(data.session_id);
-  await loadSessions();
-  inputEl.value = "";
-  inputEl.focus();
-}
-
-async function loadProjects() {
-  try {
-    const resp = await fetch("/api/projects");
-    const data = await resp.json();
-    projectListEl.innerHTML = "";
-    if (!data.projects || data.projects.length === 0) {
-      projectListEl.innerHTML = '<li class="empty">No projects yet</li>';
-      return;
-    }
-    for (const p of data.projects) {
-      const li = document.createElement("li");
-      li.className = "project-item";
-      li.innerHTML = `<div>${p.name.replace(/-/g, " ")}</div><div class="project-status">${p.status}</div>`;
-      li.addEventListener("click", () => { closeSidebar(); openProjectSession(p.name); });
-      projectListEl.appendChild(li);
-    }
-  } catch (e) {
-    console.error("Failed to load projects", e);
-  }
-}
-
 // ── Knowledge links ───────────────────────────────────────────────────────────
+const inputEl = document.getElementById("input");
 document.getElementById("knowledge-list").addEventListener("click", (e) => {
   const link = e.target.closest("[data-file]");
   if (!link) return;
@@ -140,10 +122,12 @@ ispTabs.forEach(tab => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   Inspector.init();
+  inputEl.placeholder = ACTIVE_AGENT === "therapist" ? "Talk to your therapist…" : "Ask your agent anything…";
   Chat.init(
     () => SESSION_ID,
-    loadProjects,
     (newSessionId) => setSession(newSessionId),
+    () => ACTIVE_AGENT,
+    () => loadSessions(),
   );
   CC.init();
   Prompt.init();
@@ -152,10 +136,53 @@ ispTabs.forEach(tab => {
   } else {
     await Chat.loadHistory(SESSION_ID);
   }
-  await loadProjects();
   await loadSessions();
   await CC.loadHistory();
   await Prompt.load();
   EventsPanel.connect();
+
+  // In-tab reminder listener — shows bubble when tab is open
+  const reminderSource = new EventSource("/api/events");
+  reminderSource.onmessage = (e) => {
+    try {
+      const event = JSON.parse(e.data);
+      if (event.type === "reminder") {
+        Chat.addMessage("agent", `⏰ ${event.message}`, null, Math.floor(Date.now() / 1000));
+      }
+    } catch {}
+  };
+
+  // Web Push — background notifications (works even when tab/browser is closed)
+  if ("serviceWorker" in navigator && "PushManager" in window) {
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      console.log("[push] SW registered:", reg.scope);
+      const permission = await Notification.requestPermission();
+      console.log("[push] Notification permission:", permission);
+      if (permission === "granted") {
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          console.log("[push] Already subscribed");
+        } else {
+          const { publicKey } = await fetch("/api/push/vapid-public-key").then(r => r.json());
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey),
+          });
+          const resp = await fetch("/api/push/subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sub.toJSON()),
+          });
+          console.log("[push] Subscribed, server ack:", resp.ok);
+        }
+      }
+    } catch (err) {
+      console.warn("[push] Setup failed:", err);
+    }
+  } else {
+    console.warn("[push] Not supported in this browser");
+  }
+
   inputEl.focus();
 })();

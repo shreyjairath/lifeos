@@ -30,6 +30,10 @@ dependencies {
     // HTML content extraction
     implementation("org.jsoup:jsoup:1.18.3")
 
+    // Web Push (VAPID + RFC 8291 message encryption)
+    implementation("nl.martijndwars:web-push:5.1.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
     // Lombok (optional — we'll use records instead)
     // compileOnly("org.projectlombok:lombok")
     // annotationProcessor("org.projectlombok:lombok")

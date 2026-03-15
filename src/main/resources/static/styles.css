@@ -59,6 +59,20 @@ button.new-chat-btn {
 }
 button.new-chat-btn:hover { background: var(--border); }
 
+/* ── Agent toggle ── */
+#agent-toggle {
+  display: flex; margin: 0 12px 6px;
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.agent-btn {
+  flex: 1; padding: 5px 0; font-size: 12px; font-family: var(--font);
+  background: transparent; color: var(--muted);
+  border: none; cursor: pointer; transition: background 0.1s, color 0.1s;
+}
+.agent-btn:not(:last-child) { border-right: 1px solid var(--border); }
+.agent-btn.active { background: var(--accent); color: #fff; }
+.agent-btn:not(.active):hover { background: var(--border); color: var(--text); }
+
 /* ── Main ── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -698,5 +712,5 @@ figure.inline-image figcaption {
 
   #inspector { display: none; }
 
-  #mic-btn, #voice-mode-btn { padding: 10px 10px; font-size: 14px; }
+  #mic-btn, #voice-mode-btn { display: none !important; }
 }
