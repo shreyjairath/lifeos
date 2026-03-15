@@ -1,7 +1,7 @@
 package com.lifeos.api;
 
 import com.lifeos.core.SessionManager;
-import com.lifeos.tools.Projects;
+import com.lifeos.agents.shared_tools.Projects;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;

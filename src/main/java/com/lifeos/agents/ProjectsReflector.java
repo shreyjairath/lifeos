@@ -1,6 +1,6 @@
 package com.lifeos.agents;
 
-import com.lifeos.core.Knowledge;
+import com.lifeos.core.PromptParts;
 import com.lifeos.agents.executor.Executor;
 import com.lifeos.agents.executor.ToolsRegistry;
 import com.lifeos.agents.executor.events.AgentAppendEvent;
@@ -51,7 +51,7 @@ public class ProjectsReflector {
 
         try {
             var summary = executor.runLoop("_reflect_projects", new ArrayList<>(messages),
-                            Knowledge.loadPromptPart("reflect-projects.md"), MODEL, tools)
+                            PromptParts.load("reflect-projects.md"), MODEL, tools)
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)

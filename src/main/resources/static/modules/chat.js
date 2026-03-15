@@ -132,6 +132,14 @@ function toolSummary(name, input) {
     case "delete_note":      return `delete_note  ${input.file}`;
     case "grep_notes":       return `grep_notes  "${input.pattern}"`;
     case "get_current_datetime": return `get_current_datetime`;
+    case "list_therapist_notes":  return `list_therapist_notes`;
+    case "read_therapist_note":   return `read_therapist_note  ${input.file}`;
+    case "write_therapist_note":  return `write_therapist_note  ${input.file}`;
+    case "delete_therapist_note": return `delete_therapist_note  ${input.file}`;
+    case "grep_therapist_notes":  return `grep_therapist_notes  "${input.pattern}"`;
+    case "list_sessions":           return `list_sessions`;
+    case "read_session_summary":    return `read_session_summary  ${input.session_id}`;
+    case "read_session_transcript": return `read_session_transcript  ${input.session_id}`;
     case "update_knowledge": return `update_knowledge  ${input.file}`;
     case "read_knowledge":   return `read_knowledge  ${input.file}`;
     case "write_file":

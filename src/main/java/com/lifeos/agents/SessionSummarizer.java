@@ -1,6 +1,6 @@
 package com.lifeos.agents;
 
-import com.lifeos.core.Knowledge;
+import com.lifeos.core.PromptParts;
 import com.lifeos.agents.executor.LlmClient;
 import com.lifeos.store.SessionStore;
 import org.slf4j.Logger;
@@ -35,7 +35,7 @@ public class SessionSummarizer {
         if (transcript.isBlank()) return;
         try {
             var result = new LlmClient.LlmResult();
-            llmClient.stream(MODEL, Knowledge.loadPromptPart("summarize-session.md"),
+            llmClient.stream(MODEL, PromptParts.load("summarize-session.md"),
                     List.of(Map.<String, Object>of("role", "user", "content", transcript)),
                     List.of(), 1024, result).blockLast();
             if (!result.getFullText().isEmpty()) {

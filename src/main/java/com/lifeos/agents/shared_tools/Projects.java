@@ -1,18 +1,26 @@
-package com.lifeos.tools;
+package com.lifeos.agents.shared_tools;
 
-import com.lifeos.store.ProjectStore;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
- * Project CRUD — folder-based projects at .user-data/knowledge/projects/{slug}/project.md
+ * Project CRUD — folder-based projects at .user-data/knowledge/projects/{slug}/
  */
 @Component
 public class Projects {
+
+    private static final Path ROOT = Path.of(System.getProperty("user.dir"))
+            .resolve(".user-data/knowledge/projects").normalize();
 
     private static final List<String> SECTIONS = List.of(
             "context", "snapshot", "next_action", "waiting_on", "files", "log");
@@ -24,19 +32,15 @@ public class Projects {
             "files", "## Files",
             "log", "## Log");
 
-    private final ProjectStore store;
-
-    public Projects(ProjectStore store) { this.store = store; }
-
     public Map<String, Object> create(String name, String goal, String context) {
         try {
             var slug = slugify(name);
-            if (store.exists(slug)) {
+            if (Files.exists(ROOT.resolve(slug))) {
                 return Map.of("error", "Project '" + name + "' already exists. Use update_project to modify it.");
             }
-            store.init(slug);
-            store.writeProjectMd(slug, buildProjectMd(name, goal, context));
-            return Map.of("created", store.projectDir(slug).toString(), "name", name, "goal", goal);
+            Files.createDirectories(ROOT.resolve(slug).resolve("data"));
+            write(projectMd(slug), buildProjectMd(name, goal, context));
+            return Map.of("created", ROOT.resolve(slug).toString(), "name", name, "goal", goal);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
@@ -45,7 +49,7 @@ public class Projects {
     public Map<String, Object> read(String name) {
         var slug = findSlug(name);
         if (slug == null) return Map.of("error", "Project '" + name + "' not found.");
-        return Map.of("name", slug, "content", store.readProjectMd(slug));
+        return Map.of("name", slug, "content", readProjectMd(slug));
     }
 
     public Map<String, Object> update(String name, String section, String content) {
@@ -55,7 +59,7 @@ public class Projects {
         var slug = findSlug(name);
         if (slug == null) return Map.of("error", "Project '" + name + "' not found.");
         try {
-            var current = store.readProjectMd(slug);
+            var current = readProjectMd(slug);
             if ("log".equals(section)) {
                 var today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
                 var entry = "**" + today + ":** " + content.strip();
@@ -70,7 +74,7 @@ public class Projects {
             } else {
                 current = replaceSection(current, section, content);
             }
-            store.writeProjectMd(slug, current);
+            write(projectMd(slug), current);
             return Map.of("updated", "project.md", "project", slug, "section", section);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
@@ -80,18 +84,14 @@ public class Projects {
     public Map<String, Object> list() {
         var projects = new ArrayList<Map<String, Object>>();
         try {
-            for (var projDir : store.listProjectDirs()) {
-                var slug = projDir.getFileName().toString();
-                var content = store.readProjectMd(slug);
+            for (var slug : listSlugs()) {
+                var content = readProjectMd(slug);
                 if (content.isEmpty()) continue;
-
                 var statusMatch = Pattern.compile("\\*\\*Status:\\*\\*\\s*(.+)").matcher(content);
                 var status = statusMatch.find() ? statusMatch.group(1).strip() : "unknown";
                 if ("deleted".equals(status)) continue;
-
                 var goalMatch = Pattern.compile("\\*\\*Goal:\\*\\*\\s*(.+)").matcher(content);
                 var naMatch = Pattern.compile("## Next Action\n(.*?)(?=\n## |\\Z)", Pattern.DOTALL).matcher(content);
-
                 projects.add(Map.of(
                         "name", slug,
                         "status", status,
@@ -109,13 +109,10 @@ public class Projects {
         var slug = findSlug(project);
         if (slug == null) return Map.of("error", "Project '" + project + "' not found.");
         try {
-            store.writeDataFile(slug, filename, content);
-
-            // Update Files section in project.md
-            var projContent = store.readProjectMd(slug);
+            write(dataFile(slug, filename), content);
+            var projContent = readProjectMd(slug);
             var header = SECTION_HEADERS.get("files");
             var newEntry = "- " + filename + " — " + description;
-
             if (projContent.contains(header)) {
                 var filesStart = projContent.indexOf(header) + header.length();
                 var rest = projContent.substring(filesStart);
@@ -129,7 +126,7 @@ public class Projects {
             } else {
                 projContent = projContent.stripTrailing() + "\n\n" + header + "\n" + newEntry + "\n";
             }
-            store.writeProjectMd(slug, projContent);
+            write(projectMd(slug), projContent);
             return Map.of("created", filename, "project", slug, "filename", filename);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
@@ -139,12 +136,11 @@ public class Projects {
     public Map<String, Object> readFile(String project, String filename) {
         var slug = findSlug(project);
         if (slug == null) return Map.of("error", "Project '" + project + "' not found.");
-        if (!store.dataFileExists(slug, filename)) {
-            return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
-        }
+        var path = dataFile(slug, filename);
+        if (!Files.exists(path)) return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
         try {
             return Map.of("project", slug, "filename", filename,
-                    "content", store.readDataFile(slug, filename));
+                    "content", Files.readString(path, StandardCharsets.UTF_8));
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
@@ -153,11 +149,10 @@ public class Projects {
     public Map<String, Object> updateFile(String project, String filename, String content) {
         var slug = findSlug(project);
         if (slug == null) return Map.of("error", "Project '" + project + "' not found.");
-        if (!store.dataFileExists(slug, filename)) {
-            return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
-        }
+        var path = dataFile(slug, filename);
+        if (!Files.exists(path)) return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
         try {
-            store.writeDataFile(slug, filename, content);
+            write(path, content);
             return Map.of("updated", filename, "project", slug, "filename", filename);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
@@ -167,36 +162,56 @@ public class Projects {
     public Map<String, Object> deleteFile(String project, String filename) {
         var slug = findSlug(project);
         if (slug == null) return Map.of("error", "Project '" + project + "' not found.");
-        if (!store.dataFileExists(slug, filename)) {
-            return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
-        }
+        var path = dataFile(slug, filename);
+        if (!Files.exists(path)) return Map.of("error", "File '" + filename + "' not found in project '" + project + "'.");
         try {
-            store.deleteDataFile(slug, filename);
-            // Remove from Files section
-            var projContent = store.readProjectMd(slug);
+            Files.deleteIfExists(path);
+            var projContent = readProjectMd(slug);
             var escaped = Pattern.quote(filename);
             projContent = projContent.replaceAll("(?m)^- " + escaped + "\\s*[—-].*\n?", "");
-            store.writeProjectMd(slug, projContent);
+            write(projectMd(slug), projContent);
             return Map.of("deleted", filename, "project", slug);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
     }
 
+    // ── Paths ────────────────────────────────────────────────────────────────────
 
-    // ── Private ──────────────────────────────────────────────────────────────────
+    public static Path projectDir(String slug) { return ROOT.resolve(slug); }
+    private static Path projectMd(String slug)  { return ROOT.resolve(slug).resolve("project.md"); }
+    private static Path dataFile(String s, String f) { return ROOT.resolve(s).resolve("data").resolve(f); }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    private static String readProjectMd(String slug) {
+        var path = projectMd(slug);
+        if (!Files.exists(path)) return "";
+        try { return Files.readString(path, StandardCharsets.UTF_8); } catch (IOException e) { return ""; }
+    }
+
+    private static void write(Path path, String content) {
+        try {
+            Files.createDirectories(path.getParent());
+            Files.writeString(path, content, StandardCharsets.UTF_8);
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    static List<String> listSlugs() {
+        if (!Files.exists(ROOT)) return List.of();
+        try (Stream<Path> s = Files.list(ROOT).sorted()) {
+            return s.filter(Files::isDirectory).map(p -> p.getFileName().toString()).toList();
+        } catch (IOException e) { return List.of(); }
+    }
 
     private static String slugify(String name) {
         return name.toLowerCase().strip().replaceAll("[^a-z0-9-]", "-").replaceAll("^-+|-+$", "");
     }
 
-    private String findSlug(String name) {
+    private static String findSlug(String name) {
         var slug = slugify(name);
-        if (store.exists(slug)) return slug;
-        for (var dir : store.listProjectDirs()) {
-            var s = dir.getFileName().toString();
-            if (s.contains(slug)) return s;
-        }
+        if (Files.exists(ROOT.resolve(slug))) return slug;
+        for (var s : listSlugs()) { if (s.contains(slug)) return s; }
         return null;
     }
 
@@ -205,7 +220,6 @@ public class Projects {
         var headerPattern = Pattern.compile("^## .+$", Pattern.MULTILINE);
         var matcher = headerPattern.matcher(content);
         int targetStart = -1, targetEnd = -1, nextStart = -1;
-
         while (matcher.find()) {
             if (matcher.group().strip().equals(header)) {
                 targetStart = matcher.start();
@@ -214,11 +228,9 @@ public class Projects {
                 nextStart = matcher.start();
             }
         }
-
         if (targetStart < 0) {
             return content.stripTrailing() + "\n\n" + header + "\n" + newBody.strip() + "\n";
         }
-
         var end = nextStart >= 0 ? nextStart : content.length();
         return content.substring(0, targetEnd) + "\n" + newBody.strip() + "\n\n" +
                 content.substring(end).stripLeading();

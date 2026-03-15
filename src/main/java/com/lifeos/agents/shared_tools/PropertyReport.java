@@ -1,4 +1,4 @@
-package com.lifeos.tools;
+package com.lifeos.agents.shared_tools;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;

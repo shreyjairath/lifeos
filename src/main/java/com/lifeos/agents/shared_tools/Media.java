@@ -1,4 +1,4 @@
-package com.lifeos.tools;
+package com.lifeos.agents.shared_tools;
 
 import org.springframework.stereotype.Component;
 

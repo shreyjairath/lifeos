@@ -2,13 +2,16 @@ package com.lifeos.agents.executor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.tools.*;
+import com.lifeos.store.SessionStore;
+import com.lifeos.agents.shared_tools.*;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -20,28 +23,32 @@ import java.util.stream.Collectors;
 @Component
 public class ToolsRegistry {
 
+    private static final Path USER_DATA = Path.of(System.getProperty("user.dir")).resolve(".user-data").normalize();
+
+    private static final Bash NOTES_BASH     = new Bash(USER_DATA.resolve("knowledge/notes"));
+    private static final Bash THERAPIST_BASH = new Bash(USER_DATA.resolve("therapist"));
+
     private final FileSystem fileSystem;
-    private final KnowledgeFiles knowledgeFiles;
     private final Projects projects;
     private final WebSearch webSearch;
     private final Browse browse;
     private final Media media;
     private final Redfin redfin;
     private final PropertyReport propertyReport;
+    private final SessionStore sessionStore;
 
     public ToolsRegistry(
-            FileSystem fileSystem, KnowledgeFiles knowledgeFiles, Projects projects,
-            WebSearch webSearch, Browse browse, Media media, Redfin redfin,
-            PropertyReport propertyReport
+            FileSystem fileSystem, Projects projects, WebSearch webSearch, Browse browse,
+            Media media, Redfin redfin, PropertyReport propertyReport, SessionStore sessionStore
     ) {
         this.fileSystem = fileSystem;
-        this.knowledgeFiles = knowledgeFiles;
         this.projects = projects;
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
         this.redfin = redfin;
         this.propertyReport = propertyReport;
+        this.sessionStore = sessionStore;
     }
 
     @SuppressWarnings("unchecked")
@@ -63,12 +70,11 @@ public class ToolsRegistry {
                     projName(input), (String) input.get("filename"), (String) input.getOrDefault("content", ""));
             case "delete_project_file" -> projects.deleteFile(projName(input), (String) input.get("filename"));
 
-            // Notes
-            case "list_notes"  -> knowledgeFiles.listNotes();
-            case "read_note"   -> knowledgeFiles.readNote((String) input.get("file"));
-            case "write_note"  -> knowledgeFiles.writeNote((String) input.get("file"), (String) input.get("content"));
-            case "delete_note" -> knowledgeFiles.deleteNote((String) input.get("file"));
-            case "grep_notes"  -> knowledgeFiles.grepNotes((String) input.get("pattern"));
+            // Notes bash (main agent — scoped to .user-data/knowledge/notes/)
+            case "notes_bash" -> NOTES_BASH.bash((String) input.get("command"));
+
+            // Therapist bash (reflector-only — scoped to .user-data/therapist/)
+            case "therapist_bash" -> THERAPIST_BASH.bash((String) input.get("command"));
 
             // Filesystem
             case "write_file" -> fileSystem.writeFile((String) input.get("path"), (String) input.get("content"));
@@ -87,6 +93,11 @@ public class ToolsRegistry {
             // Media
             case "show_image" -> media.showImage((String) input.get("url"), (String) input.getOrDefault("caption", ""));
 
+            // Sessions
+            case "list_sessions" -> listSessions();
+            case "read_session_summary" -> readSessionSummary((String) input.get("session_id"));
+            case "read_session_transcript" -> readSessionTranscript((String) input.get("session_id"));
+
             // Utility
             case "get_current_datetime" -> Map.of(
                     "datetime", ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z")),
@@ -104,8 +115,7 @@ public class ToolsRegistry {
 
     // ── Disabled tools persistence ────────────────────────────────────────────
 
-    private static final Path DISABLED_FILE = Path.of(System.getProperty("user.dir"))
-            .resolve(".user-data/disabled-tools.json").normalize();
+    private static final Path DISABLED_FILE = USER_DATA.resolve("disabled-tools.json").normalize();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public static Set<String> loadDisabledTools() {
@@ -177,6 +187,11 @@ public class ToolsRegistry {
             tool("delete_project_file", "Remove a document from a project.",
                     props(prop("name", "string", "Project name"), prop("filename", "string", "Document name")),
                     "name", "filename"),
+            tool("notes_bash",
+                    "Run a bash command scoped to your notes directory (.user-data/knowledge/notes/). " +
+                    "Use standard shell tools: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, etc. " +
+                    "Path traversal (../), network tools, and privilege escalation are blocked.",
+                    props(prop("command", "string", "Bash command to run")), "command"),
             tool("browse_page",
                     "Fetch and read the content of a web page.",
                     props(prop("url", "string", "Full URL to fetch")), "url"),
@@ -195,27 +210,6 @@ public class ToolsRegistry {
             tool("web_search",
                     "Search the web for information.",
                     props(prop("query", "string", "Search query")), "query"),
-            tool("list_notes",
-                    "List all files in your notes directory — your persistent memory store. Use this to see what you've saved before reading or updating a specific note.",
-                    props(), new String[]{}),
-            tool("read_note",
-                    "Read a specific note file from your notes directory. Use this to recall saved information about the user, preferences, ongoing context, or anything else you've stored.",
-                    props(prop("file", "string", "Filename (e.g. 'user.md', 'preferences.md')")),
-                    "file"),
-            tool("write_note",
-                    "Create or overwrite a note file in your notes directory — your persistent memory. Use this to save anything worth remembering about the user, preferences, environment." ,
-                    props(
-                            prop("file", "string", "Filename (e.g. 'user.md')"),
-                            prop("content", "string", "Full file content")
-                    ), "file", "content"),
-            tool("delete_note",
-                    "Delete a note file from your notes directory.",
-                    props(prop("file", "string", "Filename to delete")),
-                    "file"),
-            tool("grep_notes",
-                    "Search across all your note files using a regex pattern. Returns matching lines with filenames and line numbers. Useful for finding specific facts without reading every file.",
-                    props(prop("pattern", "string", "Regex pattern to search for (case-insensitive)")),
-                    "pattern"),
             tool("write_file", "Create or overwrite a file under .user-data/.",
                     props(prop("path", "string", "Relative path"), prop("content", "string", "File content")),
                     "path", "content"),
@@ -231,8 +225,85 @@ public class ToolsRegistry {
                     props(prop("url", "string", "Image URL"), prop("caption", "string", "Optional caption")),
                     "url"),
             tool("get_current_datetime", "Get the current date and time.",
-                    props(), new String[]{})
+                    props(), new String[]{}),
+            tool("list_sessions",
+                    "List past sessions with their date and title. Use this to find relevant past conversations before reading a specific session summary.",
+                    props(), new String[]{}),
+            tool("read_session_summary",
+                    "Read the summary of a past session by its session_id.",
+                    props(prop("session_id", "string", "Session ID from list_sessions")),
+                    "session_id"),
+            tool("read_session_transcript",
+                    "Read the conversation transcript of a past session (user and assistant messages only, no tool calls). Use after list_sessions to recall the actual conversation.",
+                    props(prop("session_id", "string", "Session ID from list_sessions")),
+                    "session_id"),
+
+            // Therapist bash — reflector-only, not shown to main agent
+            tool("therapist_bash",
+                    "Run a bash command scoped to the therapist notes directory (.user-data/therapist/). " +
+                    "Use standard shell tools: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, etc. " +
+                    "Path traversal (../), network tools, and privilege escalation are blocked.",
+                    props(prop("command", "string", "Bash command to run")), "command")
     );
+
+
+    // ── Session tools ────────────────────────────────────────────────────────────
+
+    private static final DateTimeFormatter SESSION_DATE_FMT =
+            DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm").withZone(ZoneId.systemDefault());
+
+    private Map<String, Object> listSessions() {
+        record Entry(long createdAt, Map<String, Object> data) {}
+        var entries = new ArrayList<Entry>();
+        for (var dir : sessionStore.listSessionDirs()) {
+            var sessionId = dir.getFileName().toString();
+            var meta = sessionStore.loadMeta(sessionId);
+            if (meta.isEmpty()) continue;
+            var createdAt = meta.containsKey("created_at")
+                    ? ((Number) meta.get("created_at")).longValue() : 0L;
+            var hasSummary = !sessionStore.readSummary(sessionId).isEmpty();
+            entries.add(new Entry(createdAt, Map.of(
+                    "session_id", sessionId,
+                    "title", meta.getOrDefault("title", meta.getOrDefault("name", sessionId)),
+                    "date", createdAt > 0 ? SESSION_DATE_FMT.format(Instant.ofEpochSecond(createdAt)) : "unknown",
+                    "has_summary", hasSummary
+            )));
+        }
+        entries.sort(Comparator.comparingLong(e -> -e.createdAt()));
+        return Map.of("sessions", entries.stream().map(Entry::data).toList());
+    }
+
+    private Map<String, Object> readSessionSummary(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return Map.of("error", "session_id required");
+        var summary = sessionStore.readSummary(sessionId);
+        if (summary.isEmpty()) return Map.of("error", "No summary found for session: " + sessionId);
+        return Map.of("session_id", sessionId, "summary", summary);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readSessionTranscript(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return Map.of("error", "session_id required");
+        var messages = sessionStore.loadMessages(sessionId);
+        if (messages.isEmpty()) return Map.of("error", "No messages found for session: " + sessionId);
+        var lines = new ArrayList<String>();
+        for (var msg : messages) {
+            var role = (String) msg.getOrDefault("role", "");
+            if (!"user".equals(role) && !"assistant".equals(role)) continue;
+            var content = msg.get("content");
+            if (content instanceof String text && !text.isBlank()) {
+                lines.add(role.toUpperCase() + ": " + text);
+            } else if (content instanceof List<?> blocks) {
+                for (var block : blocks) {
+                    if (!(block instanceof Map<?, ?> b)) continue;
+                    if ("text".equals(b.get("type"))) {
+                        var text = (String) b.get("text");
+                        if (text != null && !text.isBlank()) lines.add(role.toUpperCase() + ": " + text);
+                    }
+                }
+            }
+        }
+        return Map.of("session_id", sessionId, "transcript", String.join("\n\n", lines));
+    }
 
 
     // ── Definition builders ──────────────────────────────────────────────────────
