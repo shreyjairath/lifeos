@@ -5,9 +5,7 @@ import com.lifeos.core.helpers.Hooks;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.core.agents.AgentAssistant;
-import com.lifeos.core.agents.AgentTherapist;
-import com.lifeos.core.managers.ReflectionManager;
+import com.lifeos.core.agents.AgentRegistry;
 import com.lifeos.core.agents.executor.Cancellation;
 import com.lifeos.core.agents.executor.events.ExecutorEvent;
 import com.lifeos.core.agents.executor.events.LlmEvent;
@@ -17,35 +15,29 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Orchestrates an incoming message: rotation check, reflection, agent run, SSE serialization.
+ * Orchestrates an incoming message: rotation check, agent run, SSE serialization.
+ * On session rotation, publishes `session_closed` — agents and SessionSummarizer react independently.
  */
 @Component
 public class ChatManager {
 
     private static final Logger log = LoggerFactory.getLogger(ChatManager.class);
 
-    private final AgentAssistant assistantAgent;
-    private final AgentTherapist therapistAgent;
-    private final ReflectionManager reflectionManager;
+    private final AgentRegistry agentRegistry;
     private final SessionManager session;
     private final Cancellation cancellation;
     private final Hooks hooks;
     private final EventBus eventBus;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ChatManager(AgentAssistant assistantAgent, AgentTherapist therapistAgent,
-                       ReflectionManager reflectionManager,
+    public ChatManager(AgentRegistry agentRegistry,
                        SessionManager session, Cancellation cancellation, Hooks hooks, EventBus eventBus) {
-        this.assistantAgent = assistantAgent;
-        this.therapistAgent = therapistAgent;
-        this.reflectionManager = reflectionManager;
+        this.agentRegistry = agentRegistry;
         this.session = session;
         this.cancellation = cancellation;
         this.hooks = hooks;
@@ -72,37 +64,26 @@ public class ChatManager {
             return runAgent(sessionId, message, agent);
         }
 
-        var oldHistory = session.getHistory(sessionId);
-        var rotatingSse = Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason())));
+        hooks.fire("on_reflection_done", Map.of("session_id", sessionId));
+        var newSessionId = session.rotate(sessionId); // emits session_closed internally
+        hooks.fire("on_session_rotate", Map.of(
+                "old_session_id", sessionId,
+                "new_session_id", newSessionId,
+                "reason", rotation.reason()));
 
-        return rotatingSse.concatWith(Mono.fromCallable(() -> {
-            var summary = reflectionManager.run(sessionId, oldHistory);
-            hooks.fire("on_reflection_done", Map.of("session_id", sessionId));
-            return summary != null ? summary : "";
-        }).subscribeOn(Schedulers.boundedElastic())
-        .flatMapMany(summary -> {
-            var newSessionId = session.rotate(sessionId);
-            hooks.fire("on_session_rotate", Map.of(
-                    "old_session_id", sessionId,
-                    "new_session_id", newSessionId,
-                    "reason", rotation.reason()));
-
-            var reflectionSse = summary.isBlank() ? Flux.<ServerSentEvent<String>>empty()
-                    : Flux.just(sse(Map.of("type", "reflection", "text", summary)));
-            var rotateSse = Flux.just(sse(Map.of(
-                    "type", "session_rotated",
-                    "session_id", newSessionId,
-                    "reason", rotation.reason())));
-
-            return Flux.concat(reflectionSse, rotateSse, runAgent(newSessionId, message, agent));
-        }));
+        return Flux.concat(
+                Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason()))),
+                Flux.just(sse(Map.of("type", "session_rotated", "session_id", newSessionId, "reason", rotation.reason()))),
+                runAgent(newSessionId, message, agent));
     }
 
     private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message, String agent) {
         hooks.fire("on_agent_start", Map.of("session_id", sessionId, "user_message", message));
 
         var stopped = new AtomicBoolean(false);
-        var activeAgent = "therapist".equals(agent) ? therapistAgent : assistantAgent;
+        var meta = session.getSessionMeta(sessionId);
+        var resolvedAgent = (String) meta.getOrDefault("agent", agent != null ? agent : "cos");
+        var activeAgent = agentRegistry.get(resolvedAgent);
 
         return activeAgent.chat(sessionId, message)
                 .doOnNext(event -> {

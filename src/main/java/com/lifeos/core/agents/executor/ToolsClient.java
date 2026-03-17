@@ -39,7 +39,8 @@ public class ToolsClient {
     public Flux<ToolEvent> invoke(
             List<Map<String, Object>> toolUses,
             String sessionId,
-            ToolsResult result
+            ToolsResult result,
+            String agentName
     ) {
         return Flux.create(sink -> {
             toolExecutor.submit(() -> {
@@ -55,7 +56,7 @@ public class ToolsClient {
                             return;
                         }
 
-                        invokeOne(toolUses.get(i), result, sink);
+                        invokeOne(toolUses.get(i), result, sink, agentName);
                     }
                     sink.complete();
                 } catch (Exception e) {
@@ -69,7 +70,7 @@ public class ToolsClient {
     // ── Private ──────────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private void invokeOne(Map<String, Object> toolUse, ToolsResult result, FluxSink<ToolEvent> sink) {
+    private void invokeOne(Map<String, Object> toolUse, ToolsResult result, FluxSink<ToolEvent> sink, String agentName) {
         var name  = (String) toolUse.get("name");
         var id    = (String) toolUse.get("id");
         var input = (Map<String, Object>) toolUse.get("input");
@@ -88,7 +89,7 @@ public class ToolsClient {
             }
         }
 
-        toolResult = registry.dispatch(name, input);
+        toolResult = registry.dispatch(name, input, agentName);
         appendResult(id, toolResult, result);
         sink.next(new ToolEvent.Result(name, toolResult));
     }

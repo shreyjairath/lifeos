@@ -13,35 +13,75 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 // ── Agent selection ───────────────────────────────────────────────────────────
-let ACTIVE_AGENT = localStorage.getItem("lifeos-agent") || "main";
+let ACTIVE_AGENT = localStorage.getItem("lifeos-agent") || "cos";
 
-document.querySelectorAll(".agent-btn").forEach(btn => {
-  btn.classList.toggle("active", btn.dataset.agent === ACTIVE_AGENT);
-  btn.addEventListener("click", () => {
-    ACTIVE_AGENT = btn.dataset.agent;
-    localStorage.setItem("lifeos-agent", ACTIVE_AGENT);
-    document.querySelectorAll(".agent-btn").forEach(b => b.classList.toggle("active", b === btn));
-    inputEl.placeholder = ACTIVE_AGENT === "therapist" ? "Talk to your therapist…" : "Ask your agent anything…";
-  });
-});
+const agentToggle = document.getElementById("agent-toggle");
+const subAgentToggle = document.getElementById("sub-agent-toggle");
+
+async function setActiveAgent(name, title) {
+  ACTIVE_AGENT = name;
+  localStorage.setItem("lifeos-agent", name);
+  document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.agent === name));
+  inputEl.placeholder = `Talk to ${title}…`;
+
+  // Restore this agent's last session, or open a new one
+  const saved = localStorage.getItem(sessionKey(name));
+  if (saved) {
+    SESSION_ID = saved;
+    Chat.reset(saved);
+    await Chat.loadHistory(saved);
+  } else {
+    await openNewChat();
+  }
+  await loadSessions();
+}
+
+async function loadAgents() {
+  try {
+    // CoS is always hardcoded as the primary agent
+    const cosBtn = document.createElement("button");
+    cosBtn.className = "agent-btn" + (ACTIVE_AGENT === "cos" ? " active" : "");
+    cosBtn.dataset.agent = "cos";
+    cosBtn.textContent = "Chief of Staff";
+    cosBtn.addEventListener("click", () => setActiveAgent("cos", "Chief of Staff"));
+    agentToggle.innerHTML = "";
+    agentToggle.appendChild(cosBtn);
+
+    // Dynamic agents load beneath
+    const agents = await fetch("/api/agents").then(r => r.json());
+    const subAgents = agents.filter(a => a.name !== "cos");
+    subAgentToggle.innerHTML = "";
+    subAgentToggle.style.display = subAgents.length ? "" : "none";
+    for (const { name, title } of subAgents) {
+      const btn = document.createElement("button");
+      btn.className = "sub-agent-btn" + (name === ACTIVE_AGENT ? " active" : "");
+      btn.dataset.agent = name;
+      btn.textContent = title;
+      btn.addEventListener("click", () => setActiveAgent(name, title));
+      subAgentToggle.appendChild(btn);
+    }
+
+    // Validate stored agent; fall back to cos if unknown
+    const allAgents = [{ name: "cos", title: "Chief of Staff" }, ...subAgents];
+    const current = allAgents.find(a => a.name === ACTIVE_AGENT);
+    if (!current) setActiveAgent("cos", "Chief of Staff");
+    else inputEl.placeholder = `Talk to ${current.title}…`;
+  } catch (e) {
+    console.error("Failed to load agents", e);
+  }
+}
 
 // ── Session ───────────────────────────────────────────────────────────────────
-let SESSION_ID = localStorage.getItem("lifeos-session-id") || null;
+function sessionKey(agent) { return `lifeos-session-${agent}`; }
+let SESSION_ID = localStorage.getItem(sessionKey(ACTIVE_AGENT)) || null;
 
 function setSession(sessionId) {
   SESSION_ID = sessionId;
-  localStorage.setItem("lifeos-session-id", sessionId);
+  localStorage.setItem(sessionKey(ACTIVE_AGENT), sessionId);
 }
 
-// ── Knowledge links ───────────────────────────────────────────────────────────
 const inputEl = document.getElementById("input");
-document.getElementById("knowledge-list").addEventListener("click", (e) => {
-  const link = e.target.closest("[data-file]");
-  if (!link) return;
-  e.preventDefault();
-  inputEl.value = `Show me my agent notes`;
-  inputEl.focus();
-});
 
 // ── Sessions sidebar ──────────────────────────────────────────────────────────
 const convListEl = document.getElementById("conv-list");
@@ -55,7 +95,8 @@ async function loadSessions() {
       convListEl.innerHTML = '<li class="empty">No sessions yet</li>';
       return;
     }
-    for (const s of [...data.sessions].reverse().slice(0, 3)) {
+    const agentSessions = data.sessions.filter(s => (s.agent || "cos") === ACTIVE_AGENT);
+    for (const s of [...agentSessions].reverse().slice(0, 5)) {
       const li = document.createElement("li");
       li.className = "project-item" + (s.id === SESSION_ID ? " active-conv" : "");
       li.textContent = s.title || s.name;
@@ -76,7 +117,11 @@ async function loadSessions() {
 
 // ── New chat ──────────────────────────────────────────────────────────────────
 async function openNewChat() {
-  const resp = await fetch("/api/sessions", { method: "POST" });
+  const resp = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent: ACTIVE_AGENT }),
+  });
   const data = await resp.json();
   setSession(data.session_id);
   Chat.reset(data.session_id);
@@ -122,7 +167,7 @@ ispTabs.forEach(tab => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   Inspector.init();
-  inputEl.placeholder = ACTIVE_AGENT === "therapist" ? "Talk to your therapist…" : "Ask your agent anything…";
+  await loadAgents();
   Chat.init(
     () => SESSION_ID,
     (newSessionId) => setSession(newSessionId),
@@ -134,6 +179,7 @@ ispTabs.forEach(tab => {
   if (!SESSION_ID) {
     await openNewChat();
   } else {
+    Chat.reset(SESSION_ID);
     await Chat.loadHistory(SESSION_ID);
   }
   await loadSessions();
@@ -148,6 +194,8 @@ ispTabs.forEach(tab => {
       const event = JSON.parse(e.data);
       if (event.type === "reminder") {
         Chat.addMessage("agent", `⏰ ${event.message}`, null, Math.floor(Date.now() / 1000));
+      } else if (event.type === "agents_updated") {
+        loadAgents();
       }
     } catch {}
   };

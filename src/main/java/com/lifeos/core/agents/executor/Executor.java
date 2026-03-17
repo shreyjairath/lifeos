@@ -35,7 +35,17 @@ public class Executor {
             String system,
             String model
     ) {
-        return runLoop(sessionId, messages, system, model, null);
+        return runLoop(sessionId, messages, system, model, null, "");
+    }
+
+    public Flux<ExecutorEvent> runLoop(
+            String sessionId,
+            List<Map<String, Object>> messages,
+            String system,
+            String model,
+            List<Map<String, Object>> tools
+    ) {
+        return runLoop(sessionId, messages, system, model, tools, "");
     }
 
     /**
@@ -46,12 +56,13 @@ public class Executor {
             List<Map<String, Object>> messages,
             String system,
             String model,
-            List<Map<String, Object>> tools
+            List<Map<String, Object>> tools,
+            String agentName
     ) {
         var resolvedTools = tools != null ? tools : toolsRegistry.getTools();
         var local = new ArrayList<>(messages);
 
-        return Flux.defer(() -> runOneIteration(sessionId, local, system, model, resolvedTools))
+        return Flux.defer(() -> runOneIteration(sessionId, local, system, model, resolvedTools, agentName))
                 .repeat()
                 .takeUntil(event -> event instanceof LoopControl lc && lc.shouldStop())
                 .filter(event -> !(event instanceof LoopControl));
@@ -64,7 +75,8 @@ public class Executor {
             String sessionId,
             List<Map<String, Object>> local,
             String system, String model,
-            List<Map<String, Object>> tools
+            List<Map<String, Object>> tools,
+            String agentName
     ) {
         if (cancellation.isCancelled(sessionId)) {
             return Flux.just(LoopControl.STOP);
@@ -75,14 +87,15 @@ public class Executor {
         // Stream LLM, then process result
         return llmClient.stream(model, system, List.copyOf(local), tools, llmResult)
                 .<ExecutorEvent>map(e -> e)
-                .concatWith(Flux.defer(() -> afterLlm(sessionId, local, llmResult)));
+                .concatWith(Flux.defer(() -> afterLlm(sessionId, local, llmResult, agentName)));
     }
 
     @SuppressWarnings("unchecked")
     private Flux<ExecutorEvent> afterLlm(
             String sessionId,
             List<Map<String, Object>> local,
-            LlmClient.LlmResult llmResult
+            LlmClient.LlmResult llmResult,
+            String agentName
     ) {
         // Build assistant content
         var assistantContent = new ArrayList<Map<String, Object>>();
@@ -112,7 +125,7 @@ public class Executor {
         var toolsResult = new ToolsClient.ToolsResult();
         return Flux.<ExecutorEvent>just(appendEvent)
                 .concatWith(
-                        toolsClient.invoke(llmResult.getParsedToolUses(), sessionId, toolsResult)
+                        toolsClient.invoke(llmResult.getParsedToolUses(), sessionId, toolsResult, agentName)
                                 .<ExecutorEvent>map(e -> e)
                                 .doOnComplete(() -> {
                                     local.add(Map.of("role", "user", "content", toolsResult.getMessages()));

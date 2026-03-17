@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "lifeos")
 public record AppConfig(
     String model,
+    String reflectModel,
     String anthropicApiKey,
     Paths paths,
     Session session

@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tool definitions (Anthropic schema format), dispatch routing, and disabled-tool management.
@@ -22,13 +23,12 @@ import java.util.*;
 public class ToolsRegistry {
 
     private static final Path USER_DATA = Path.of(System.getProperty("user.dir")).resolve(".user-data").normalize();
+    public  static final Path AGENTS_DIR  = USER_DATA.resolve("agents");
     private static final Path DISABLED_FILE = USER_DATA.resolve("disabled-tools.json").normalize();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final Bash ASSISTANT_BASH          = new Bash(USER_DATA.resolve("assistant"));
-    private static final Bash THERAPIST_BASH          = new Bash(USER_DATA.resolve("therapist"));
-    private static final Bash ASSISTANT_BASH_READONLY = new Bash(USER_DATA.resolve("assistant"), true);
-    private static final Bash THERAPIST_BASH_READONLY = new Bash(USER_DATA.resolve("therapist"), true);
+    private final ConcurrentHashMap<String, Bash> agentBashInstances         = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bash> agentBashReadonlyInstances = new ConcurrentHashMap<>();
 
     private final WebSearch webSearch;
     private final Browse browse;
@@ -37,10 +37,11 @@ public class ToolsRegistry {
     private final PropertyReport propertyReport;
     private final SessionTools sessionTools;
     private final ReminderScheduler reminderScheduler;
+    private final AgentTools agentTools;
 
     public ToolsRegistry(WebSearch webSearch, Browse browse, Media media,
                          Redfin redfin, PropertyReport propertyReport, SessionTools sessionTools,
-                         @Lazy ReminderScheduler reminderScheduler) {
+                         @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools) {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
@@ -48,25 +49,31 @@ public class ToolsRegistry {
         this.propertyReport = propertyReport;
         this.sessionTools = sessionTools;
         this.reminderScheduler = reminderScheduler;
+        this.agentTools = agentTools;
     }
 
     @PostConstruct
     public void init() throws IOException {
-        Files.createDirectories(USER_DATA.resolve("assistant"));
-        Files.createDirectories(USER_DATA.resolve("therapist"));
         Files.createDirectories(USER_DATA.resolve("system"));
+    }
+
+    /** Register a dynamic agent's bash workspace. Called by AgentRegistry when an agent is loaded. */
+    public void registerAgentWorkspace(String name, Path workspace) {
+        agentBashInstances.put(name, new Bash(workspace));
+        agentBashReadonlyInstances.put(name, new Bash(workspace, true));
     }
 
     // ── Dispatch ─────────────────────────────────────────────────────────────────
 
-    public Map<String, Object> dispatch(String toolName, Map<String, Object> input) {
+    public Map<String, Object> dispatch(String toolName, Map<String, Object> input, String agentName) {
         var sessionResult = sessionTools.dispatch(toolName, input);
         if (sessionResult != null) return sessionResult;
         return switch (toolName) {
-            case "assistant_bash"          -> ASSISTANT_BASH.bash((String) input.get("command"));
-            case "therapist_bash"          -> THERAPIST_BASH.bash((String) input.get("command"));
-            case "assistant_bash_readonly" -> ASSISTANT_BASH_READONLY.bash((String) input.get("command"));
-            case "therapist_bash_readonly" -> THERAPIST_BASH_READONLY.bash((String) input.get("command"));
+            case "agent_bash" -> {
+                var bash = agentBashInstances.get(agentName);
+                yield bash != null ? bash.bash((String) input.get("command"))
+                                   : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
             case "set_reminder"    -> reminderScheduler.store().set((String) input.get("time"), (String) input.get("message"));
             case "list_reminders"  -> reminderScheduler.store().list();
             case "delete_reminder" -> reminderScheduler.store().delete((String) input.get("id"));
@@ -79,14 +86,54 @@ public class ToolsRegistry {
             case "get_current_datetime" -> Map.of(
                     "datetime", ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z")),
                     "iso8601",  ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+            case "read_agent_workspace" -> {
+                var target = (String) input.get("agent");
+                var bash = agentBashReadonlyInstances.get(target);
+                yield bash != null ? bash.bash((String) input.get("command"))
+                                   : Map.of("error", "No workspace registered for agent: " + target);
+            }
+            case "message_agent" -> agentTools.messageAgent(agentName, (String) input.get("agent"), (String) input.get("message"));
+            case "read_agent_definition" -> agentTools.readAgentDefinition((String) input.get("agent"));
+            case "update_agent" -> agentTools.updateAgent(
+                    (String) input.get("name"),
+                    (String) input.get("title"),
+                    (String) input.get("description"),
+                    (String) input.get("who_you_are"),
+                    (String) input.get("chat_instructions"),
+                    (String) input.get("reflect_instructions"),
+                    (String) input.get("heartbeat_instructions"),
+                    input.get("tools") instanceof List<?> rawList
+                            ? rawList.stream().map(Object::toString).toList()
+                            : null);
+            case "list_agents" -> agentTools.listAgents(agentName);
+            case "list_tools" -> {
+                var all = new ArrayList<>(TOOLS);
+                all.addAll(SessionTools.DEFINITIONS);
+                var disabled = loadDisabledTools();
+                yield Map.of("tools", all.stream()
+                        .filter(t -> !disabled.contains(t.get("name")))
+                        .map(t -> Map.of("name", t.get("name"), "description", t.get("description")))
+                        .toList());
+            }
+            case "create_agent" -> agentTools.createAgent(
+                    (String) input.get("name"),
+                    (String) input.get("title"),
+                    (String) input.get("description"),
+                    (String) input.get("who_you_are"),
+                    (String) input.get("chat_instructions"),
+                    (String) input.get("reflect_instructions"),
+                    (String) input.get("heartbeat_instructions"),
+                    input.get("tools") instanceof List<?> rawList
+                            ? rawList.stream().map(Object::toString).toList()
+                            : List.of());
             default -> Map.of("error", "Unknown tool: " + toolName);
         };
     }
 
     private static final List<Map<String, Object>> TOOLS = List.of(
-            tool("assistant_bash",
-                    "The assistant's personal workspace. Use this to read and write the assistant's notes and files. " +
-                    "The shell starts in the assistant's workspace. " +
+            tool("agent_bash",
+                    "Your personal workspace. Use this to read and write your notes and files. " +
+                    "The shell starts in your workspace. " +
                     "Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. " +
                     "Path traversal (../), absolute paths, network tools, and privilege escalation are blocked.",
                     props(prop("command", "string", "Bash command to run.")), "command"),
@@ -126,25 +173,99 @@ public class ToolsRegistry {
             tool("delete_reminder", "Cancel a pending reminder by id.",
                     props(prop("id", "string", "Reminder id from list_reminders")), "id"),
 
-            // Therapist bash — not shown to main agent
-            tool("therapist_bash",
-                    "The therapist's personal workspace. Use this to read and write clinical notes and observations about the client. " +
-                    "The shell starts in the therapist's workspace. " +
-                    "Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. " +
-                    "Path traversal (../), absolute paths, network tools, and privilege escalation are blocked.",
-                    props(prop("command", "string", "Bash command to run.")), "command"),
+            tool("message_agent",
+                    "Send a message to another agent and receive their response. " +
+                    "This is an internal agent-to-agent channel — separate from the user-facing chat. " +
+                    "Each sender-recipient pair has its own dedicated session, so conversations stay isolated. " +
+                    "Use this to delegate tasks, request analysis, escalate to cos, or check in with a specialist.",
+                    props(prop("agent", "string", "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
+                          prop("message", "string", "Message to send to the agent.")),
+                    "agent", "message"),
 
-            // Read-only cross-agent access — for reflection use only
-            tool("therapist_bash_readonly",
-                    "Read-only access to the therapist's workspace. Use this to reference the therapist's notes during reflection. " +
-                    "Write operations (rm, mv, echo >, tee, etc.) are blocked — use therapist_bash if you need to write. " +
-                    "The shell starts in the therapist's workspace — use bare filenames only.",
-                    props(prop("command", "string", "Read-only bash command (ls, cat, grep, etc.).")), "command"),
-            tool("assistant_bash_readonly",
-                    "Read-only access to the assistant's workspace. Use this to reference the assistant's notes during reflection. " +
-                    "Write operations (rm, mv, echo >, tee, etc.) are blocked — use assistant_bash if you need to write. " +
-                    "The shell starts in the assistant's workspace — use bare filenames only.",
-                    props(prop("command", "string", "Read-only bash command (ls, cat, grep, etc.).")), "command")
+            tool("read_agent_workspace",
+                    "Read-only access to another agent's workspace. " +
+                    "Use this to inspect what a specialist agent has stored — its notes, files, and knowledge base. " +
+                    "Write operations are blocked. The shell starts in the target agent's workspace — use bare filenames only.",
+                    props(prop("agent", "string", "Agent name (e.g. 'therapist', 'pm_coach'). Use list_agents to see available agents."),
+                          prop("command", "string", "Read-only bash command (ls, cat, grep, etc.)")),
+                    "agent", "command"),
+
+            tool("read_agent_definition",
+                    "Read the full definition of a dynamic agent — its agent.yml config and all prompt files " +
+                    "(who-you-are.md, chat.md, reflect.md, heartbeat.md). Use this before update_agent to see the current state.",
+                    props(prop("agent", "string", "Agent name (e.g. 'pm_coach')")),
+                    "agent"),
+
+            tool("update_agent",
+                    "Update a dynamic agent's definition. Only the fields you provide are changed — omitted fields keep their current values. " +
+                    "The agent is re-registered immediately after updating. Use read_agent_definition first to see current values.",
+                    props(prop("name", "string", "Agent slug to update"),
+                          prop("title", "string", "New display name"),
+                          prop("description", "string", "New one-sentence description"),
+                          prop("who_you_are", "string", "New identity prompt"),
+                          prop("chat_instructions", "string", "New session-mode instructions"),
+                          prop("reflect_instructions", "string", "New post-session reflection instructions"),
+                          prop("heartbeat_instructions", "string", "New heartbeat instructions"),
+                          Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
+                                  "description", "New tool list (replaces current list)"))),
+                    "name"),
+
+            tool("list_agents",
+                    "List all agents currently registered in the system with their name and title. " +
+                    "Use this before calling create_agent to see what agents already exist.",
+                    props(), new String[]{}),
+
+            tool("list_tools",
+                    "List all tools available in the system with their names and descriptions. " +
+                    "Use this before calling create_agent to know which tools can be granted to a new dynamic agent.",
+                    props(), new String[]{}),
+
+            tool("create_agent",
+                    "Create a new specialist agent and register it immediately. " +
+                    "Before calling this, use read_agent_definition on an existing agent (e.g. 'therapist') to see the prompt style and structure to follow. " +
+                    "The agent will persist across server restarts. " +
+                    "After creation, let the user know it's ready — they can meet them anytime.",
+                    props(prop("name", "string", "Agent slug: lowercase letters, digits, underscores (e.g. 'pm_coach')"),
+                          prop("title", "string", "Display name shown in the UI (e.g. 'PM Coach')"),
+                          prop("description", "string", "One-sentence description of what this agent does (shown in list_agents). E.g. 'Tracks your finances — income, expenses, investments, and net worth.'"),
+                          prop("who_you_are", "string",
+                                  "Durable identity prompt. Must cover: " +
+                                  "(1) Who the agent is — role, domain expertise, and purpose. Be specific about what they own and why they exist. " +
+                                  "(2) Workspace — introduce the agent_bash tool (automatically provided to every agent), give full freedom to create any files and directory structure they see fit. " +
+                                  "(3) Framework — instruct the agent to ground itself in an established framework from its professional field, not invent one. " +
+                                  "The framework should reflect how practitioners in that domain actually think — e.g. for a therapist: biopsychosocial, Five P's, psychodynamic, CBT, or ACT; for a finance agent: balance sheet + income statement + cash flow; for a coach: periodization + load management. " +
+                                  "Instruct the agent to choose the framework that best fits this specific user's situation, document the choice and rationale in _orientation.md, and switch if it stops fitting as the work deepens. " +
+                                  "The workspace file structure should reflect the chosen framework — not the other way around. " +
+                                  "On first run, the agent should read any existing workspace files, decide on a framework, build out the file structure, and write _orientation.md as an index and introduction to the workspace: what files exist, what each one contains, and how to navigate the workspace. " +
+                                  "(4) Orientation ritual — instruct the agent to always read _orientation.md before doing anything, in every mode (chat, reflect, heartbeat). " +
+                                  "_orientation.md is the entry point to the workspace — it must always be kept current as files are added or changed."),
+                          prop("chat_instructions", "string",
+                                  "Session-mode instructions — what the agent does when the user is present. " +
+                                  "Should read as a natural continuation of who_you_are (not a separate document). " +
+                                  "Focus only on interactive posture and behavior — the orientation ritual is already established in who_you_are. " +
+                                  "Describe how the agent actively helps the user move things forward in its domain. " +
+                                  "Should define the agent's interactive posture: e.g. ask clarifying questions, surface gaps or open threads, " +
+                                  "challenge when warranted, take notes during the session. " +
+                                  "Keep it focused — this is the agent in action, not a re-statement of identity."),
+                          prop("reflect_instructions", "string",
+                                  "Post-session reflection instructions. Omit if the agent has no persistent state to maintain. " +
+                                  "If provided, should instruct a three-pass reflection: " +
+                                  "Pass 1 — update domain-specific notes and files in the workspace based on what happened this session (new decisions, new data, changed state). " +
+                                  "Pass 2 — zoom out: review whether the current framework and file structure still fits. Restructure, rename, or consolidate files if the domain has evolved. Keep _orientation.md current after any structural changes. " +
+                                  "Pass 3 — message the Chief of Staff (agent=cos) if anything from this session has operational implications: a pattern blocking forward motion, a commitment being avoided, a shift in capacity or priorities, or something the CoS should factor into how they're supporting the user. Only message if it would genuinely change how CoS operates — not every session warrants one. " +
+                                  "The agent should defer to _orientation.md for what files exist and what to update — not hardcode filenames in the prompt."),
+                          prop("heartbeat_instructions", "string",
+                                  "Proactive check-in prompt — runs on a schedule even without user input. Omit if not needed. " +
+                                  "The orientation ritual is already established in who_you_are — focus only on what to do during a heartbeat. " +
+                                  "Instruct the agent to scan its workspace for anything that warrants proactive attention (deadlines, stale items, anomalies, things the user should know); " +
+                                  "then either send a message to the user or stay silent. " +
+                                  "Should define the signal-to-noise bar clearly — only surface things that are genuinely actionable or time-sensitive. " +
+                                  "If nothing warrants attention, the agent should do nothing."),
+                          Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
+                                  "description", "Tool names to expose to this agent in addition to agent_bash (which is always included automatically). " +
+                                          "Examples: get_current_datetime, web_search, browse_page, set_reminder, list_sessions, read_session_transcript. " +
+                                          "Include message_agent if the agent should be able to reach other agents or escalate to cos."))),
+                    "name", "who_you_are", "chat_instructions", "tools")
     );
 
     // ── Schema ───────────────────────────────────────────────────────────────────

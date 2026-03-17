@@ -2,10 +2,13 @@ package com.lifeos.core.managers;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.config.AppConfig;
+import com.lifeos.core.helpers.EventBus;
 import com.lifeos.core.store.SessionStore;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -31,16 +34,50 @@ public class SessionManager {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final AppConfig config;
     private final SessionStore store;
+    private final EventBus eventBus;
 
-    public SessionManager(AppConfig config, SessionStore store) {
+    public SessionManager(AppConfig config, SessionStore store, EventBus eventBus) {
         this.config = config;
         this.store = store;
+        this.eventBus = eventBus;
+    }
+
+    @PostConstruct
+    public void initHeartbeatListener() {
+        eventBus.subscribe()
+                .filter(e -> "heartbeat_trigger".equals(e.get("type")))
+                .publishOn(Schedulers.boundedElastic())
+                .subscribe(
+                        e -> checkExpiredSessions(),
+                        err -> log.warn("SessionManager heartbeat_trigger stream error: {}", err.getMessage()));
+    }
+
+    private void checkExpiredSessions() {
+        for (var dir : store.listSessionDirs()) {
+            var sessionId = dir.getFileName().toString();
+            try {
+                if (!store.readSummary(sessionId).isEmpty()) continue;
+                if (store.loadMessages(sessionId).isEmpty()) continue;
+                var rotation = checkRotation(sessionId);
+                if (!rotation.shouldRotate()) continue;
+                log.info("SessionManager: session {} expired ({})", sessionId, rotation.reason());
+                var agent = (String) store.loadMeta(sessionId).getOrDefault("agent", "");
+                eventBus.publish(Map.of("type", "session_closed", "sessionId", sessionId, "agent", agent));
+            } catch (Exception e) {
+                log.warn("SessionManager: error checking session {}: {}", sessionId, e.getMessage());
+            }
+        }
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
     /** Gets or creates the session for a given pointer key (e.g. "main"). */
     public String getOrCreate(String pointerKey) {
+        return getOrCreate(pointerKey, null);
+    }
+
+    /** Gets or creates the session for a given pointer key, tagging it with an agent name on creation. */
+    public String getOrCreate(String pointerKey, String agent) {
         lock.writeLock().lock();
         try {
             var pointers = store.loadPointers();
@@ -49,7 +86,7 @@ public class SessionManager {
                 return sessionId;
             }
             sessionId = newSessionId();
-            var meta = buildMeta(pointerKey, null);
+            var meta = buildMeta(pointerKey, null, agent);
             store.saveMeta(sessionId, meta);
             store.saveMessages(sessionId, new ArrayList<>());
             pointers.put(pointerKey, sessionId);
@@ -60,12 +97,12 @@ public class SessionManager {
         }
     }
 
-    public String createNew() {
+    public String createNew(String agent) {
         lock.writeLock().lock();
         try {
             pruneEmpty();
             var sessionId = newSessionId();
-            var meta = buildMeta("chat-" + sessionId, null);
+            var meta = buildMeta("chat-" + sessionId, null, agent);
             store.saveMeta(sessionId, meta);
             store.saveMessages(sessionId, new ArrayList<>());
             return sessionId;
@@ -75,28 +112,32 @@ public class SessionManager {
     }
 
     /**
-     * Creates a new session linked to the parent (called on rotation).
-     * Updates the pointer so future requests go to the new session.
+     * Closes oldSessionId, creates a new session linked to it, and updates the pointer.
+     * Emits `session_closed` so agents and SessionSummarizer can react asynchronously.
      */
     @SuppressWarnings("unchecked")
     public String rotate(String oldSessionId) {
+        String newSessionId;
+        String agent;
         lock.writeLock().lock();
         try {
             var oldMeta = store.loadMeta(oldSessionId);
             var pointerKey = (String) oldMeta.getOrDefault("pointer_key", "main");
+            agent = (String) oldMeta.get("agent");
 
-            var newSessionId = newSessionId();
-            var meta = buildMeta(pointerKey, oldSessionId);
+            newSessionId = newSessionId();
+            var meta = buildMeta(pointerKey, oldSessionId, agent);
             store.saveMeta(newSessionId, meta);
             store.saveMessages(newSessionId, new ArrayList<>());
 
             var pointers = store.loadPointers();
             pointers.put(pointerKey, newSessionId);
             store.savePointers(pointers);
-            return newSessionId;
         } finally {
             lock.writeLock().unlock();
         }
+        eventBus.publish(Map.of("type", "session_closed", "sessionId", oldSessionId, "agent", agent != null ? agent : ""));
+        return newSessionId;
     }
 
     public record RotationCheck(boolean shouldRotate, String reason) {}
@@ -217,7 +258,8 @@ public class SessionManager {
                     "title", meta.getOrDefault("title", meta.getOrDefault("name", sessionId)),
                     "pointer_key", meta.getOrDefault("pointer_key", ""),
                     "created_at", meta.getOrDefault("created_at", 0),
-                    "parent_session_id", meta.getOrDefault("parent_session_id", "")
+                    "parent_session_id", meta.getOrDefault("parent_session_id", ""),
+                    "agent", meta.getOrDefault("agent", "cos")
             ));
         }
         result.sort(Comparator.comparingDouble(m -> {
@@ -292,12 +334,13 @@ public class SessionManager {
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    private Map<String, Object> buildMeta(String pointerKey, String parentSessionId) {
+    private Map<String, Object> buildMeta(String pointerKey, String parentSessionId, String agent) {
         var meta = new LinkedHashMap<String, Object>();
         meta.put("pointer_key", pointerKey);
         meta.put("name", displayName(pointerKey));
         meta.put("created_at", epochSeconds());
         if (parentSessionId != null) meta.put("parent_session_id", parentSessionId);
+        if (agent != null) meta.put("agent", agent);
         return meta;
     }
 

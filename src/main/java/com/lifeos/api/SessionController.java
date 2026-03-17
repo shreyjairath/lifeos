@@ -19,7 +19,8 @@ public class SessionController {
     }
 
     @PostMapping("/sessions")
-    public Map<String, String> createSession() {
-        return Map.of("session_id", session.createNew());
+    public Map<String, String> createSession(@RequestBody(required = false) Map<String, String> body) {
+        var agent = body != null ? body.get("agent") : null;
+        return Map.of("session_id", session.createNew(agent));
     }
 }

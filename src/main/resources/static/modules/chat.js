@@ -118,41 +118,32 @@ export function removeTypingIndicator() {
 
 function toolSummary(name, input) {
   switch (name) {
-    case "main_bash":      return `$ ${input.command}`;
-    case "therapist_bash": return `$ ${input.command}`;
-    case "web_search":    return `web_search  "${input.query}"`;
-    case "browse_page":   return `browse  ${input.url}`;
-    case "list_notes":       return `list_notes`;
-    case "read_note":        return `read_note  ${input.file}`;
-    case "write_note":       return `write_note  ${input.file}`;
-    case "delete_note":      return `delete_note  ${input.file}`;
-    case "grep_notes":       return `grep_notes  "${input.pattern}"`;
-    case "get_current_datetime": return `get_current_datetime`;
-    case "set_reminder":    return `set_reminder  ${input.time}  "${input.message}"`;
-    case "list_reminders":  return `list_reminders`;
-    case "delete_reminder": return `delete_reminder  ${input.id}`;
-    case "list_therapist_notes":  return `list_therapist_notes`;
-    case "read_therapist_note":   return `read_therapist_note  ${input.file}`;
-    case "write_therapist_note":  return `write_therapist_note  ${input.file}`;
-    case "delete_therapist_note": return `delete_therapist_note  ${input.file}`;
-    case "grep_therapist_notes":  return `grep_therapist_notes  "${input.pattern}"`;
-    case "list_sessions":           return `list_sessions`;
-    case "read_session_summary":    return `read_session_summary  ${input.session_id}`;
+    case "agent_bash":            return `$ ${input.command}`;
+    case "web_search":            return `web_search  "${input.query}"`;
+    case "browse_page":           return `browse  ${input.url}`;
+    case "get_current_datetime":  return `get_current_datetime`;
+    case "set_reminder":          return `set_reminder  ${input.time}  "${input.message}"`;
+    case "list_reminders":        return `list_reminders`;
+    case "delete_reminder":       return `delete_reminder  ${input.id}`;
+    case "list_sessions":         return `list_sessions`;
+    case "read_session_summary":  return `read_session_summary  ${input.session_id}`;
     case "read_session_transcript": return `read_session_transcript  ${input.session_id}`;
-    case "update_knowledge": return `update_knowledge  ${input.file}`;
-    case "read_knowledge":   return `read_knowledge  ${input.file}`;
-    case "write_file":
-    case "read_file":
-    case "update_file":   return `${name}  ${input.path ?? input.name ?? ""}`;
-    case "list_dir":      return `list_dir  ${input.path ?? ""}`;
-    case "parse_redfin_search":  return `parse_redfin_search  ${input.url}`;
-    case "parse_redfin_listing": return `parse_redfin  ${input.url}`;
-    case "show_image":           return `show_image  ${input.url}`;
-    case "property_report":      return `property_report  ${input.address}`;
-    case "set_onboarding_status": return `set_onboarding  ${input.file}  →  ${input.status}`;
-    default:
-      if (name.startsWith("chrome_")) return `${name}  ${input.url ?? input.selector ?? input.script?.slice(0, 40) ?? ""}`.trimEnd();
-      return name;
+    case "message_agent": {
+      const msg = input.message ?? "";
+      const preview = msg.length > 50 ? msg.slice(0, 50) + "…" : msg;
+      return `→ ${input.agent}  "${preview}"`;
+    }
+    case "read_agent_workspace":  return `${input.agent}  $ ${input.command}`;
+    case "read_agent_definition": return `read_agent_definition  ${input.agent}`;
+    case "list_agents":           return `list_agents`;
+    case "list_tools":            return `list_tools`;
+    case "create_agent":          return `create_agent  ${input.name}`;
+    case "update_agent":          return `update_agent  ${input.name}`;
+    case "parse_redfin_search":   return `redfin_search  ${input.url}`;
+    case "parse_redfin_listing":  return `redfin  ${input.url}`;
+    case "show_image":            return `show_image  ${input.url}`;
+    case "property_report":       return `property_report  ${input.address}`;
+    default:                      return name;
   }
 }
 
