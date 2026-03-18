@@ -13,14 +13,14 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 // ── Agent selection ───────────────────────────────────────────────────────────
-let ACTIVE_AGENT = localStorage.getItem("lifeos-agent") || "cos";
+let ACTIVE_AGENT = localStorage.getItem("chief-agent") || "cos";
 
 const agentToggle = document.getElementById("agent-toggle");
 const subAgentToggle = document.getElementById("sub-agent-toggle");
 
 async function setActiveAgent(name, title) {
   ACTIVE_AGENT = name;
-  localStorage.setItem("lifeos-agent", name);
+  localStorage.setItem("chief-agent", name);
   document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.agent === name));
   inputEl.placeholder = `Talk to ${title}…`;
@@ -73,7 +73,7 @@ async function loadAgents() {
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
-function sessionKey(agent) { return `lifeos-session-${agent}`; }
+function sessionKey(agent) { return `chief-session-${agent}`; }
 let SESSION_ID = localStorage.getItem(sessionKey(ACTIVE_AGENT)) || null;
 
 function setSession(sessionId) {
