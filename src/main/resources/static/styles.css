@@ -61,7 +61,7 @@ button.new-chat-btn:hover { background: var(--border); }
 
 /* ── Agent toggle ── */
 #agent-toggle {
-  display: flex; margin: 8px 12px 4px;
+  display: flex; margin: 86px 12px 4px;
 }
 .agent-btn {
   flex: 1; padding: 6px 8px; font-size: 12px; font-family: var(--font);
