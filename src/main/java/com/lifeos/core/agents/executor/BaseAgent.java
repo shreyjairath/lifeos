@@ -112,6 +112,7 @@ public abstract class BaseAgent {
     }
 
     public Flux<ExecutorEvent> chat(String sessionId, String userMessage) {
+        log.info("{} chat starting — session {}", agentName(), sessionId);
         cancellation.clear(sessionId);
 
         var prompt = buildPrompt(sessionId);
@@ -203,6 +204,7 @@ public abstract class BaseAgent {
         var prompt = postSessionPrompt();
         if (prompt == null || prompt.isBlank() || transcript.isBlank()) return null;
 
+        log.info("{} post-session starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Session transcript to reflect on:\n\n" + transcript));
 
@@ -218,11 +220,14 @@ public abstract class BaseAgent {
                     .defaultIfEmpty("")
                     .block();
 
+            log.info("{} post-session complete — result: [{}]", agentName(),
+                    summary != null ? summary.strip() : "null");
+
             if (summary != null && !summary.isBlank() && !"nothing to save".equalsIgnoreCase(summary.strip())) {
                 return summary;
             }
         } catch (Exception e) {
-            log.warn("{} post-session update failed: {}", getClass().getSimpleName(), e.getMessage());
+            log.warn("{} post-session failed: {}", agentName(), e.getMessage());
         }
         return null;
     }
@@ -342,6 +347,7 @@ public abstract class BaseAgent {
         var prompt = selfEvalPrompt();
         if (prompt == null || prompt.isBlank()) return;
 
+        log.info("{} self-eval starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled self-evaluation."));
 
@@ -357,15 +363,17 @@ public abstract class BaseAgent {
                     .defaultIfEmpty("")
                     .block();
 
+            log.info("{} self-eval complete — result: [{}]", agentName(),
+                    result != null ? result.strip() : "null");
+
             if (result != null && !result.isBlank() && !"nothing".equalsIgnoreCase(result.strip())) {
                 var agentName = getClass().getSimpleName()
                         .replace("Agent", "").toLowerCase();
-                log.info("{} self-eval returned a message", getClass().getSimpleName());
                 eventBus.publish(Map.of("type", "heartbeat", "agent", agentName, "text", result.strip()));
                 webPush.sendToAll("lifeos", result.strip());
             }
         } catch (Exception e) {
-            log.warn("{} self-eval failed: {}", getClass().getSimpleName(), e.getMessage());
+            log.warn("{} self-eval failed: {}", agentName(), e.getMessage());
         }
     }
 }
