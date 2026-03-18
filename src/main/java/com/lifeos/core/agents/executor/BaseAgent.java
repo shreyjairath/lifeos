@@ -313,13 +313,14 @@ public abstract class BaseAgent {
         var prompt = heartbeatPrompt();
         if (prompt == null || prompt.isBlank()) return;
 
-        log.info("{} heartbeat starting", agentName());
+        log.info("{} heartbeat starting — model={}, tools={}", agentName(), reflectModel(), heartbeatTools().stream().map(t -> (String) t.get("name")).toList());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled heartbeat check."));
 
         try {
             var result = executor.runLoop("_heartbeat_" + getClass().getSimpleName(),
                             new ArrayList<>(messages), prompt, reflectModel(), heartbeatTools(), agentName())
+                    .doOnNext(e -> log.debug("{} heartbeat event: {}", agentName(), e.getClass().getSimpleName()))
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
