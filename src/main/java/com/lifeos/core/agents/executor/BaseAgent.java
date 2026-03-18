@@ -333,11 +333,12 @@ public abstract class BaseAgent {
             log.info("{} heartbeat complete — result: [{}]", agentName(),
                     result != null ? result.strip() : "null");
 
-            if (result != null && !result.isBlank() && !"nothing".equalsIgnoreCase(result.strip())) {
+            var pushMessage = parsePushToUser(result);
+            if (pushMessage != null && !pushMessage.isBlank()) {
                 var agentName = getClass().getSimpleName()
                         .replace("Agent", "").toLowerCase();
-                eventBus.publish(Map.of("type", "heartbeat", "agent", agentName, "text", result.strip()));
-                webPush.sendToAll("lifeos", result.strip());
+                eventBus.publish(Map.of("type", "heartbeat", "agent", agentName, "text", pushMessage));
+                webPush.sendToAll("lifeos", pushMessage);
             }
         } catch (Exception e) {
             log.warn("{} heartbeat failed: {}", agentName(), e.getMessage());
@@ -376,5 +377,22 @@ public abstract class BaseAgent {
         } catch (Exception e) {
             log.warn("{} self-eval failed: {}", agentName(), e.getMessage());
         }
+    }
+
+    /** Extracts the quoted string from a trailing push_to_user:"..." line. Returns null if not found. */
+    private static String parsePushToUser(String result) {
+        if (result == null) return null;
+        var lines = result.strip().lines().toList();
+        for (int i = lines.size() - 1; i >= 0; i--) {
+            var line = lines.get(i).strip();
+            if (line.startsWith("push_to_user:")) {
+                var rest = line.substring("push_to_user:".length()).strip();
+                if (rest.startsWith("\"") && rest.endsWith("\"") && rest.length() >= 2) {
+                    return rest.substring(1, rest.length() - 1).strip();
+                }
+                return null;
+            }
+        }
+        return null;
     }
 }

@@ -8,6 +8,8 @@ Only message another agent if your files reveal a specific gap that requires the
 
 Before replying, always append an entry to `_heartbeat_log.md` with today's date, what tasks ran, and what (if anything) was changed. If nothing ran and nothing was urgent, log that too.
 
-If there is something genuinely urgent for the user, send a short, direct message (1-3 sentences). No preamble. Treat it like a text, not a briefing.
+End your reply with exactly this line:
 
-If there's nothing genuinely urgent, reply with exactly: nothing
+push_to_user:"<message>"
+
+If there is something genuinely urgent, put a short, direct message in the quotes (1-3 sentences, no preamble — treat it like a text). If there's nothing urgent, leave the quotes empty: push_to_user:""
