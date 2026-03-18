@@ -27,7 +27,8 @@ public class SelfEvalScheduler {
         this.eventBus = eventBus;
     }
 
-    @Scheduled(fixedDelayString = "${lifeos.self-eval.interval-ms:86400000}")
+    @Scheduled(fixedDelayString = "${lifeos.self-eval.interval-ms:86400000}",
+               initialDelayString = "${lifeos.self-eval.interval-ms:86400000}")
     public void tick() {
         log.debug("SelfEvalScheduler.tick()");
         eventBus.publish(Map.of("type", "self_eval_trigger"));
