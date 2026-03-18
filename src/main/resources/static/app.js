@@ -53,6 +53,7 @@ async function loadAgents() {
     const subAgents = agents.filter(a => a.name !== "cos");
     subAgentToggle.innerHTML = "";
     subAgentToggle.style.display = subAgents.length ? "" : "none";
+    document.getElementById("agent-separator").style.display = subAgents.length ? "" : "none";
     for (const { name, title } of subAgents) {
       const btn = document.createElement("button");
       btn.className = "sub-agent-btn" + (name === ACTIVE_AGENT ? " active" : "");
