@@ -308,6 +308,7 @@ public abstract class BaseAgent {
         var prompt = heartbeatPrompt();
         if (prompt == null || prompt.isBlank()) return;
 
+        log.info("{} heartbeat starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled heartbeat check."));
 
@@ -323,15 +324,17 @@ public abstract class BaseAgent {
                     .defaultIfEmpty("")
                     .block();
 
+            log.info("{} heartbeat complete — result: [{}]", agentName(),
+                    result != null ? result.strip() : "null");
+
             if (result != null && !result.isBlank() && !"nothing".equalsIgnoreCase(result.strip())) {
                 var agentName = getClass().getSimpleName()
                         .replace("Agent", "").toLowerCase();
-                log.info("{} heartbeat returned a message", getClass().getSimpleName());
                 eventBus.publish(Map.of("type", "heartbeat", "agent", agentName, "text", result.strip()));
                 webPush.sendToAll("lifeos", result.strip());
             }
         } catch (Exception e) {
-            log.warn("{} heartbeat failed: {}", getClass().getSimpleName(), e.getMessage());
+            log.warn("{} heartbeat failed: {}", agentName(), e.getMessage());
         }
     }
 
