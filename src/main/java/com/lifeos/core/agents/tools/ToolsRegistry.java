@@ -258,12 +258,14 @@ public class ToolsRegistry {
                           prop("post_session_instructions", "string",
                                   "Post-session workspace update. Omit if the agent has no persistent state. " +
                                   "Should instruct the agent to: read _orientation.md first, update workspace to reflect current state " +
-                                  "(not a log — an accurate picture of where things stand), then append an entry to session-log.md with what changed."),
+                                  "(not a log — an accurate picture of where things stand), then append an entry to _session_log.md with today's date " +
+                                  "and a bullet list of which files were changed and what was updated in each. Log even if nothing changed."),
                           prop("self_eval_instructions", "string",
                                   "Scheduled self-evaluation — runs independently on a 24h schedule. Omit if not needed. " +
                                   "Should instruct the agent to: read _orientation.md, assess how well it's doing the job " +
                                   "(is its picture complete? are the right things moving? what would a great specialist do differently?), " +
-                                  "fix what's off by updating the workspace, and surface anything the user needs to know. " +
+                                  "fix what's off by updating the workspace, then append an entry to _self_eval_log.md with today's date " +
+                                  "and a bullet list of what was assessed and what was changed. Log even if nothing changed. " +
                                   "This is the feedback loop — how the agent course-corrects over time without being told to."),
                           prop("heartbeat_instructions", "string",
                                   "Proactive wake-up prompt — runs on a schedule even without user input. Omit if not needed. " +
