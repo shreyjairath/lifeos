@@ -270,7 +270,7 @@ public class ToolsRegistry {
                           prop("heartbeat_instructions", "string",
                                   "Proactive wake-up prompt — runs on a schedule even without user input. Omit if not needed. " +
                                   "Should instruct the agent to: read _orientation.md, check _schedule.md for any recurring tasks that are due and execute them, " +
-                                  "then scan the workspace for anything genuinely urgent. " +
+                                  "then scan the workspace for anything genuinely urgent, then append an entry to _heartbeat_log.md with what tasks ran and what changed. " +
                                   "Only surface something to the user if it's actionable right now — otherwise stay silent."),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
                                   "description", "Tool names to expose to this agent in addition to agent_bash (always included automatically). " +
