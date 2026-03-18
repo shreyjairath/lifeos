@@ -320,7 +320,7 @@ public abstract class BaseAgent {
         try {
             var result = executor.runLoop("_heartbeat_" + getClass().getSimpleName(),
                             new ArrayList<>(messages), prompt, reflectModel(), heartbeatTools(), agentName())
-                    .doOnNext(e -> log.debug("{} heartbeat event: {}", agentName(), e.getClass().getSimpleName()))
+                    .doOnNext(e -> log.info("{} heartbeat event: {}", agentName(), e.getClass().getSimpleName()))
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
