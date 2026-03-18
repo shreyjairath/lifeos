@@ -20,7 +20,9 @@ public class Bash {
             Pattern.compile("\\b(curl|wget|nc|netcat|ssh|scp|sftp)\\b"),  // network tools
             Pattern.compile("\\b(sudo|su)\\b"),                           // privilege escalation
             Pattern.compile("\\brm\\s+.*[/~]"),                           // rm targeting root/home
-            Pattern.compile("\\.user-data/"));                             // must not reference parent dirs
+            Pattern.compile("\\.user-data/"),                              // must not reference parent dirs
+            Pattern.compile("~[/\\s]|^~$|(?<=[\\s;|&`])~(?=[/\\s]|$)"),  // tilde home expansion
+            Pattern.compile("\\$HOME"));                                   // explicit $HOME reference
 
     private static final List<Pattern> WRITE_OPS = List.of(
             Pattern.compile("\\b(rm|mv|cp|mkdir|touch|chmod|chown|tee|truncate|ln)\\b"),

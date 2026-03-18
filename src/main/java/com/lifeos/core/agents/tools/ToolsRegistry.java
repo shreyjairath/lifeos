@@ -38,10 +38,12 @@ public class ToolsRegistry {
     private final SessionTools sessionTools;
     private final ReminderScheduler reminderScheduler;
     private final AgentTools agentTools;
+    private final AgentChannels agentChannels;
 
     public ToolsRegistry(WebSearch webSearch, Browse browse, Media media,
                          Redfin redfin, PropertyReport propertyReport, SessionTools sessionTools,
-                         @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools) {
+                         @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools,
+                         AgentChannels agentChannels) {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
@@ -50,6 +52,7 @@ public class ToolsRegistry {
         this.sessionTools = sessionTools;
         this.reminderScheduler = reminderScheduler;
         this.agentTools = agentTools;
+        this.agentChannels = agentChannels;
     }
 
     @PostConstruct
@@ -92,6 +95,7 @@ public class ToolsRegistry {
                 yield bash != null ? bash.bash((String) input.get("command"))
                                    : Map.of("error", "No workspace registered for agent: " + target);
             }
+            case "read_agent_channel" -> agentChannels.readChannel(agentName, (String) input.get("agent"));
             case "message_agent" -> agentTools.messageAgent(agentName, (String) input.get("agent"), (String) input.get("message"));
             case "read_agent_definition" -> agentTools.readAgentDefinition((String) input.get("agent"));
             case "update_agent" -> agentTools.updateAgent(
@@ -100,7 +104,8 @@ public class ToolsRegistry {
                     (String) input.get("description"),
                     (String) input.get("who_you_are"),
                     (String) input.get("chat_instructions"),
-                    (String) input.get("reflect_instructions"),
+                    (String) input.get("post_session_instructions"),
+                    (String) input.get("self_eval_instructions"),
                     (String) input.get("heartbeat_instructions"),
                     input.get("tools") instanceof List<?> rawList
                             ? rawList.stream().map(Object::toString).toList()
@@ -121,7 +126,8 @@ public class ToolsRegistry {
                     (String) input.get("description"),
                     (String) input.get("who_you_are"),
                     (String) input.get("chat_instructions"),
-                    (String) input.get("reflect_instructions"),
+                    (String) input.get("post_session_instructions"),
+                    (String) input.get("self_eval_instructions"),
                     (String) input.get("heartbeat_instructions"),
                     input.get("tools") instanceof List<?> rawList
                             ? rawList.stream().map(Object::toString).toList()
@@ -133,9 +139,10 @@ public class ToolsRegistry {
     private static final List<Map<String, Object>> TOOLS = List.of(
             tool("agent_bash",
                     "Your personal workspace. Use this to read and write your notes and files. " +
-                    "The shell starts in your workspace. " +
+                    "The shell starts in your workspace — use relative paths (e.g. ls, cat file.md). " +
+                    "Do not use ~/, $HOME, or absolute paths. " +
                     "Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. " +
-                    "Path traversal (../), absolute paths, network tools, and privilege escalation are blocked.",
+                    "Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.",
                     props(prop("command", "string", "Bash command to run.")), "command"),
             tool("browse_page",
                     "Fetch and read the content of a web page.",
@@ -173,11 +180,18 @@ public class ToolsRegistry {
             tool("delete_reminder", "Cancel a pending reminder by id.",
                     props(prop("id", "string", "Reminder id from list_reminders")), "id"),
 
+            tool("read_agent_channel",
+                    "Read the message history between you and another agent (last 10 exchanges). " +
+                    "Returns a chronological log of prior exchanges in this agent pair's private channel.",
+                    props(prop("agent", "string", "Agent name (e.g. 'therapist'). Use list_agents to see available agents.")),
+                    "agent"),
+
             tool("message_agent",
                     "Send a message to another agent and receive their response. " +
                     "This is an internal agent-to-agent channel — separate from the user-facing chat. " +
-                    "Each sender-recipient pair has its own dedicated session, so conversations stay isolated. " +
-                    "Use this to delegate tasks, request analysis, escalate to cos, or check in with a specialist.",
+                    "Always call read_agent_channel first to review prior exchanges before sending a new message. " +
+                    "BLOCKING: waits for the full response before returning — avoid in chat mode for research-heavy tasks, as it will stall the user. " +
+                    "Best used in post-session and heartbeat modes, or for short targeted exchanges in chat.",
                     props(prop("agent", "string", "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
                           prop("message", "string", "Message to send to the agent.")),
                     "agent", "message"),
@@ -192,7 +206,7 @@ public class ToolsRegistry {
 
             tool("read_agent_definition",
                     "Read the full definition of a dynamic agent — its agent.yml config and all prompt files " +
-                    "(who-you-are.md, chat.md, reflect.md, heartbeat.md). Use this before update_agent to see the current state.",
+                    "(who-you-are.md, chat.md, post-session.md, self-eval.md, heartbeat.md). Use this before update_agent to see the current state.",
                     props(prop("agent", "string", "Agent name (e.g. 'pm_coach')")),
                     "agent"),
 
@@ -204,7 +218,8 @@ public class ToolsRegistry {
                           prop("description", "string", "New one-sentence description"),
                           prop("who_you_are", "string", "New identity prompt"),
                           prop("chat_instructions", "string", "New session-mode instructions"),
-                          prop("reflect_instructions", "string", "New post-session reflection instructions"),
+                          prop("post_session_instructions", "string", "New post-session update instructions"),
+                          prop("self_eval_instructions", "string", "New self-evaluation instructions"),
                           prop("heartbeat_instructions", "string", "New heartbeat instructions"),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
                                   "description", "New tool list (replaces current list)"))),
@@ -222,49 +237,43 @@ public class ToolsRegistry {
 
             tool("create_agent",
                     "Create a new specialist agent and register it immediately. " +
-                    "Before calling this, use read_agent_definition on an existing agent (e.g. 'therapist') to see the prompt style and structure to follow. " +
                     "The agent will persist across server restarts. " +
                     "After creation, let the user know it's ready — they can meet them anytime.",
                     props(prop("name", "string", "Agent slug: lowercase letters, digits, underscores (e.g. 'pm_coach')"),
                           prop("title", "string", "Display name shown in the UI (e.g. 'PM Coach')"),
-                          prop("description", "string", "One-sentence description of what this agent does (shown in list_agents). E.g. 'Tracks your finances — income, expenses, investments, and net worth.'"),
+                          prop("description", "string", "One-sentence description of what this agent does (shown in list_agents)."),
                           prop("who_you_are", "string",
-                                  "Durable identity prompt. Must cover: " +
-                                  "(1) Who the agent is — role, domain expertise, and purpose. Be specific about what they own and why they exist. " +
-                                  "(2) Workspace — introduce the agent_bash tool (automatically provided to every agent), give full freedom to create any files and directory structure they see fit. " +
-                                  "(3) Framework — instruct the agent to ground itself in an established framework from its professional field, not invent one. " +
-                                  "The framework should reflect how practitioners in that domain actually think — e.g. for a therapist: biopsychosocial, Five P's, psychodynamic, CBT, or ACT; for a finance agent: balance sheet + income statement + cash flow; for a coach: periodization + load management. " +
-                                  "Instruct the agent to choose the framework that best fits this specific user's situation, document the choice and rationale in _orientation.md, and switch if it stops fitting as the work deepens. " +
-                                  "The workspace file structure should reflect the chosen framework — not the other way around. " +
-                                  "On first run, the agent should read any existing workspace files, decide on a framework, build out the file structure, and write _orientation.md as an index and introduction to the workspace: what files exist, what each one contains, and how to navigate the workspace. " +
-                                  "(4) Orientation ritual — instruct the agent to always read _orientation.md before doing anything, in every mode (chat, reflect, heartbeat). " +
-                                  "_orientation.md is the entry point to the workspace — it must always be kept current as files are added or changed."),
+                                  "Durable identity prompt. Keep it lean — purpose, not operating procedures. Cover: " +
+                                  "(1) Who the agent is — their role, domain, and what they own. Be specific about why they exist and what they're accountable for. " +
+                                  "(2) Workspace — the agent has a personal workspace accessible via agent_bash. " +
+                                  "Instruct them to use it as institutional memory: build it up over time, update it as things change. " +
+                                  "_orientation.md is the entry point — the index of what files exist and the current operating picture. " +
+                                  "On first use, create it. Before every session, read it. Keep it current as the workspace evolves. " +
+                                  "Do not prescribe a framework or file structure — the agent should figure out what works through use and self-evaluation."),
                           prop("chat_instructions", "string",
-                                  "Session-mode instructions — what the agent does when the user is present. " +
-                                  "Should read as a natural continuation of who_you_are (not a separate document). " +
-                                  "Focus only on interactive posture and behavior — the orientation ritual is already established in who_you_are. " +
-                                  "Describe how the agent actively helps the user move things forward in its domain. " +
-                                  "Should define the agent's interactive posture: e.g. ask clarifying questions, surface gaps or open threads, " +
-                                  "challenge when warranted, take notes during the session. " +
-                                  "Keep it focused — this is the agent in action, not a re-statement of identity."),
-                          prop("reflect_instructions", "string",
-                                  "Post-session reflection instructions. Omit if the agent has no persistent state to maintain. " +
-                                  "If provided, should instruct a three-pass reflection: " +
-                                  "Pass 1 — update domain-specific notes and files in the workspace based on what happened this session (new decisions, new data, changed state). " +
-                                  "Pass 2 — zoom out: review whether the current framework and file structure still fits. Restructure, rename, or consolidate files if the domain has evolved. Keep _orientation.md current after any structural changes. " +
-                                  "Pass 3 — message the Chief of Staff (agent=cos) if anything from this session has operational implications: a pattern blocking forward motion, a commitment being avoided, a shift in capacity or priorities, or something the CoS should factor into how they're supporting the user. Only message if it would genuinely change how CoS operates — not every session warrants one. " +
-                                  "The agent should defer to _orientation.md for what files exist and what to update — not hardcode filenames in the prompt."),
+                                  "Session-mode instructions — how the agent shows up when the user is present. " +
+                                  "Start with reading _orientation.md. " +
+                                  "Focus on interactive posture: how the agent engages, what it surfaces, how it drives things forward in its domain. " +
+                                  "Keep it short — this is not a re-statement of identity."),
+                          prop("post_session_instructions", "string",
+                                  "Post-session workspace update. Omit if the agent has no persistent state. " +
+                                  "Should instruct the agent to: read _orientation.md first, update workspace to reflect current state " +
+                                  "(not a log — an accurate picture of where things stand), then append an entry to session-log.md with what changed."),
+                          prop("self_eval_instructions", "string",
+                                  "Scheduled self-evaluation — runs independently on a 24h schedule. Omit if not needed. " +
+                                  "Should instruct the agent to: read _orientation.md, assess how well it's doing the job " +
+                                  "(is its picture complete? are the right things moving? what would a great specialist do differently?), " +
+                                  "fix what's off by updating the workspace, and surface anything the user needs to know. " +
+                                  "This is the feedback loop — how the agent course-corrects over time without being told to."),
                           prop("heartbeat_instructions", "string",
-                                  "Proactive check-in prompt — runs on a schedule even without user input. Omit if not needed. " +
-                                  "The orientation ritual is already established in who_you_are — focus only on what to do during a heartbeat. " +
-                                  "Instruct the agent to scan its workspace for anything that warrants proactive attention (deadlines, stale items, anomalies, things the user should know); " +
-                                  "then either send a message to the user or stay silent. " +
-                                  "Should define the signal-to-noise bar clearly — only surface things that are genuinely actionable or time-sensitive. " +
-                                  "If nothing warrants attention, the agent should do nothing."),
+                                  "Proactive wake-up prompt — runs on a schedule even without user input. Omit if not needed. " +
+                                  "Should instruct the agent to: read _orientation.md, check _schedule.md for any recurring tasks that are due and execute them, " +
+                                  "then scan the workspace for anything genuinely urgent. " +
+                                  "Only surface something to the user if it's actionable right now — otherwise stay silent."),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
-                                  "description", "Tool names to expose to this agent in addition to agent_bash (which is always included automatically). " +
+                                  "description", "Tool names to expose to this agent in addition to agent_bash (always included automatically). " +
                                           "Examples: get_current_datetime, web_search, browse_page, set_reminder, list_sessions, read_session_transcript. " +
-                                          "Include message_agent if the agent should be able to reach other agents or escalate to cos."))),
+                                          "Include message_agent if the agent should reach other agents or escalate to cos."))),
                     "name", "who_you_are", "chat_instructions", "tools")
     );
 

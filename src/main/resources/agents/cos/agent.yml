@@ -5,7 +5,8 @@ persona:
   - who-you-are.md
   - chat.md
 reflect-prompt:
-  - reflect.md
+  - post-session.md
+self-eval-prompt: self-eval.md
 heartbeat-prompt: heartbeat.md
 chat-tools:
   mode: include
@@ -32,7 +33,7 @@ chat-tools:
     - set_reminder
     - list_reminders
     - delete_reminder
-reflect-tools:
+post-session-tools:
   mode: include
   names:
     # workspace

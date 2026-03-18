@@ -49,22 +49,28 @@ public class Agent extends BaseAgent {
     }
 
     @Override
-    protected String reflectPrompt() {
-        if (def.reflectPrompt() == null || def.reflectPrompt().isEmpty()) return null;
-        return def.reflectPrompt().stream()
+    protected String postSessionPrompt() {
+        if (def.postSessionPrompt() == null || def.postSessionPrompt().isEmpty()) return null;
+        return def.postSessionPrompt().stream()
                 .map(f -> PromptParts.load(def.promptBase(), f))
                 .collect(java.util.stream.Collectors.joining("\n\n"));
     }
 
     @Override
-    protected List<Map<String, Object>> reflectTools() {
-        return applyFilter(def.reflectTools());
+    protected List<Map<String, Object>> postSessionTools() {
+        return applyFilter(def.postSessionTools());
     }
 
     @Override
     protected String heartbeatPrompt() {
         if (def.heartbeatPrompt() == null) return null;
         return PromptParts.load(def.promptBase(), def.heartbeatPrompt());
+    }
+
+    @Override
+    protected String selfEvalPrompt() {
+        if (def.selfEvalPrompt() == null) return null;
+        return PromptParts.load(def.promptBase(), def.selfEvalPrompt());
     }
 
     @Override
@@ -77,7 +83,7 @@ public class Agent extends BaseAgent {
 
     @Override
     protected List<Map<String, Object>> messageTools() {
-        if (def.messageTools() == null) return reflectTools();
+        if (def.messageTools() == null) return postSessionTools();
         return applyFilter(def.messageTools());
     }
 

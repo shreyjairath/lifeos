@@ -24,4 +24,6 @@ lifeos:
     token-threshold: 50000
     time-threshold-hours: 4
   heartbeat:
-    interval-ms: 14400000  # 4 hours
+    interval-ms: 21600000  # 6 hours
+  self-eval:
+    interval-ms: 86400000  # 24 hours

@@ -13,6 +13,10 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -23,23 +27,26 @@ import java.util.Map;
  * Common base for user-facing agents.
  *
  * Subclasses implement:
- *   persona()        — identity + instructions injected as system prompt
- *   memory()         — optional knowledge section appended after persona (default: empty)
- *   tools()          — tools for chat mode (default: all from registry)
- *   reflectPrompt()  — system prompt for post-session reflection (null = skip)
- *   reflectTools()   — tools for reflection mode (default: all from registry)
- *   heartbeatPrompt()— system prompt for scheduled heartbeat (null = skip)
- *   heartbeatTools() — tools for heartbeat mode (default: reflectTools())
+ *   persona()           — identity + instructions injected as system prompt
+ *   memory()            — optional knowledge section appended after persona (default: empty)
+ *   tools()             — tools for chat mode (default: all from registry)
+ *   postSessionPrompt() — system prompt for post-session update (null = skip)
+ *   postSessionTools()  — tools for post-session mode (default: all from registry)
+ *   selfEvalPrompt()    — system prompt for scheduled self-evaluation (null = skip)
+ *   selfEvalTools()     — tools for self-eval mode (default: postSessionTools())
+ *   heartbeatPrompt()   — system prompt for scheduled heartbeat (null = skip)
+ *   heartbeatTools()    — tools for heartbeat mode (default: postSessionTools())
  *
  * buildPrompt() appends the current timestamp to every system prompt.
  *
- * Each agent subscribes to `heartbeat_trigger` events from the EventBus and handles its own
- * heartbeat independently — publishing results as `heartbeat` events and Web Push notifications.
+ * Each agent subscribes to `heartbeat_trigger` and `self_eval_trigger` events from the EventBus
+ * and handles them independently — publishing results as `heartbeat` events and Web Push notifications.
  */
 public abstract class BaseAgent {
 
     private static final Logger log = LoggerFactory.getLogger(BaseAgent.class);
     private static final String DEFAULT_REFLECT_MODEL = "claude-haiku-4-5-20251001";
+    private static final Path CHANNELS_DIR = Path.of(".user-data/agents/inter-agent-channels");
 
     protected final Executor executor;
     protected final ToolsRegistry toolsRegistry;
@@ -78,7 +85,7 @@ public abstract class BaseAgent {
                             err -> log.warn("{} heartbeat_trigger stream error: {}",
                                     getClass().getSimpleName(), err.getMessage()));
         }
-        if (reflectPrompt() != null) {
+        if (postSessionPrompt() != null) {
             eventBus.subscribe()
                     .filter(e -> "session_closed".equals(e.get("type"))
                             && agentName().equals(e.get("agent")))
@@ -88,9 +95,18 @@ public abstract class BaseAgent {
                                 var sessionId = (String) e.get("sessionId");
                                 var transcript = SessionManager.buildTranscript(
                                         session.getHistory(sessionId));
-                                reflect(transcript);
+                                postSession(transcript);
                             },
                             err -> log.warn("{} session_closed stream error: {}",
+                                    getClass().getSimpleName(), err.getMessage()));
+        }
+        if (selfEvalPrompt() != null) {
+            eventBus.subscribe()
+                    .filter(e -> "self_eval_trigger".equals(e.get("type")))
+                    .publishOn(Schedulers.boundedElastic())
+                    .subscribe(
+                            e -> runSelfEval(),
+                            err -> log.warn("{} self_eval_trigger stream error: {}",
                                     getClass().getSimpleName(), err.getMessage()));
         }
     }
@@ -126,31 +142,18 @@ public abstract class BaseAgent {
     }
 
     /**
-     * Sends an internal agent-to-agent message and returns the response.
-     * Uses a shared persistent session keyed as "internal-{sorted pair}" so both directions share history.
+     * Handles an incoming agent-to-agent message from another agent and returns the response.
+     * Uses a shared append-only channel log per pair so both agents see the full exchange history.
      */
     public String message(String fromAgent, String content) {
-        var pair = fromAgent.compareTo(agentName()) < 0
-                ? fromAgent + "-" + agentName()
-                : agentName() + "-" + fromAgent;
-        var sessionId = session.getOrCreate("internal-" + pair, agentName());
-        var prompt = buildMessageSystemPrompt(fromAgent);
-        var userMessage = "[From: " + fromAgent + "]\n\n" + content;
-
-        session.appendMessage(sessionId, Map.of("role", "user", "content", userMessage));
-        var messages = session.getHistory(sessionId);
+        var channelLog = loadChannelLog(fromAgent);
+        var prompt = buildMessageSystemPrompt(fromAgent, channelLog);
+        var messages = new ArrayList<Map<String, Object>>(List.of(
+                Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
 
         try {
-            var response = executor.runLoop(sessionId, messages, prompt, config.model(), messageTools(), agentName())
-                    .doOnNext(event -> {
-                        if (event instanceof AgentAppendEvent ae) {
-                            session.appendMessage(sessionId,
-                                    Map.of("role", ae.role(), "content", ae.content()));
-                        } else if (event instanceof LlmEvent.Response resp) {
-                            session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
-                        }
-                    })
+            var response = executor.runLoop("_msg_" + agentName(), messages, prompt, config.model(), messageTools(), agentName())
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -159,7 +162,9 @@ public abstract class BaseAgent {
                     .reduce(String::concat)
                     .defaultIfEmpty("")
                     .block();
-            return response != null ? response : "";
+            var result = response != null ? response : "";
+            appendChannelLog(fromAgent, content, result);
+            return result;
         } catch (Exception e) {
             log.warn("{} message from {} failed: {}", agentName(), fromAgent, e.getMessage());
             return "Error: " + e.getMessage();
@@ -169,35 +174,41 @@ public abstract class BaseAgent {
     /** System prompt used for internal agent-to-agent messaging. Return null to use default framing. */
     protected String messagePrompt() { return null; }
 
-    /** Tools available during agent-to-agent messaging. Defaults to reflectTools(). */
-    protected List<Map<String, Object>> messageTools() { return reflectTools(); }
+    /** Tools available during agent-to-agent messaging. Defaults to postSessionTools(). */
+    protected List<Map<String, Object>> messageTools() { return postSessionTools(); }
 
-    /** System prompt used during reflection. Return null to skip reflection for this agent. */
-    protected String reflectPrompt() { return null; }
+    /** System prompt used during post-session update. Return null to skip for this agent. */
+    protected String postSessionPrompt() { return null; }
 
-    /** Tools available during reflection. Defaults to all tools. */
-    protected List<Map<String, Object>> reflectTools() { return toolsRegistry.getTools(); }
+    /** Tools available during post-session update. Defaults to all tools. */
+    protected List<Map<String, Object>> postSessionTools() { return toolsRegistry.getTools(); }
+
+    /** System prompt used during scheduled self-evaluation. Return null to skip for this agent. */
+    protected String selfEvalPrompt() { return null; }
+
+    /** Tools available during self-evaluation. Defaults to postSessionTools(). */
+    protected List<Map<String, Object>> selfEvalTools() { return postSessionTools(); }
 
     /** System prompt used during heartbeat. Return null to skip heartbeat for this agent. */
     protected String heartbeatPrompt() { return null; }
 
-    /** Tools available during heartbeat. Defaults to reflectTools(). */
-    protected List<Map<String, Object>> heartbeatTools() { return reflectTools(); }
+    /** Tools available during heartbeat. Defaults to postSessionTools(). */
+    protected List<Map<String, Object>> heartbeatTools() { return postSessionTools(); }
 
     /**
-     * Runs post-session reflection against the given transcript.
+     * Runs the post-session update against the given transcript.
      * Returns a bullet summary of what was saved, or null if nothing / skipped.
      */
-    public String reflect(String transcript) {
-        var prompt = reflectPrompt();
+    public String postSession(String transcript) {
+        var prompt = postSessionPrompt();
         if (prompt == null || prompt.isBlank() || transcript.isBlank()) return null;
 
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Session transcript to reflect on:\n\n" + transcript));
 
         try {
-            var summary = executor.runLoop("_reflect_" + getClass().getSimpleName(),
-                            new ArrayList<>(messages), prompt, reflectModel(), reflectTools(), agentName())
+            var summary = executor.runLoop("_postsession_" + getClass().getSimpleName(),
+                            new ArrayList<>(messages), prompt, reflectModel(), postSessionTools(), agentName())
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -211,7 +222,7 @@ public abstract class BaseAgent {
                 return summary;
             }
         } catch (Exception e) {
-            log.warn("{} reflection failed: {}", getClass().getSimpleName(), e.getMessage());
+            log.warn("{} post-session update failed: {}", getClass().getSimpleName(), e.getMessage());
         }
         return null;
     }
@@ -248,16 +259,47 @@ public abstract class BaseAgent {
         return system;
     }
 
-    private String buildMessageSystemPrompt(String fromAgent) {
+    private String buildMessageSystemPrompt(String fromAgent, String channelLog) {
         var p = persona();
         var mp = messagePrompt();
         var base = (mp != null && !mp.isBlank()) ? p + "\n\n" + mp : p;
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
+        var history = channelLog.isBlank() ? "No prior exchanges." : channelLog;
         return base.strip()
                 + "\n\n# Internal Channel"
-                + "\n\nThis is a private session with other agents — not the user. "
-                + "You have received a message from " + fromAgent + ". Respond directly to them."
+                + "\n\nThis is a private channel with other agents — not the user. "
+                + "You received a message from " + fromAgent + ". Respond directly to them."
+                + "\n\n## Prior Exchanges with " + fromAgent + "\n\n" + history
                 + "\n\n# Current Date & Time\n\n" + now;
+    }
+
+    private String loadChannelLog(String partnerAgent) {
+        var pair = agentName().compareTo(partnerAgent) < 0
+                ? agentName() + "-" + partnerAgent
+                : partnerAgent + "-" + agentName();
+        var file = CHANNELS_DIR.resolve(pair + ".md");
+        try {
+            return Files.exists(file) ? Files.readString(file) : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private void appendChannelLog(String partnerAgent, String inbound, String response) {
+        var pair = agentName().compareTo(partnerAgent) < 0
+                ? agentName() + "-" + partnerAgent
+                : partnerAgent + "-" + agentName();
+        var file = CHANNELS_DIR.resolve(pair + ".md");
+        var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z"));
+        var entry = "## " + now + " | " + partnerAgent + " → " + agentName() + "\n"
+                + inbound + "\n\n"
+                + "**" + agentName() + " replied:**\n" + response + "\n\n---\n\n";
+        try {
+            Files.createDirectories(CHANNELS_DIR);
+            Files.writeString(file, entry, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            log.warn("Failed to append channel log {}: {}", file, e.getMessage());
+        }
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
@@ -290,6 +332,37 @@ public abstract class BaseAgent {
             }
         } catch (Exception e) {
             log.warn("{} heartbeat failed: {}", getClass().getSimpleName(), e.getMessage());
+        }
+    }
+
+    private void runSelfEval() {
+        var prompt = selfEvalPrompt();
+        if (prompt == null || prompt.isBlank()) return;
+
+        var messages = List.<Map<String, Object>>of(
+                Map.of("role", "user", "content", "Run your scheduled self-evaluation."));
+
+        try {
+            var result = executor.runLoop("_selfeval_" + getClass().getSimpleName(),
+                            new ArrayList<>(messages), prompt, reflectModel(), selfEvalTools(), agentName())
+                    .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
+                    .cast(AgentAppendEvent.class)
+                    .flatMapIterable(AgentAppendEvent::content)
+                    .filter(b -> b instanceof Map<?, ?> m && "text".equals(m.get("type")))
+                    .map(b -> (String) ((Map<?, ?>) b).get("text"))
+                    .reduce(String::concat)
+                    .defaultIfEmpty("")
+                    .block();
+
+            if (result != null && !result.isBlank() && !"nothing".equalsIgnoreCase(result.strip())) {
+                var agentName = getClass().getSimpleName()
+                        .replace("Agent", "").toLowerCase();
+                log.info("{} self-eval returned a message", getClass().getSimpleName());
+                eventBus.publish(Map.of("type", "heartbeat", "agent", agentName, "text", result.strip()));
+                webPush.sendToAll("lifeos", result.strip());
+            }
+        } catch (Exception e) {
+            log.warn("{} self-eval failed: {}", getClass().getSimpleName(), e.getMessage());
         }
     }
 }

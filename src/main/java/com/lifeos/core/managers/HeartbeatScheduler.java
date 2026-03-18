@@ -27,7 +27,7 @@ public class HeartbeatScheduler {
         this.eventBus = eventBus;
     }
 
-    @Scheduled(fixedDelayString = "${lifeos.heartbeat.interval-ms:1800000}")
+    @Scheduled(fixedDelayString = "${lifeos.heartbeat.interval-ms:14400000}")
     public void tick() {
         log.debug("HeartbeatScheduler.tick()");
         eventBus.publish(Map.of("type", "heartbeat_trigger"));
