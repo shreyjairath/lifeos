@@ -313,7 +313,7 @@ public abstract class BaseAgent {
         var prompt = heartbeatPrompt();
         if (prompt == null || prompt.isBlank()) return;
 
-        log.info("{} heartbeat starting — model={}, tools={}", agentName(), reflectModel(), heartbeatTools().stream().map(t -> (String) t.get("name")).toList());
+        log.info("{} heartbeat starting — model={}, tools={}\nprompt:\n{}", agentName(), reflectModel(), heartbeatTools().stream().map(t -> (String) t.get("name")).toList(), prompt);
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled heartbeat check."));
 
