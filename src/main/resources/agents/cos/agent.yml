@@ -2,9 +2,9 @@ name: cos
 title: Chief of Staff
 description: Your chief of staff — owns the big picture, manages the team of specialist agents, and drives things forward on your behalf.
 persona:
-  - who-you-are.md
+  - identity.md
   - chat.md
-reflect-prompt:
+post-session-prompt:
   - post-session.md
 self-eval-prompt: self-eval.md
 heartbeat-prompt: heartbeat.md
@@ -15,6 +15,7 @@ chat-tools:
     - agent_bash
     # team
     - message_agent
+    - read_agent_channel
     - list_agents
     - list_tools
     - read_agent_definition
@@ -40,6 +41,7 @@ post-session-tools:
     - agent_bash
     # team
     - message_agent
+    - read_agent_channel
     - list_agents
     - list_tools
     - read_agent_definition

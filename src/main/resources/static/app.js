@@ -1,8 +1,8 @@
 import * as Chat from "./modules/chat.js";
 import * as CC from "./modules/cc.js";
 import * as Inspector from "./modules/inspector.js";
+import * as AgentDebug from "./modules/agent-debug.js";
 import * as EventsPanel from "./modules/events-panel.js";
-import * as Prompt from "./modules/prompt.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String) {
@@ -37,6 +37,37 @@ async function setActiveAgent(name, title) {
   await loadSessions();
 }
 
+function makeAgentSessionList(name) {
+  const ul = document.createElement("ul");
+  ul.className = "agent-session-list";
+  ul.id = `sessions-${name}`;
+  return ul;
+}
+
+function makeAgentRow(btn, agentName, agentTitle) {
+  const row = document.createElement("div");
+  row.className = "agent-row";
+  const plus = document.createElement("button");
+  plus.className = "agent-new-chat-btn";
+  plus.textContent = "+";
+  plus.title = `New ${agentTitle} chat`;
+  plus.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (ACTIVE_AGENT !== agentName) {
+      ACTIVE_AGENT = agentName;
+      localStorage.setItem("chief-agent", agentName);
+      document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
+        b.classList.toggle("active", b.dataset.agent === agentName));
+      inputEl.placeholder = `Talk to ${agentTitle}…`;
+    }
+    await openNewChat();
+    await loadSessions();
+  });
+  row.appendChild(btn);
+  row.appendChild(plus);
+  return row;
+}
+
 async function loadAgents() {
   try {
     // CoS is always hardcoded as the primary agent
@@ -46,7 +77,8 @@ async function loadAgents() {
     cosBtn.textContent = "Chief of Staff";
     cosBtn.addEventListener("click", () => setActiveAgent("cos", "Chief of Staff"));
     agentToggle.innerHTML = "";
-    agentToggle.appendChild(cosBtn);
+    agentToggle.appendChild(makeAgentRow(cosBtn, "cos", "Chief of Staff"));
+    agentToggle.appendChild(makeAgentSessionList("cos"));
 
     // Dynamic agents load beneath
     const agents = await fetch("/api/agents").then(r => r.json());
@@ -60,7 +92,8 @@ async function loadAgents() {
       btn.dataset.agent = name;
       btn.textContent = title;
       btn.addEventListener("click", () => setActiveAgent(name, title));
-      subAgentToggle.appendChild(btn);
+      subAgentToggle.appendChild(makeAgentRow(btn, name, title));
+      subAgentToggle.appendChild(makeAgentSessionList(name));
     }
 
     // Validate stored agent; fall back to cos if unknown
@@ -85,31 +118,54 @@ function setSession(sessionId) {
 const inputEl = document.getElementById("input");
 
 // ── Sessions sidebar ──────────────────────────────────────────────────────────
-const convListEl = document.getElementById("conv-list");
-
 async function loadSessions() {
   try {
     const resp = await fetch("/api/sessions");
     const data = await resp.json();
-    convListEl.innerHTML = "";
-    if (!data.sessions || data.sessions.length === 0) {
-      convListEl.innerHTML = '<li class="empty">No sessions yet</li>';
-      return;
-    }
-    const agentSessions = data.sessions.filter(s => (s.agent || "cos") === ACTIVE_AGENT);
-    for (const s of [...agentSessions].reverse().slice(0, 5)) {
+    // Clear all per-agent session lists
+    document.querySelectorAll(".agent-session-list").forEach(ul => ul.innerHTML = "");
+    if (!data.sessions) return;
+    for (const s of data.sessions) {
+      const agent = s.agent || "cos";
+      const listEl = document.getElementById(`sessions-${agent}`);
+      if (!listEl) continue;
       const li = document.createElement("li");
-      li.className = "project-item" + (s.id === SESSION_ID ? " active-conv" : "");
-      li.textContent = s.title || s.name;
+      li.className = "agent-session-item" + (s.id === SESSION_ID ? " active" : "");
+      const ts = s.created_at > 0 ? new Date(s.created_at * 1000) : null;
+      const dateStr = ts ? ts.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+        + " " + ts.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+      const time = document.createElement("span");
+      time.className = "session-time";
+      time.textContent = dateStr;
+      const label = document.createElement("span");
+      label.className = "session-label";
+      label.textContent = s.title || s.id;
+      const del = document.createElement("button");
+      del.className = "session-delete-btn";
+      del.textContent = "×";
+      del.title = "Delete session";
+      del.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await fetch(`/api/sessions/${s.id}`, { method: "DELETE" });
+        if (s.id === SESSION_ID) await openNewChat();
+        await loadSessions();
+      });
+      li.appendChild(time);
+      li.appendChild(label);
+      li.appendChild(del);
       li.addEventListener("click", async () => {
         closeSidebar();
+        ACTIVE_AGENT = s.agent || "cos";
+        localStorage.setItem("chief-agent", ACTIVE_AGENT);
+        document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
+          b.classList.toggle("active", b.dataset.agent === ACTIVE_AGENT));
         setSession(s.id);
         Chat.reset(s.id);
         await Chat.loadHistory(s.id);
         await loadSessions();
         inputEl.focus();
       });
-      convListEl.appendChild(li);
+      listEl.appendChild(li);
     }
   } catch (e) {
     console.error("Failed to load sessions", e);
@@ -130,7 +186,6 @@ async function openNewChat() {
   inputEl.focus();
 }
 
-document.getElementById("new-chat-btn").addEventListener("click", openNewChat);
 document.getElementById("new-chat-mobile").addEventListener("click", () => { closeSidebar(); openNewChat(); });
 
 // ── Mobile sidebar ─────────────────────────────────────────────────────────────
@@ -141,32 +196,70 @@ function closeSidebar() { sidebar.classList.remove("open"); overlay.classList.re
 document.getElementById("hamburger").addEventListener("click", openSidebar);
 overlay.addEventListener("click", closeSidebar);
 
-// ── Sidecar tab switching ─────────────────────────────────────────────────────
-const PANELS = {
-  inspector: document.getElementById("inspector-panel"),
-  cc:        document.getElementById("cc-panel"),
-  events:    document.getElementById("events-panel"),
-  prompt:    document.getElementById("prompt-panel"),
-};
-const inspectorCopy = document.getElementById("inspector-copy");
-const ispTabs = document.querySelectorAll(".isp-tab");
+// ── Agent Monitor view ────────────────────────────────────────────────────────
+const agentMonitorEl = document.getElementById("agent-monitor");
+const mainEl = document.getElementById("main");
+const chatSidebarContent = document.getElementById("chat-sidebar-content");
+const monitorSidebarContent = document.getElementById("monitor-sidebar-content");
+let monitorInitialized = false;
 
-ispTabs.forEach(tab => {
-  tab.addEventListener("click", () => {
-    ispTabs.forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    const which = tab.dataset.tab;
-    Object.values(PANELS).forEach(p => p.classList.add("hidden"));
-    inspectorCopy.style.display = "none";
-    if (PANELS[which]) PANELS[which].classList.remove("hidden");
-    if (which === "inspector") inspectorCopy.style.display = "";
-    if (which === "cc") document.getElementById("cc-input").focus();
-    if (which === "prompt") Prompt.load();
-  });
+const agentTabPanels = {
+  runs:      document.getElementById("agents-runs-panel"),
+  events:    document.getElementById("agents-events-panel"),
+  inspector: document.getElementById("agents-inspector-panel"),
+  cc:        document.getElementById("agents-cc-panel"),
+};
+
+function switchMonitorTab(tab) {
+  document.querySelectorAll(".monitor-nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  Object.values(agentTabPanels).forEach(p => p.classList.add("hidden"));
+  agentTabPanels[tab].classList.remove("hidden");
+  if (tab === "cc") document.getElementById("cc-input").focus();
+}
+
+function showAgentMonitor() {
+  mainEl.classList.add("hidden");
+  agentMonitorEl.classList.remove("hidden");
+  chatSidebarContent.classList.add("hidden");
+  monitorSidebarContent.classList.remove("hidden");
+  document.getElementById("agent-monitor-btn").classList.add("active");
+  if (!monitorInitialized) {
+    monitorInitialized = true;
+    AgentDebug.load();
+    EventsPanel.connect((event) => {
+      if (event.type === "agent_run_end") AgentDebug.load();
+    });
+  }
+}
+
+function showChat() {
+  agentMonitorEl.classList.add("hidden");
+  mainEl.classList.remove("hidden");
+  chatSidebarContent.classList.remove("hidden");
+  monitorSidebarContent.classList.add("hidden");
+  document.getElementById("agent-monitor-btn").classList.remove("active");
+}
+
+document.getElementById("agent-monitor-btn").addEventListener("click", () => {
+  if (agentMonitorEl.classList.contains("hidden")) {
+    showAgentMonitor();
+  } else {
+    showChat();
+  }
 });
+
+document.querySelectorAll(".monitor-nav-btn").forEach(btn => {
+  btn.addEventListener("click", () => { closeSidebar(); switchMonitorTab(btn.dataset.tab); });
+});
+
+document.querySelector(".sidebar-header h1").addEventListener("click", () => {
+  if (!agentMonitorEl.classList.contains("hidden")) showChat();
+});
+
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
+  fetch("/api/sessions/prune", { method: "POST" }); // clean up empty sessions on load
   Inspector.init();
   await loadAgents();
   Chat.init(
@@ -176,7 +269,6 @@ ispTabs.forEach(tab => {
     () => loadSessions(),
   );
   CC.init();
-  Prompt.init();
   if (!SESSION_ID) {
     await openNewChat();
   } else {
@@ -185,8 +277,6 @@ ispTabs.forEach(tab => {
   }
   await loadSessions();
   await CC.loadHistory();
-  await Prompt.load();
-  EventsPanel.connect();
 
   // In-tab reminder listener — shows bubble when tab is open
   const reminderSource = new EventSource("/api/events");

@@ -22,26 +22,44 @@ const EVENT_FORMATS = {
   reflection:          e  => ({ badge: "memory",     detail: e.summary?.slice(0, 120) }),
   session_rotate:           e  => ({ badge: "session", detail: `Rotating — ${e.reason}` }),
   session_summary_written:  e  => ({ badge: "memory",  detail: `Session summary written (${e.chars} chars)` }),
+  agent_run_start: e => ({ badge: "agent▶", detail: `${e.agent} — ${e.mode}${e.from ? ` (from: ${e.from})` : ""}` }),
+  agent_run_end:   e => ({ badge: "agent✓", detail: `${e.agent} — ${e.mode} · ${e.duration_ms}ms · ${(e.result_preview || "").slice(0, 80)}` }),
 };
 
-export function appendEvent(event) {
-  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+export function appendEvent(event, ts) {
+  const timeStr = ts
+    ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const formatter = EVENT_FORMATS[event.type];
   const { badge, detail } = formatter ? formatter(event) : { badge: event.type, detail: JSON.stringify(event) };
 
   const row = document.createElement("div");
   row.className = `ev-row ev-${event.type.replace(/_/g, "-")}`;
-  row.innerHTML = `<span class="ev-ts">${ts}</span><span class="ev-badge">${badge}</span><span class="ev-detail">${detail}</span>`;
+  row.innerHTML = `<span class="ev-ts">${timeStr}</span><span class="ev-badge">${badge}</span><span class="ev-detail">${detail}</span>`;
   eventsBody.appendChild(row);
   eventsBody.scrollTop = eventsBody.scrollHeight;
 }
 
-export function connect() {
+export async function connect(onEvent) {
+  // Replay history first
+  try {
+    const history = await fetch("/api/events/history").then(r => r.json());
+    for (const event of history) {
+      appendEvent(event, event._ts ? event._ts * 1000 : null);
+    }
+  } catch {}
+
+  // Then subscribe to live events
   const source = new EventSource("/api/events");
   source.onmessage = (e) => {
-    try { appendEvent(JSON.parse(e.data)); } catch {}
+    try {
+      const event = JSON.parse(e.data);
+      appendEvent(event);
+      if (onEvent) onEvent(event);
+    } catch {}
   };
   source.onerror = () => {
     // EventSource auto-reconnects on error
   };
+  return source;
 }

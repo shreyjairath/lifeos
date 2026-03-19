@@ -8,6 +8,7 @@ import com.lifeos.core.managers.WebPushService;
 import com.lifeos.core.agents.executor.BaseAgent;
 import com.lifeos.core.agents.executor.Cancellation;
 import com.lifeos.core.agents.executor.Executor;
+import com.lifeos.core.agents.store.AgentRunStore;
 import com.lifeos.core.agents.tools.ToolsRegistry;
 
 import java.util.List;
@@ -25,8 +26,9 @@ public class Agent extends BaseAgent {
     public Agent(AgentDefinition def,
                  Executor executor, ToolsRegistry toolsRegistry,
                  SessionManager session, EventBus eventBus,
-                 Cancellation cancellation, AppConfig config, WebPushService webPush) {
-        super(executor, toolsRegistry, session, eventBus, cancellation, config, webPush);
+                 Cancellation cancellation, AppConfig config, WebPushService webPush,
+                 AgentRunStore agentRunStore) {
+        super(executor, toolsRegistry, session, eventBus, cancellation, config, webPush, agentRunStore);
         this.def = def;
     }
 
@@ -35,6 +37,11 @@ public class Agent extends BaseAgent {
     public String getDescription() { return def.description(); }
     @Override
     protected String agentName() { return def.name(); }
+
+    @Override
+    protected String identity() {
+        return PromptParts.load(def.promptBase(), "identity.md");
+    }
 
     @Override
     protected String persona() {

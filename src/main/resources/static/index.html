@@ -22,21 +22,28 @@
         <h1>chief</h1>
       </div>
 
-      <div id="agent-toggle"></div>
-      <hr class="agent-separator" id="agent-separator">
-      <div id="sub-agent-toggle"></div>
+      <!-- Chat sidebar content -->
+      <div id="chat-sidebar-content">
+        <div id="agent-toggle"></div>
+        <hr class="agent-separator" id="agent-separator">
+        <div id="sub-agent-toggle"></div>
+      </div>
 
-      <hr class="sidebar-divider">
+      <!-- Monitor sidebar content -->
+      <nav id="monitor-sidebar-content" class="hidden">
+        <button class="monitor-nav-btn active" data-tab="runs">Runs</button>
+        <button class="monitor-nav-btn" data-tab="events">Event Stream</button>
+        <button class="monitor-nav-btn" data-tab="inspector">Inspector</button>
+        <button class="monitor-nav-btn" data-tab="cc">Claude Code</button>
+      </nav>
 
-      <section class="sidebar-section">
-        <h2>Recent</h2>
-        <button id="new-chat-btn" class="new-chat-btn">New Chat +</button>
-        <ul id="conv-list"><li class="empty">No sessions yet</li></ul>
-      </section>
+      <div class="sidebar-footer">
+        <button id="agent-monitor-btn" class="agent-monitor-link">Agent Monitor</button>
+      </div>
 
     </aside>
 
-    <!-- Main -->
+    <!-- Main chat view -->
     <main id="main">
       <div id="messages"></div>
       <div id="input-area">
@@ -48,52 +55,29 @@
       </div>
     </main>
 
-    <!-- Inspector / Claude Code sidecar -->
-    <aside id="inspector">
-      <!-- Tab bar -->
-      <div class="isp-tabbar">
-        <button class="isp-tab active" data-tab="prompt">Prompt</button>
-        <button class="isp-tab" data-tab="events">Events</button>
-        <button class="isp-tab" data-tab="inspector">Inspector</button>
-        <button class="isp-tab" data-tab="cc">Claude Code</button>
-        <button id="inspector-copy" title="Copy JSON" style="display:none">Copy</button>
+    <!-- Agent Monitor — full-width overlay view -->
+    <div id="agent-monitor" class="hidden">
+      <div id="agents-runs-panel" class="agents-tab-panel">
+        <div id="agent-debug-panel"></div>
       </div>
-
-      <!-- Prompt parts editor panel -->
-      <div id="prompt-panel">
-        <div id="prompt-file-list"></div>
-        <div id="prompt-editor-area">
-          <textarea id="prompt-editor" spellcheck="false"></textarea>
-          <div id="prompt-editor-footer">
-            <button id="prompt-set-active-btn">Set as active</button>
-            <span id="prompt-save-status"></span>
-            <button id="prompt-save-btn">Save</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Events panel -->
-      <div id="events-panel" class="hidden">
+      <div id="agents-events-panel" class="agents-tab-panel hidden">
         <div id="events-body"></div>
       </div>
-
-      <!-- Inspector panel -->
-      <div id="inspector-panel" class="hidden">
+      <div id="agents-inspector-panel" class="agents-tab-panel hidden">
+        <button id="inspector-copy" title="Copy JSON">Copy</button>
         <div id="inspector-body">
           <span class="inspector-empty">Request JSON will appear here after you send a message.</span>
         </div>
       </div>
-
-      <!-- Claude Code chat panel -->
-      <div id="cc-panel" class="hidden">
+      <div id="agents-cc-panel" class="agents-tab-panel hidden">
         <div id="cc-messages"></div>
         <div id="cc-input-area">
           <textarea id="cc-input" placeholder="Ask Claude Code about chief…" rows="1"></textarea>
           <button id="cc-send">Send</button>
         </div>
       </div>
+    </div>
 
-    </aside>
   </div>
 
   <script type="module" src="/app.js"></script>

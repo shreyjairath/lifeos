@@ -18,10 +18,9 @@ import java.util.stream.Stream;
  *
  * Layout:
  *   .user-data/sessions/
- *     pointers.json         ← {"main": "session-abc", "project-slug": "session-def"}
  *     {session_id}/
- *       meta.json           ← {id, name, pointer_key, created_at, last_message_at,
- *                                last_input_tokens, parent_session_id}
+ *       meta.json           ← {title, created_at, last_message_at,
+ *                                last_input_tokens, parent_session_id, agent}
  *       messages.json       ← Anthropic message array
  *       summary.md          ← written at rotation time
  */
@@ -30,32 +29,8 @@ public class SessionStore {
 
     private static final Path ROOT = Path.of(System.getProperty("user.dir"))
             .resolve(".user-data/sessions").normalize();
-    private static final Path POINTERS = ROOT.resolve("pointers.json");
 
     private final ObjectMapper mapper = new ObjectMapper();
-
-    // ── Pointers ──────────────────────────────────────────────────────────────
-
-    public Map<String, String> loadPointers() {
-        if (!Files.exists(POINTERS)) return new LinkedHashMap<>();
-        try {
-            return mapper.readValue(Files.readString(POINTERS, StandardCharsets.UTF_8),
-                    new TypeReference<LinkedHashMap<String, String>>() {});
-        } catch (Exception e) {
-            return new LinkedHashMap<>();
-        }
-    }
-
-    public void savePointers(Map<String, String> pointers) {
-        try {
-            Files.createDirectories(ROOT);
-            Files.writeString(POINTERS,
-                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(pointers),
-                    StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to save pointers", e);
-        }
-    }
 
     // ── Meta ──────────────────────────────────────────────────────────────────
 

@@ -22,7 +22,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Each session lives at .user-data/sessions/{session_id}/.
  * Sessions are ordered chronologically by created_at.
  * Rotation creates a new session with parent_session_id pointing to the old one.
- * Pointers.json maps logical keys ("main", "chat-{id}") to current session IDs.
  */
 @Component
 public class SessionManager {
@@ -71,38 +70,12 @@ public class SessionManager {
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
-    /** Gets or creates the session for a given pointer key (e.g. "main"). */
-    public String getOrCreate(String pointerKey) {
-        return getOrCreate(pointerKey, null);
-    }
-
-    /** Gets or creates the session for a given pointer key, tagging it with an agent name on creation. */
-    public String getOrCreate(String pointerKey, String agent) {
-        lock.writeLock().lock();
-        try {
-            var pointers = store.loadPointers();
-            var sessionId = pointers.get(pointerKey);
-            if (sessionId != null && store.sessionDir(sessionId).toFile().isDirectory()) {
-                return sessionId;
-            }
-            sessionId = newSessionId();
-            var meta = buildMeta(pointerKey, null, agent);
-            store.saveMeta(sessionId, meta);
-            store.saveMessages(sessionId, new ArrayList<>());
-            pointers.put(pointerKey, sessionId);
-            store.savePointers(pointers);
-            return sessionId;
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
     public String createNew(String agent) {
         lock.writeLock().lock();
         try {
             pruneEmpty();
-            var sessionId = newSessionId();
-            var meta = buildMeta("chat-" + sessionId, null, agent);
+            var sessionId = newSessionId(agent);
+            var meta = buildMeta(sessionId, agent);
             store.saveMeta(sessionId, meta);
             store.saveMessages(sessionId, new ArrayList<>());
             return sessionId;
@@ -112,27 +85,22 @@ public class SessionManager {
     }
 
     /**
-     * Closes oldSessionId, creates a new session linked to it, and updates the pointer.
+     * Closes oldSessionId, creates a new session linked to it.
      * Emits `session_closed` so agents and SessionSummarizer can react asynchronously.
      */
-    @SuppressWarnings("unchecked")
     public String rotate(String oldSessionId) {
         String newSessionId;
         String agent;
         lock.writeLock().lock();
         try {
             var oldMeta = store.loadMeta(oldSessionId);
-            var pointerKey = (String) oldMeta.getOrDefault("pointer_key", "main");
             agent = (String) oldMeta.get("agent");
 
-            newSessionId = newSessionId();
-            var meta = buildMeta(pointerKey, oldSessionId, agent);
+            newSessionId = newSessionId(agent);
+            var meta = buildMeta(newSessionId, agent);
+            meta.put("parent_session_id", oldSessionId);
             store.saveMeta(newSessionId, meta);
             store.saveMessages(newSessionId, new ArrayList<>());
-
-            var pointers = store.loadPointers();
-            pointers.put(pointerKey, newSessionId);
-            store.savePointers(pointers);
         } finally {
             lock.writeLock().unlock();
         }
@@ -185,7 +153,7 @@ public class SessionManager {
             var messages = store.loadMessages(sessionId);
             if (messages.isEmpty() && "user".equals(message.get("role"))) {
                 var meta = store.loadMeta(sessionId);
-                if (!meta.containsKey("title")) {
+                if (!meta.containsKey("title") || "New Chat".equals(meta.get("title"))) {
                     meta.put("title", extractTitle(message));
                     store.saveMeta(sessionId, meta);
                 }
@@ -194,6 +162,15 @@ public class SessionManager {
             tagged.putIfAbsent("_ts", epochSeconds());
             messages.add(tagged);
             store.saveMessages(sessionId, messages);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void delete(String sessionId) {
+        lock.writeLock().lock();
+        try {
+            store.deleteSession(sessionId);
         } finally {
             lock.writeLock().unlock();
         }
@@ -245,29 +222,31 @@ public class SessionManager {
 
     // ── Listing ───────────────────────────────────────────────────────────────
 
+    public void pruneEmptySessions() {
+        pruneEmpty();
+    }
+
     public List<Map<String, Object>> listSessions() {
         var result = new ArrayList<Map<String, Object>>();
         for (var dir : store.listSessionDirs()) {
             var sessionId = dir.getFileName().toString();
             var meta = store.loadMeta(sessionId);
             if (meta.isEmpty()) continue;
-            if (store.loadMessages(sessionId).isEmpty()) continue;
+            if (!store.readSummary(sessionId).isEmpty()) continue; // closed session
             result.add(Map.of(
                     "id", sessionId,
-                    "name", meta.getOrDefault("name", sessionId),
-                    "title", meta.getOrDefault("title", meta.getOrDefault("name", sessionId)),
-                    "pointer_key", meta.getOrDefault("pointer_key", ""),
+                    "title", meta.getOrDefault("title", sessionId),
                     "created_at", meta.getOrDefault("created_at", 0),
-                    "parent_session_id", meta.getOrDefault("parent_session_id", ""),
+                    "last_message_at", meta.getOrDefault("last_message_at", 0),
                     "agent", meta.getOrDefault("agent", "cos")
             ));
         }
-        result.sort(Comparator.comparingDouble(m -> {
-            var ca = (Number) ((Map<?,?>) m).get("created_at");
-            if (ca != null && ca.doubleValue() > 0) return ca.doubleValue();
-            var lm = (Number) ((Map<?,?>) m).get("last_message_at");
-            return lm != null ? lm.doubleValue() : 0;
-        }));
+        result.sort(Comparator.comparingDouble((Map<String, Object> m) -> {
+            var lm = (Number) m.get("last_message_at");
+            if (lm != null && lm.doubleValue() > 0) return lm.doubleValue();
+            var ca = (Number) m.get("created_at");
+            return ca != null ? ca.doubleValue() : 0;
+        }).reversed());
         return result;
     }
 
@@ -334,12 +313,11 @@ public class SessionManager {
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    private Map<String, Object> buildMeta(String pointerKey, String parentSessionId, String agent) {
+    private Map<String, Object> buildMeta(String sessionId, String agent) {
         var meta = new LinkedHashMap<String, Object>();
-        meta.put("pointer_key", pointerKey);
-        meta.put("name", displayName(pointerKey));
+        meta.put("id", sessionId);
+        meta.put("title", "New Chat");
         meta.put("created_at", epochSeconds());
-        if (parentSessionId != null) meta.put("parent_session_id", parentSessionId);
         if (agent != null) meta.put("agent", agent);
         return meta;
     }
@@ -369,12 +347,6 @@ public class SessionManager {
         return display;
     }
 
-    private static String displayName(String pointerKey) {
-        if ("main".equals(pointerKey)) return "Main";
-        return pointerKey;
-    }
-
-    /** Deletes session directories that have no messages. Called before creating a new session. */
     private void pruneEmpty() {
         for (var dir : store.listSessionDirs()) {
             var sessionId = dir.getFileName().toString();
@@ -385,8 +357,9 @@ public class SessionManager {
         }
     }
 
-    private static String newSessionId() {
-        return "session-" + UUID.randomUUID().toString().substring(0, 12);
+    private static String newSessionId(String agent) {
+        var ts = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss"));
+        return agent != null && !agent.isBlank() ? "session-" + agent + "-" + ts : "session-" + ts;
     }
 
     @SuppressWarnings("unchecked")

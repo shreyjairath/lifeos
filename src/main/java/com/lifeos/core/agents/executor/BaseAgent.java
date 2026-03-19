@@ -5,9 +5,11 @@ import com.lifeos.core.helpers.EventBus;
 import com.lifeos.core.managers.SessionManager;
 import com.lifeos.core.managers.WebPushService;
 import com.lifeos.core.agents.tools.ToolsRegistry;
+import com.lifeos.core.agents.store.AgentRunStore;
 import com.lifeos.core.agents.executor.events.AgentAppendEvent;
 import com.lifeos.core.agents.executor.events.ExecutorEvent;
 import com.lifeos.core.agents.executor.events.LlmEvent;
+import com.lifeos.core.agents.executor.events.ToolEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
@@ -55,11 +57,12 @@ public abstract class BaseAgent {
     protected final Cancellation cancellation;
     protected final AppConfig config;
     protected final WebPushService webPush;
+    protected final AgentRunStore agentRunStore;
 
     protected BaseAgent(Executor executor, ToolsRegistry toolsRegistry,
                         SessionManager session, EventBus eventBus,
                         Cancellation cancellation, AppConfig config,
-                        WebPushService webPush) {
+                        WebPushService webPush, AgentRunStore agentRunStore) {
         this.executor = executor;
         this.toolsRegistry = toolsRegistry;
         this.session = session;
@@ -67,6 +70,7 @@ public abstract class BaseAgent {
         this.cancellation = cancellation;
         this.config = config;
         this.webPush = webPush;
+        this.agentRunStore = agentRunStore;
     }
 
     private String reflectModel() {
@@ -121,18 +125,35 @@ public abstract class BaseAgent {
         var messages = session.getHistory(sessionId);
         Executor.prepareMessages(messages);
 
+        // Buffer assistant+tool_use messages — only persist once the matching tool_result arrives.
+        // If the stream is cancelled between the two, the orphaned tool_use is never written to disk.
+        var pendingToolUse = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
+
         return executor.runLoop(sessionId, messages, prompt, config.model(), tools(), agentName())
                 .doOnNext(event -> {
                     if (event instanceof AgentAppendEvent ae) {
-                        session.appendMessage(sessionId,
-                                Map.of("role", ae.role(), "content", ae.content()));
+                        var msg = Map.of("role", ae.role(), "content", ae.content());
+                        if ("assistant".equals(ae.role()) && hasToolUse(ae.content())) {
+                            pendingToolUse.set(msg);  // hold, don't save yet
+                        } else {
+                            var pending = pendingToolUse.getAndSet(null);
+                            if (pending != null) session.appendMessage(sessionId, pending);
+                            session.appendMessage(sessionId, msg);
+                        }
                     } else if (event instanceof LlmEvent.Response resp) {
                         session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
                     }
                 });
     }
 
+    private static boolean hasToolUse(List<Map<String, Object>> content) {
+        return content != null && content.stream().anyMatch(b -> "tool_use".equals(b.get("type")));
+    }
+
     protected abstract String persona();
+
+    /** Agent identity — loaded from identity.md. Prepended to every mode prompt. */
+    protected String identity() { return ""; }
 
     protected abstract String agentName();
 
@@ -153,8 +174,15 @@ public abstract class BaseAgent {
                 Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
 
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "message (from: " + fromAgent + ")", prompt);
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "message", "from", fromAgent));
+
         try {
             var response = executor.runLoop("_msg_" + agentName(), messages, prompt, config.model(), messageTools(), agentName())
+                    .doOnNext(event -> {
+                        if (event instanceof ToolEvent.Result tr)
+                            runRecord.addToolCall(tr.name(), null, tr.result());
+                    })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -162,12 +190,20 @@ public abstract class BaseAgent {
                     .map(b -> (String) ((Map<?, ?>) b).get("text"))
                     .reduce(String::concat)
                     .defaultIfEmpty("")
-                    .block();
+                    .block(java.time.Duration.ofSeconds(90));
             var result = response != null ? response : "";
             appendChannelLog(fromAgent, content, result);
+            runRecord.finish(result);
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "message",
+                    "from", fromAgent, "duration_ms", runRecord.durationMs, "result_preview", resultPreview(result)));
             return result;
         } catch (Exception e) {
             log.warn("{} message from {} failed: {}", agentName(), fromAgent, e.getMessage());
+            runRecord.finish("ERROR: " + e.getMessage());
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "message",
+                    "from", fromAgent, "duration_ms", runRecord.durationMs, "result_preview", "ERROR: " + e.getMessage()));
             return "Error: " + e.getMessage();
         }
     }
@@ -208,9 +244,19 @@ public abstract class BaseAgent {
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Session transcript to reflect on:\n\n" + transcript));
 
+        var id = identity();
+        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("post-session");
+
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "post-session", prompt);
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "post-session"));
+
         try {
             var summary = executor.runLoop("_postsession_" + getClass().getSimpleName(),
                             new ArrayList<>(messages), prompt, reflectModel(), postSessionTools(), agentName())
+                    .doOnNext(event -> {
+                        if (event instanceof ToolEvent.Result tr)
+                            runRecord.addToolCall(tr.name(), null, tr.result());
+                    })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -222,6 +268,11 @@ public abstract class BaseAgent {
 
             log.info("{} post-session complete — result: [{}]", agentName(),
                     summary != null ? summary.strip() : "null");
+
+            runRecord.finish(summary);
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "post-session",
+                    "duration_ms", runRecord.durationMs, "result_preview", resultPreview(summary)));
 
             if (summary != null && !summary.isBlank() && !"nothing to save".equalsIgnoreCase(summary.strip())) {
                 return summary;
@@ -258,7 +309,7 @@ public abstract class BaseAgent {
         }
 
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
-        system = system.strip() + "\n\n# Current Date & Time\n\n" + now;
+        system = system.strip() + "\n\n" + modesSection("chat") + "\n\n# Current Date & Time\n\n" + now;
         eventBus.publish(Map.of("type", "system_prompt", "chars", system.length()));
         eventBus.publish(Map.of("type", "boot_done"));
         return system;
@@ -271,6 +322,7 @@ public abstract class BaseAgent {
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
         var history = channelLog.isBlank() ? "No prior exchanges." : channelLog;
         return base.strip()
+                + "\n\n" + modesSection("message")
                 + "\n\n# Internal Channel"
                 + "\n\nThis is a private channel with other agents — not the user. "
                 + "You received a message from " + fromAgent + ". Respond directly to them."
@@ -317,9 +369,19 @@ public abstract class BaseAgent {
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled heartbeat check."));
 
+        var id = identity();
+        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("heartbeat");
+
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "heartbeat", prompt);
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "heartbeat"));
+
         try {
             var result = executor.runLoop("_heartbeat_" + getClass().getSimpleName(),
                             new ArrayList<>(messages), prompt, reflectModel(), heartbeatTools(), agentName())
+                    .doOnNext(event -> {
+                        if (event instanceof ToolEvent.Result tr)
+                            runRecord.addToolCall(tr.name(), null, tr.result());
+                    })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -332,6 +394,11 @@ public abstract class BaseAgent {
             log.info("{} heartbeat complete — result: [{}]", agentName(),
                     result != null ? result.strip() : "null");
 
+            runRecord.finish(result);
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "heartbeat",
+                    "duration_ms", runRecord.durationMs, "result_preview", resultPreview(result)));
+
             var pushMessage = parsePushToUser(result);
             if (pushMessage != null && !pushMessage.isBlank()) {
                 var agentName = getClass().getSimpleName()
@@ -341,6 +408,10 @@ public abstract class BaseAgent {
             }
         } catch (Exception e) {
             log.warn("{} heartbeat failed: {}", agentName(), e.getMessage());
+            runRecord.finish("ERROR: " + e.getMessage());
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "heartbeat",
+                    "duration_ms", runRecord.durationMs, "result_preview", "ERROR: " + e.getMessage()));
         }
     }
 
@@ -352,9 +423,19 @@ public abstract class BaseAgent {
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled self-evaluation."));
 
+        var id = identity();
+        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("self-eval");
+
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "self-eval", prompt);
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "self-eval"));
+
         try {
             var result = executor.runLoop("_selfeval_" + getClass().getSimpleName(),
                             new ArrayList<>(messages), prompt, reflectModel(), selfEvalTools(), agentName())
+                    .doOnNext(event -> {
+                        if (event instanceof ToolEvent.Result tr)
+                            runRecord.addToolCall(tr.name(), null, tr.result());
+                    })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
                     .flatMapIterable(AgentAppendEvent::content)
@@ -367,6 +448,11 @@ public abstract class BaseAgent {
             log.info("{} self-eval complete — result: [{}]", agentName(),
                     result != null ? result.strip() : "null");
 
+            runRecord.finish(result);
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "self-eval",
+                    "duration_ms", runRecord.durationMs, "result_preview", resultPreview(result)));
+
             if (result != null && !result.isBlank() && !"nothing".equalsIgnoreCase(result.strip())) {
                 var agentName = getClass().getSimpleName()
                         .replace("Agent", "").toLowerCase();
@@ -375,7 +461,37 @@ public abstract class BaseAgent {
             }
         } catch (Exception e) {
             log.warn("{} self-eval failed: {}", agentName(), e.getMessage());
+            runRecord.finish("ERROR: " + e.getMessage());
+            agentRunStore.save(runRecord);
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "self-eval",
+                    "duration_ms", runRecord.durationMs, "result_preview", "ERROR: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Returns a modes section explaining all operating modes, with the current one marked active.
+     * Injected into every system prompt so agents always know which mode they're in.
+     */
+    private static String modesSection(String currentMode) {
+        return """
+                # Operating Modes
+                You run in one of five modes depending on context. The current mode is marked below.
+
+                - **chat** — User is present and waiting for a response. Prioritize responsiveness. \
+                Avoid `message_agent` unless information is immediately critical to answering the user right now; defer coordination to post-session.
+                - **post-session** — Session just ended; user has left. No one is waiting. Good time for workspace updates, \
+                cross-agent coordination, and `message_agent` calls.
+                - **heartbeat** — Scheduled background check; no user present. Good time for proactive work and agent coordination.
+                - **self-eval** — Scheduled self-evaluation; no user present. Assess quality and improve your operating approach.
+                - **message** — Responding to another agent via internal channel. Be direct and concise; no user is involved.
+
+                **Current mode: %s**""".formatted(currentMode);
+    }
+
+    private static String resultPreview(String result) {
+        if (result == null || result.isBlank()) return "no output";
+        var s = result.strip();
+        return s.length() > 120 ? s.substring(0, 120) + "…" : s;
     }
 
     /** Extracts the quoted string from a trailing push_to_user:"..." line. Returns null if not found. */

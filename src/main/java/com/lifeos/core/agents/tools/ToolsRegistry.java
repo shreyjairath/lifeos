@@ -102,7 +102,7 @@ public class ToolsRegistry {
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
-                    (String) input.get("who_you_are"),
+                    (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
                     (String) input.get("post_session_instructions"),
                     (String) input.get("self_eval_instructions"),
@@ -124,7 +124,7 @@ public class ToolsRegistry {
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
-                    (String) input.get("who_you_are"),
+                    (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
                     (String) input.get("post_session_instructions"),
                     (String) input.get("self_eval_instructions"),
@@ -190,8 +190,10 @@ public class ToolsRegistry {
                     "Send a message to another agent and receive their response. " +
                     "This is an internal agent-to-agent channel — separate from the user-facing chat. " +
                     "Always call read_agent_channel first to review prior exchanges before sending a new message. " +
-                    "BLOCKING: waits for the full response before returning — avoid in chat mode for research-heavy tasks, as it will stall the user. " +
-                    "Best used in post-session and heartbeat modes, or for short targeted exchanges in chat.",
+                    "BLOCKING: waits for the full response before returning — this stalls the user during chat. " +
+                    "PRIMARY USE: self-eval, post-session, and heartbeat modes where no user is waiting. " +
+                    "During user chat: only use if the information is immediately critical to answering the user right now — defer everything else to post-session. " +
+                    "Keep exchanges meaningful: share what's new, what changed, or what you specifically need — not redundant summaries of state the other agent already has.",
                     props(prop("agent", "string", "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
                           prop("message", "string", "Message to send to the agent.")),
                     "agent", "message"),
@@ -206,7 +208,7 @@ public class ToolsRegistry {
 
             tool("read_agent_definition",
                     "Read the full definition of a dynamic agent — its agent.yml config and all prompt files " +
-                    "(who-you-are.md, chat.md, post-session.md, self-eval.md, heartbeat.md). Use this before update_agent to see the current state.",
+                    "(identity.md, chat.md, post-session.md, self-eval.md, heartbeat.md). Use this before update_agent to see the current state.",
                     props(prop("agent", "string", "Agent name (e.g. 'pm_coach')")),
                     "agent"),
 
@@ -216,7 +218,7 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug to update"),
                           prop("title", "string", "New display name"),
                           prop("description", "string", "New one-sentence description"),
-                          prop("who_you_are", "string", "New identity prompt"),
+                          prop("identity", "string", "New identity prompt"),
                           prop("chat_instructions", "string", "New session-mode instructions"),
                           prop("post_session_instructions", "string", "New post-session update instructions"),
                           prop("self_eval_instructions", "string", "New self-evaluation instructions"),
@@ -242,7 +244,7 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug: lowercase letters, digits, underscores (e.g. 'pm_coach')"),
                           prop("title", "string", "Display name shown in the UI (e.g. 'PM Coach')"),
                           prop("description", "string", "One-sentence description of what this agent does (shown in list_agents)."),
-                          prop("who_you_are", "string",
+                          prop("identity", "string",
                                   "Durable identity prompt. Keep it lean — purpose, not operating procedures. Cover: " +
                                   "(1) Who the agent is — their role, domain, and what they own. Be specific about why they exist and what they're accountable for. " +
                                   "(2) Workspace — the agent has a personal workspace accessible via agent_bash. " +
@@ -276,7 +278,7 @@ public class ToolsRegistry {
                                   "description", "Tool names to expose to this agent in addition to agent_bash (always included automatically). " +
                                           "Examples: get_current_datetime, web_search, browse_page, set_reminder, list_sessions, read_session_transcript. " +
                                           "Include message_agent if the agent should reach other agents or escalate to cos."))),
-                    "name", "who_you_are", "chat_instructions", "tools")
+                    "name", "identity", "chat_instructions", "tools")
     );
 
     // ── Schema ───────────────────────────────────────────────────────────────────

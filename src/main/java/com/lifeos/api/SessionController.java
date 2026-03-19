@@ -23,4 +23,16 @@ public class SessionController {
         var agent = body != null ? body.get("agent") : null;
         return Map.of("session_id", session.createNew(agent));
     }
+
+    @DeleteMapping("/sessions/{sessionId}")
+    public Map<String, String> deleteSession(@PathVariable String sessionId) {
+        session.delete(sessionId);
+        return Map.of("deleted", sessionId);
+    }
+
+    @PostMapping("/sessions/prune")
+    public Map<String, String> pruneSessions() {
+        session.pruneEmptySessions();
+        return Map.of("status", "ok");
+    }
 }

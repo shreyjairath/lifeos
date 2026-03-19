@@ -32,6 +32,8 @@ public class AgentTools {
     }
 
     public Map<String, Object> messageAgent(String fromAgent, String targetAgent, String message) {
+        if (fromAgent.equals(targetAgent))
+            return Map.of("error", "Cannot message yourself. Use your workspace files to record notes and track state.");
         var agent = agentRegistry.get(targetAgent);
         if (agent == null)
             return Map.of("error", "Agent '" + targetAgent + "' not found. Use list_agents to see available agents.");
@@ -63,7 +65,7 @@ public class AgentTools {
         try {
             var result = new LinkedHashMap<String, Object>();
             result.put("agent_yml", Files.readString(agentDir.resolve("agent.yml")));
-            for (var file : new String[]{"who-you-are.md", "chat.md", "post-session.md", "self-eval.md", "heartbeat.md"}) {
+            for (var file : new String[]{"identity.md", "chat.md", "post-session.md", "self-eval.md", "heartbeat.md"}) {
                 var path = agentDir.resolve(file);
                 if (Files.exists(path)) result.put(file, Files.readString(path));
             }
@@ -86,7 +88,7 @@ public class AgentTools {
 
             var newTitle          = title != null          ? title          : (String) currentYaml.getOrDefault("title", name);
             var newDesc           = description != null    ? description    : (String) currentYaml.getOrDefault("description", "");
-            var newWhoYouAre      = whoYouAre != null      ? whoYouAre      : readIfExists(agentDir.resolve("who-you-are.md"));
+            var newWhoYouAre      = whoYouAre != null      ? whoYouAre      : readIfExists(agentDir.resolve("identity.md"));
             var newChat           = chatInstructions != null       ? chatInstructions       : readIfExists(agentDir.resolve("chat.md"));
             var newPostSession    = postSessionInstructions != null ? postSessionInstructions : readIfExists(agentDir.resolve("post-session.md"));
             var newSelfEval       = selfEvalInstructions != null   ? selfEvalInstructions   : readIfExists(agentDir.resolve("self-eval.md"));
@@ -100,7 +102,7 @@ public class AgentTools {
                 newTools = chatToolsMap != null ? (List<String>) chatToolsMap.get("names") : List.of();
             }
 
-            Files.writeString(agentDir.resolve("who-you-are.md"), newWhoYouAre != null ? newWhoYouAre : "");
+            Files.writeString(agentDir.resolve("identity.md"), newWhoYouAre != null ? newWhoYouAre : "");
             Files.writeString(agentDir.resolve("chat.md"), newChat != null ? newChat : "");
             if (newPostSession != null && !newPostSession.isBlank())
                 Files.writeString(agentDir.resolve("post-session.md"), newPostSession);
@@ -140,7 +142,7 @@ public class AgentTools {
         try {
             Files.createDirectories(agentDir);
 
-            Files.writeString(agentDir.resolve("who-you-are.md"), whoYouAre);
+            Files.writeString(agentDir.resolve("identity.md"), whoYouAre);
             Files.writeString(agentDir.resolve("chat.md"), chatInstructions);
             if (postSessionInstructions != null && !postSessionInstructions.isBlank()) {
                 Files.writeString(agentDir.resolve("post-session.md"), postSessionInstructions);
@@ -177,7 +179,7 @@ public class AgentTools {
         sb.append("title: ").append(title != null && !title.isBlank() ? title : name).append("\n");
         if (description != null && !description.isBlank())
             sb.append("description: ").append(description).append("\n");
-        sb.append("persona:\n  - who-you-are.md\n  - chat.md\n");
+        sb.append("persona:\n  - identity.md\n  - chat.md\n");
         if (postSessionInstructions != null && !postSessionInstructions.isBlank()) {
             sb.append("post-session-prompt:\n  - post-session.md\n");
             sb.append("post-session-tools:\n  mode: include\n  names:\n");

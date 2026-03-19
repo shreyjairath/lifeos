@@ -6,6 +6,7 @@ import com.lifeos.core.managers.SessionManager;
 import com.lifeos.core.managers.WebPushService;
 import com.lifeos.core.agents.executor.Cancellation;
 import com.lifeos.core.agents.executor.Executor;
+import com.lifeos.core.agents.store.AgentRunStore;
 import com.lifeos.core.agents.tools.ToolsRegistry;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -41,10 +42,12 @@ public class AgentRegistry {
     private final Cancellation cancellation;
     private final AppConfig config;
     private final WebPushService webPush;
+    private final AgentRunStore agentRunStore;
 
     public AgentRegistry(Executor executor, ToolsRegistry toolsRegistry,
                          SessionManager session, EventBus eventBus,
-                         Cancellation cancellation, AppConfig config, WebPushService webPush) {
+                         Cancellation cancellation, AppConfig config, WebPushService webPush,
+                         AgentRunStore agentRunStore) {
         this.executor = executor;
         this.toolsRegistry = toolsRegistry;
         this.session = session;
@@ -52,6 +55,7 @@ public class AgentRegistry {
         this.cancellation = cancellation;
         this.config = config;
         this.webPush = webPush;
+        this.agentRunStore = agentRunStore;
     }
 
     private static final Path USER_AGENTS_DIR = ToolsRegistry.AGENTS_DIR;
@@ -110,7 +114,7 @@ public class AgentRegistry {
             log.warn("AgentRegistry: failed to provision workspace for '{}': {}", def.name(), e.getMessage());
         }
         var agent = new Agent(def, executor, toolsRegistry, session,
-                eventBus, cancellation, config, webPush);
+                eventBus, cancellation, config, webPush, agentRunStore);
         agent.initListeners();
         agents.put(def.name(), agent);
         log.info("AgentRegistry: loaded agent '{}' from {}", def.name(), promptBase);
