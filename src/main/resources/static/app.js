@@ -14,6 +14,7 @@ function urlBase64ToUint8Array(base64String) {
 
 // ── Agent selection ───────────────────────────────────────────────────────────
 let ACTIVE_AGENT = localStorage.getItem("chief-agent") || "cos";
+const AGENT_TITLES = { cos: "Chief of Staff" };
 
 const agentToggle = document.getElementById("agent-toggle");
 const subAgentToggle = document.getElementById("sub-agent-toggle");
@@ -95,6 +96,9 @@ async function loadAgents() {
       subAgentToggle.appendChild(makeAgentRow(btn, name, title));
       subAgentToggle.appendChild(makeAgentSessionList(name));
     }
+
+    // Populate title map
+    for (const { name, title } of subAgents) AGENT_TITLES[name] = title;
 
     // Validate stored agent; fall back to cos if unknown
     const allAgents = [{ name: "cos", title: "Chief of Staff" }, ...subAgents];
@@ -267,6 +271,7 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
     (newSessionId) => setSession(newSessionId),
     () => ACTIVE_AGENT,
     () => loadSessions(),
+    () => AGENT_TITLES[ACTIVE_AGENT] || ACTIVE_AGENT,
   );
   CC.init();
   if (!SESSION_ID) {

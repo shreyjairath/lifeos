@@ -21,6 +21,7 @@ let _getSessionId = () => null;
 let _onRotate = (_newSessionId) => {};
 let _onDone = () => {};
 let _getAgent = () => "main";
+let _getAgentTitle = () => "Agent";
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -60,7 +61,7 @@ export function addMessage(role, content, msgIndex, ts) {
 
   const label = document.createElement("div");
   label.className = "msg-label";
-  label.textContent = role === "user" ? "You" : "Agent";
+  label.textContent = role === "user" ? "You" : _getAgentTitle();
   header.appendChild(label);
 
   if (ts) {
@@ -100,7 +101,7 @@ export function addTypingIndicator() {
   msg.id = "typing";
   const label = document.createElement("div");
   label.className = "msg-label";
-  label.textContent = "Agent";
+  label.textContent = _getAgentTitle();
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
@@ -257,7 +258,7 @@ async function sendMessage(getSessionId) {
             header.className = "msg-header";
             const label = document.createElement("div");
             label.className = "msg-label";
-            label.textContent = "Agent";
+            label.textContent = _getAgentTitle();
             header.appendChild(label);
             currentMsgEl.appendChild(header);
             messagesEl.appendChild(currentMsgEl);
@@ -281,7 +282,7 @@ async function sendMessage(getSessionId) {
             header.className = "msg-header";
             const label = document.createElement("div");
             label.className = "msg-label";
-            label.textContent = "Agent";
+            label.textContent = _getAgentTitle();
             header.appendChild(label);
             currentMsgEl.appendChild(header);
             messagesEl.appendChild(currentMsgEl);
@@ -331,7 +332,7 @@ async function sendMessage(getSessionId) {
               header.className = "msg-header";
               const label = document.createElement("div");
               label.className = "msg-label";
-              label.textContent = "Agent";
+              label.textContent = _getAgentTitle();
               header.appendChild(label);
               currentMsgEl.appendChild(header);
               messagesEl.appendChild(currentMsgEl);
@@ -404,11 +405,12 @@ export function reset(sessionId) {
   messagesEl.innerHTML = "";
 }
 
-export function init(getSessionId, onRotate, getAgent, onDone) {
+export function init(getSessionId, onRotate, getAgent, onDone, getAgentTitle) {
   _getSessionId = getSessionId;
   if (onRotate) _onRotate = onRotate;
   if (getAgent) _getAgent = getAgent;
   if (onDone) _onDone = onDone;
+  if (getAgentTitle) _getAgentTitle = getAgentTitle;
   Voice.init((text) => {
     inputEl.value = text;
     sendMessage(_getSessionId);

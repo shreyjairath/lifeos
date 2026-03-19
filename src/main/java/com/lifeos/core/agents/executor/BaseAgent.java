@@ -29,8 +29,9 @@ import java.util.Map;
  * Common base for user-facing agents.
  *
  * Subclasses implement:
- *   persona()           — identity + instructions injected as system prompt
- *   memory()            — optional knowledge section appended after persona (default: empty)
+ *   identity()          — who the agent is; used in all modes (chat, post-session, heartbeat, messaging)
+ *   chatPrompt()        — chat-specific framing; used only in user-facing chat system prompt
+ *   memory()            — optional knowledge section appended after identity+chatPrompt (default: empty)
  *   tools()             — tools for chat mode (default: all from registry)
  *   postSessionPrompt() — system prompt for post-session update (null = skip)
  *   postSessionTools()  — tools for post-session mode (default: all from registry)
@@ -150,10 +151,11 @@ public abstract class BaseAgent {
         return content != null && content.stream().anyMatch(b -> "tool_use".equals(b.get("type")));
     }
 
-    protected abstract String persona();
-
-    /** Agent identity — loaded from identity.md. Prepended to every mode prompt. */
+    /** Agent identity — used in all modes. */
     protected String identity() { return ""; }
+
+    /** Chat-specific framing — injected only in user-facing chat system prompt. */
+    protected String chatPrompt() { return ""; }
 
     protected abstract String agentName();
 
@@ -207,9 +209,6 @@ public abstract class BaseAgent {
             return "Error: " + e.getMessage();
         }
     }
-
-    /** System prompt used for internal agent-to-agent messaging. Return null to use default framing. */
-    protected String messagePrompt() { return null; }
 
     /** Tools available during agent-to-agent messaging. Defaults to postSessionTools(). */
     protected List<Map<String, Object>> messageTools() { return postSessionTools(); }
@@ -286,7 +285,9 @@ public abstract class BaseAgent {
     protected String buildPrompt(String sessionId) {
         eventBus.publish(Map.of("type", "boot_start"));
 
-        var p = persona();
+        var id = identity();
+        var cp = chatPrompt();
+        var p = cp.isBlank() ? id : id + "\n\n" + cp;
         if (!p.isEmpty()) {
             eventBus.publish(Map.of("type", "knowledge_file", "file", "instructions",
                     "label", "Instructions", "status", "loaded", "chars", p.length()));
@@ -316,9 +317,9 @@ public abstract class BaseAgent {
     }
 
     private String buildMessageSystemPrompt(String fromAgent, String channelLog) {
-        var p = persona();
-        var mp = messagePrompt();
-        var base = (mp != null && !mp.isBlank()) ? p + "\n\n" + mp : p;
+        var id = identity();
+        var cp = chatPrompt();
+        var base = cp.isBlank() ? id : id + "\n\n" + cp;
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
         var history = channelLog.isBlank() ? "No prior exchanges." : channelLog;
         return base.strip()

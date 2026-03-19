@@ -40,12 +40,16 @@ public class Agent extends BaseAgent {
 
     @Override
     protected String identity() {
-        return PromptParts.load(def.promptBase(), "identity.md");
+        if (def.identity() == null || def.identity().isEmpty()) return "";
+        return def.identity().stream()
+                .map(f -> PromptParts.load(def.promptBase(), f))
+                .collect(java.util.stream.Collectors.joining("\n\n"));
     }
 
     @Override
-    protected String persona() {
-        return def.persona().stream()
+    protected String chatPrompt() {
+        if (def.chatPrompt() == null || def.chatPrompt().isEmpty()) return "";
+        return def.chatPrompt().stream()
                 .map(f -> PromptParts.load(def.promptBase(), f))
                 .collect(java.util.stream.Collectors.joining("\n\n"));
     }
@@ -78,14 +82,6 @@ public class Agent extends BaseAgent {
     protected String selfEvalPrompt() {
         if (def.selfEvalPrompt() == null) return null;
         return PromptParts.load(def.promptBase(), def.selfEvalPrompt());
-    }
-
-    @Override
-    protected String messagePrompt() {
-        if (def.messagePrompt() == null || def.messagePrompt().isEmpty()) return null;
-        return def.messagePrompt().stream()
-                .map(f -> PromptParts.load(def.promptBase(), f))
-                .collect(java.util.stream.Collectors.joining("\n\n"));
     }
 
     @Override

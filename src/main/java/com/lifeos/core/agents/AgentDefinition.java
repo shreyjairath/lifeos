@@ -12,14 +12,14 @@ public record AgentDefinition(
         String title,
         String description,
         String promptBase,
-        List<String> persona,
-        List<String> postSessionPrompt, // null/empty = no post-session update
-        String selfEvalPrompt,         // null = no self-evaluation
-        String heartbeatPrompt,        // null = no heartbeat
-        List<String> messagePrompt,    // null/empty = use default framing
+        List<String> identity,             // used in all modes (post-session, heartbeat, messaging, chat)
+        List<String> chatPrompt,           // used only in user-facing chat system prompt
+        List<String> postSessionPrompt,    // null/empty = no post-session update
+        String selfEvalPrompt,             // null = no self-evaluation
+        String heartbeatPrompt,            // null = no heartbeat
         ToolsFilter chatTools,
         ToolsFilter postSessionTools,
-        ToolsFilter messageTools       // null = use postSessionTools
+        ToolsFilter messageTools           // null = use postSessionTools
 ) {
     /**
      * Defines which tools are available in a given mode.
@@ -31,20 +31,20 @@ public record AgentDefinition(
 
     @SuppressWarnings("unchecked")
     public static AgentDefinition parse(Map<String, Object> map, String promptBase) {
-        var name           = (String) map.get("name");
-        var title          = (String) map.getOrDefault("title", name);
-        var description    = (String) map.getOrDefault("description", "");
-        var persona         = (List<String>) map.getOrDefault("persona", List.of());
+        var name              = (String) map.get("name");
+        var title             = (String) map.getOrDefault("title", name);
+        var description       = (String) map.getOrDefault("description", "");
+        var identity          = (List<String>) map.getOrDefault("identity", List.of());
+        var chatPrompt        = (List<String>) map.getOrDefault("chat-prompt", List.of());
         var postSessionPrompt = (List<String>) map.getOrDefault("post-session-prompt", List.of());
         var selfEvalPrompt    = (String) map.get("self-eval-prompt");
         var heartbeatPrompt   = (String) map.get("heartbeat-prompt");
-        var messagePrompt     = (List<String>) map.getOrDefault("message-prompt", List.of());
         var chatToolsMap         = (Map<String, Object>) map.get("chat-tools");
         var postSessionToolsMap  = (Map<String, Object>) map.get("post-session-tools");
         var messageToolsMap      = (Map<String, Object>) map.get("message-tools");
-        return new AgentDefinition(name, title, description, promptBase, persona, postSessionPrompt, selfEvalPrompt,
-                heartbeatPrompt, messagePrompt, parseFilter(chatToolsMap), parseFilter(postSessionToolsMap),
-                parseFilter(messageToolsMap));
+        return new AgentDefinition(name, title, description, promptBase, identity, chatPrompt,
+                postSessionPrompt, selfEvalPrompt, heartbeatPrompt,
+                parseFilter(chatToolsMap), parseFilter(postSessionToolsMap), parseFilter(messageToolsMap));
     }
 
     @SuppressWarnings("unchecked")

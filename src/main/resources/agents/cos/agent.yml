@@ -1,8 +1,9 @@
 name: cos
 title: Chief of Staff
 description: Your chief of staff — owns the big picture, manages the team of specialist agents, and drives things forward on your behalf.
-persona:
+identity:
   - identity.md
+chat-prompt:
   - chat.md
 post-session-prompt:
   - post-session.md
