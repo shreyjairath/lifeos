@@ -42,13 +42,13 @@ public class SessionManager {
     }
 
     @PostConstruct
-    public void initHeartbeatListener() {
+    public void initListeners() {
         eventBus.subscribe()
-                .filter(e -> "heartbeat_trigger".equals(e.get("type")))
+                .filter(e -> "session_expiry_trigger".equals(e.get("type")))
                 .publishOn(Schedulers.boundedElastic())
                 .subscribe(
                         e -> checkExpiredSessions(),
-                        err -> log.warn("SessionManager heartbeat_trigger stream error: {}", err.getMessage()));
+                        err -> log.warn("SessionManager session_expiry_trigger stream error: {}", err.getMessage()));
     }
 
     private void checkExpiredSessions() {

@@ -23,7 +23,9 @@ lifeos:
   session:
     token-threshold: 50000
     time-threshold-hours: 4
+  session-expiry:
+    interval-ms: 1800000   # 30 minutes
   heartbeat:
     interval-ms: 21600000  # 6 hours
   self-eval:
-    interval-ms: 86400000  # 24 hours
+    interval-ms: 43200000  # 12 hours
