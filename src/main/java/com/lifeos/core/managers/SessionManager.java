@@ -44,11 +44,11 @@ public class SessionManager {
     @PostConstruct
     public void initListeners() {
         eventBus.subscribe()
-                .filter(e -> "session_expiry_trigger".equals(e.get("type")))
+                .filter(e -> "session_expiry_check_trigger".equals(e.get("type")))
                 .publishOn(Schedulers.boundedElastic())
                 .subscribe(
                         e -> checkExpiredSessions(),
-                        err -> log.warn("SessionManager session_expiry_trigger stream error: {}", err.getMessage()));
+                        err -> log.warn("SessionManager session_expiry_check_trigger stream error: {}", err.getMessage()));
     }
 
     private void checkExpiredSessions() {

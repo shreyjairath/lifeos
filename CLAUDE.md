@@ -53,7 +53,7 @@ lifeos/
 │   │   ├── managers/
 │   │   │   ├── ChatManager         # SSE serialization; rotation detection; routes to agent
 │   │   │   ├── SessionManager      # Session CRUD, token tracking, rotation, history
-│   │   │   ├── SessionExpiryScheduler # @Scheduled every 30min → session_expiry_trigger event
+│   │   │   ├── SessionExpiryCheckScheduler # @Scheduled every 30min → session_expiry_check_trigger event
 │   │   │   ├── HeartbeatScheduler  # @Scheduled every 6h → heartbeat_trigger event
 │   │   │   ├── SelfEvalScheduler   # @Scheduled every 12h → self_eval_trigger event
 │   │   │   ├── WebPushService      # Web Push notifications
@@ -152,7 +152,7 @@ Sessions: .user-data/sessions/session-{agent}-{datetime}/
 
 Rotation triggers:
   1. On message:  last_input_tokens >= 50,000
-  2. Scheduled:   SessionExpiryScheduler fires session_expiry_trigger every 30min
+  2. Scheduled:   SessionExpiryCheckScheduler fires session_expiry_check_trigger every 30min
                   → SessionManager.checkExpiredSessions()
                   → publishes session_closed for each stale session (no summary + >4h inactive)
 
@@ -165,7 +165,7 @@ On session_closed:
 
 | Scheduler | Default interval | Event emitted | Effect |
 |-----------|-----------------|---------------|--------|
-| `SessionExpiryScheduler` | 30min | `session_expiry_trigger` | Close stale sessions |
+| `SessionExpiryCheckScheduler` | 30min | `session_expiry_check_trigger` | Close stale sessions |
 | `HeartbeatScheduler` | 6h | `heartbeat_trigger` | Per-agent heartbeat check |
 | `SelfEvalScheduler` | 12h | `self_eval_trigger` | Per-agent self-evaluation |
 
