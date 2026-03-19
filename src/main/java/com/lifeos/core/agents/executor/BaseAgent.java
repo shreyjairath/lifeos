@@ -176,8 +176,8 @@ public abstract class BaseAgent {
                 Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
 
-        var runRecord = new AgentRunStore.RunRecord(agentName(), "message (from: " + fromAgent + ")", prompt);
-        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "message", "from", fromAgent));
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "inter-agent-message (from: " + fromAgent + ")", prompt);
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "inter-agent-message", "from", fromAgent));
 
         try {
             var response = executor.runLoop("_msg_" + agentName(), messages, prompt, config.model(), messageTools(), agentName())
@@ -197,14 +197,14 @@ public abstract class BaseAgent {
             appendChannelLog(fromAgent, content, result);
             runRecord.finish(result);
             agentRunStore.save(runRecord);
-            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "message",
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "inter-agent-message",
                     "from", fromAgent, "duration_ms", runRecord.durationMs, "result_preview", resultPreview(result)));
             return result;
         } catch (Exception e) {
             log.warn("{} message from {} failed: {}", agentName(), fromAgent, e.getMessage());
             runRecord.finish("ERROR: " + e.getMessage());
             agentRunStore.save(runRecord);
-            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "message",
+            eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "inter-agent-message",
                     "from", fromAgent, "duration_ms", runRecord.durationMs, "result_preview", "ERROR: " + e.getMessage()));
             return "Error: " + e.getMessage();
         }
@@ -317,13 +317,11 @@ public abstract class BaseAgent {
     }
 
     private String buildMessageSystemPrompt(String fromAgent, String channelLog) {
-        var id = identity();
-        var cp = chatPrompt();
-        var base = cp.isBlank() ? id : id + "\n\n" + cp;
+        var base = identity();
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
         var history = channelLog.isBlank() ? "No prior exchanges." : channelLog;
         return base.strip()
-                + "\n\n" + modesSection("message")
+                + "\n\n" + modesSection("inter-agent-message")
                 + "\n\n# Internal Channel"
                 + "\n\nThis is a private channel with other agents — not the user. "
                 + "You received a message from " + fromAgent + ". Respond directly to them."
@@ -476,7 +474,7 @@ public abstract class BaseAgent {
     private static String modesSection(String currentMode) {
         return """
                 # Operating Modes
-                You run in one of five modes depending on context. The current mode is marked below.
+                You run in one of five modes depending on context. The current mode is shown below.
 
                 - **chat** — User is present and waiting for a response. Prioritize responsiveness. \
                 Avoid `message_agent` unless information is immediately critical to answering the user right now; defer coordination to post-session.
@@ -484,7 +482,7 @@ public abstract class BaseAgent {
                 cross-agent coordination, and `message_agent` calls.
                 - **heartbeat** — Scheduled background check; no user present. Good time for proactive work and agent coordination.
                 - **self-eval** — Scheduled self-evaluation; no user present. Assess quality and improve your operating approach.
-                - **message** — Responding to another agent via internal channel. Be direct and concise; no user is involved.
+                - **inter-agent-message** — Responding to another agent via internal channel. Be direct and concise; no user is involved.
 
                 **Current mode: %s**""".formatted(currentMode);
     }
