@@ -9,9 +9,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
-import java.util.List;
-import java.util.Map;
-
 @RestController
 @RequestMapping("/api")
 public class EventsController {
@@ -21,11 +18,6 @@ public class EventsController {
 
     public EventsController(EventBus eventBus) {
         this.eventBus = eventBus;
-    }
-
-    @GetMapping("/events/history")
-    public List<Map<String, Object>> history() {
-        return eventBus.getHistory();
     }
 
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

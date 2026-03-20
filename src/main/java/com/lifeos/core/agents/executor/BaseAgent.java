@@ -2,6 +2,7 @@ package com.lifeos.core.agents.executor;
 
 import com.lifeos.config.AppConfig;
 import com.lifeos.core.helpers.EventBus;
+import com.lifeos.core.helpers.PromptParts;
 import com.lifeos.core.managers.SessionManager;
 import com.lifeos.core.managers.WebPushService;
 import com.lifeos.core.agents.tools.ToolsRegistry;
@@ -26,30 +27,31 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Common base for user-facing agents.
+ * Common base for all agents.
  *
  * Subclasses implement:
- *   identity()          — who the agent is; used in all modes (chat, post-session, heartbeat, messaging)
- *   chatPrompt()        — chat-specific framing; used only in user-facing chat system prompt
- *   memory()            — optional knowledge section appended after identity+chatPrompt (default: empty)
- *   tools()             — tools for chat mode (default: all from registry)
- *   postSessionPrompt() — system prompt for post-session update (null = skip)
- *   postSessionTools()  — tools for post-session mode (default: all from registry)
- *   selfEvalPrompt()    — system prompt for scheduled self-evaluation (null = skip)
- *   selfEvalTools()     — tools for self-eval mode (default: postSessionTools())
- *   heartbeatPrompt()   — system prompt for scheduled heartbeat (null = skip)
- *   heartbeatTools()    — tools for heartbeat mode (default: postSessionTools())
+ *   identity() — who the agent is; loaded in all modes
+ *   memory()   — optional knowledge section appended in chat (default: empty)
+ *   tools()    — tools available in all modes (default: all from registry)
  *
- * buildPrompt() appends the current timestamp to every system prompt.
- *
- * Each agent subscribes to `heartbeat_trigger` and `self_eval_trigger` events from the EventBus
- * and handles them independently — publishing results as `heartbeat` events and Web Push notifications.
+ * All modes (chat, post-session, heartbeat, self-eval) run unconditionally for every agent.
+ * Mode scaffolding (headers, footers, logging, push_to_user) is defined as constants here.
  */
 public abstract class BaseAgent {
 
     private static final Logger log = LoggerFactory.getLogger(BaseAgent.class);
     private static final String DEFAULT_REFLECT_MODEL = "claude-haiku-4-5-20251001";
     private static final Path CHANNELS_DIR = Path.of(".user-data/agents/inter-agent-channels");
+
+    // ── Standard scaffolding (loaded from src/main/resources/prompt-parts/) ──────
+
+    private static final String WORKSPACE_SETUP = PromptParts.load("workspace-setup.md");
+    private static final String TEAM            = PromptParts.load("team.md");
+    private static final String MODES           = PromptParts.load("modes.md");
+    private static final String CHAT            = PromptParts.load("chat.md");
+    private static final String POST_SESSION    = PromptParts.load("post-session.md");
+    private static final String HEARTBEAT       = PromptParts.load("heartbeat.md");
+    private static final String SELF_EVAL       = PromptParts.load("self-eval.md");
 
     protected final Executor executor;
     protected final ToolsRegistry toolsRegistry;
@@ -81,39 +83,33 @@ public abstract class BaseAgent {
 
     /** Called by AgentRegistry after construction — not a Spring bean so @PostConstruct won't fire. */
     public void initListeners() {
-        if (heartbeatPrompt() != null) {
-            eventBus.subscribe()
-                    .filter(e -> "heartbeat_trigger".equals(e.get("type")))
-                    .publishOn(Schedulers.boundedElastic())
-                    .subscribe(
-                            e -> runHeartbeat(),
-                            err -> log.warn("{} heartbeat_trigger stream error: {}",
-                                    getClass().getSimpleName(), err.getMessage()));
-        }
-        if (postSessionPrompt() != null) {
-            eventBus.subscribe()
-                    .filter(e -> "session_closed".equals(e.get("type"))
-                            && agentName().equals(e.get("agent")))
-                    .publishOn(Schedulers.boundedElastic())
-                    .subscribe(
-                            e -> {
-                                var sessionId = (String) e.get("sessionId");
-                                var transcript = SessionManager.buildTranscript(
-                                        session.getHistory(sessionId));
-                                postSession(transcript);
-                            },
-                            err -> log.warn("{} session_closed stream error: {}",
-                                    getClass().getSimpleName(), err.getMessage()));
-        }
-        if (selfEvalPrompt() != null) {
-            eventBus.subscribe()
-                    .filter(e -> "self_eval_trigger".equals(e.get("type")))
-                    .publishOn(Schedulers.boundedElastic())
-                    .subscribe(
-                            e -> runSelfEval(),
-                            err -> log.warn("{} self_eval_trigger stream error: {}",
-                                    getClass().getSimpleName(), err.getMessage()));
-        }
+        eventBus.subscribe()
+                .filter(e -> "heartbeat_trigger".equals(e.get("type")))
+                .publishOn(Schedulers.boundedElastic())
+                .subscribe(
+                        e -> runHeartbeat(),
+                        err -> log.warn("{} heartbeat_trigger stream error: {}",
+                                getClass().getSimpleName(), err.getMessage()));
+
+        eventBus.subscribe()
+                .filter(e -> "session_closed".equals(e.get("type"))
+                        && agentName().equals(e.get("agent")))
+                .publishOn(Schedulers.boundedElastic())
+                .subscribe(
+                        e -> {
+                            var sessionId = (String) e.get("sessionId");
+                            runPostSession(sessionId);
+                        },
+                        err -> log.warn("{} session_closed stream error: {}",
+                                getClass().getSimpleName(), err.getMessage()));
+
+        eventBus.subscribe()
+                .filter(e -> "self_eval_trigger".equals(e.get("type")))
+                .publishOn(Schedulers.boundedElastic())
+                .subscribe(
+                        e -> runSelfEval(),
+                        err -> log.warn("{} self_eval_trigger stream error: {}",
+                                getClass().getSimpleName(), err.getMessage()));
     }
 
     public Flux<ExecutorEvent> chat(String sessionId, String userMessage) {
@@ -145,13 +141,13 @@ public abstract class BaseAgent {
                             var pending = pendingToolUse.getAndSet(null);
                             if (pending != null) session.appendMessage(sessionId, pending);
                             session.appendMessage(sessionId, msg);
-                            // Accumulate text for run record result
-                            if ("assistant".equals(ae.role()) && ae.content() != null) {
-                                ae.content().stream()
-                                        .filter(b -> "text".equals(b.get("type")))
-                                        .map(b -> (String) b.get("text"))
-                                        .forEach(resultAccum::append);
-                            }
+                        }
+                        // Accumulate ALL text from ALL assistant turns (including those with tool_use)
+                        if ("assistant".equals(ae.role()) && ae.content() != null) {
+                            ae.content().stream()
+                                    .filter(b -> "text".equals(b.get("type")))
+                                    .map(b -> (String) b.get("text"))
+                                    .forEach(resultAccum::append);
                         }
                     } else if (event instanceof LlmEvent.Response resp) {
                         session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
@@ -175,9 +171,6 @@ public abstract class BaseAgent {
     /** Agent identity — used in all modes. */
     protected String identity() { return ""; }
 
-    /** Chat-specific framing — injected only in user-facing chat system prompt. */
-    protected String chatPrompt() { return ""; }
-
     protected abstract String agentName();
 
     protected String memory() { return ""; }
@@ -190,7 +183,7 @@ public abstract class BaseAgent {
      * Handles an incoming agent-to-agent message from another agent and returns the response.
      * Uses a shared append-only channel log per pair so both agents see the full exchange history.
      */
-    public String message(String fromAgent, String content) {
+    public String handleIncomingAgentMessage(String fromAgent, String content) {
         var channelLog = loadChannelLog(fromAgent);
         var prompt = buildMessageSystemPrompt(fromAgent, channelLog);
         var messages = new ArrayList<Map<String, Object>>(List.of(
@@ -201,7 +194,7 @@ public abstract class BaseAgent {
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "inter-agent-message", "from", fromAgent));
 
         try {
-            var response = executor.runLoop("_msg_" + agentName(), messages, prompt, config.model(), messageTools(), agentName())
+            var response = executor.runLoop("_msg_" + agentName(), messages, prompt, config.model(), tools(), agentName())
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
@@ -233,48 +226,29 @@ public abstract class BaseAgent {
         }
     }
 
-    /** Tools available during agent-to-agent messaging. Defaults to postSessionTools(). */
-    protected List<Map<String, Object>> messageTools() { return postSessionTools(); }
-
-    /** System prompt used during post-session update. Return null to skip for this agent. */
-    protected String postSessionPrompt() { return null; }
-
-    /** Tools available during post-session update. Defaults to all tools. */
-    protected List<Map<String, Object>> postSessionTools() { return toolsRegistry.getTools(); }
-
-    /** System prompt used during scheduled self-evaluation. Return null to skip for this agent. */
-    protected String selfEvalPrompt() { return null; }
-
-    /** Tools available during self-evaluation. Defaults to postSessionTools(). */
-    protected List<Map<String, Object>> selfEvalTools() { return postSessionTools(); }
-
-    /** System prompt used during heartbeat. Return null to skip heartbeat for this agent. */
-    protected String heartbeatPrompt() { return null; }
-
-    /** Tools available during heartbeat. Defaults to postSessionTools(). */
-    protected List<Map<String, Object>> heartbeatTools() { return postSessionTools(); }
-
     /**
      * Runs the post-session update against the given transcript.
      * Returns a bullet summary of what was saved, or null if nothing / skipped.
      */
-    public String postSession(String transcript) {
-        var prompt = postSessionPrompt();
-        if (prompt == null || prompt.isBlank() || transcript.isBlank()) return null;
+    public String runPostSession(String sessionId) {
+        var transcript = SessionManager.buildTranscript(session.getHistory(sessionId));
+        if (transcript.isBlank()) return null;
 
         log.info("{} post-session starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Session transcript to reflect on:\n\n" + transcript));
 
-        var id = identity();
-        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("post-session");
+        var prompt = identityWithName() + "\n\n"
+                + WORKSPACE_SETUP + "\n\n" + TEAM + "\n\n"
+                + modesSection("post-session") + "\n\n"
+                + POST_SESSION;
 
         var runRecord = new AgentRunStore.RunRecord(agentName(), "post-session", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "post-session"));
 
         try {
             var summary = executor.runLoop("_postsession_" + getClass().getSimpleName(),
-                            new ArrayList<>(messages), prompt, reflectModel(), postSessionTools(), agentName())
+                            new ArrayList<>(messages), prompt, reflectModel(), tools(), agentName())
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
@@ -310,13 +284,9 @@ public abstract class BaseAgent {
     protected String buildPrompt(String sessionId) {
         eventBus.publish(Map.of("type", "boot_start"));
 
-        var id = identity();
-        var cp = chatPrompt();
-        var p = cp.isBlank() ? id : id + "\n\n" + cp;
-        if (!p.isEmpty()) {
-            eventBus.publish(Map.of("type", "knowledge_file", "file", "instructions",
-                    "label", "Instructions", "status", "loaded", "chars", p.length()));
-        }
+        var p = identityWithName();
+        eventBus.publish(Map.of("type", "knowledge_file", "file", "instructions",
+                "label", "Instructions", "status", "loaded", "chars", p.length()));
 
         var k = memory();
         if (!k.isEmpty()) {
@@ -324,7 +294,7 @@ public abstract class BaseAgent {
                     "label", "Memory", "status", "loaded", "chars", k.length()));
         }
 
-        var system = k.isEmpty() ? p : p + "\n\n" + k;
+        var system = (k.isEmpty() ? p : p + "\n\n" + k) + "\n\n" + WORKSPACE_SETUP + "\n\n" + TEAM;
 
         var parentSummary = session.getParentSummary(sessionId);
         if (parentSummary.isPresent()) {
@@ -335,17 +305,19 @@ public abstract class BaseAgent {
         }
 
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
-        system = system.strip() + "\n\n" + modesSection("chat") + "\n\n# Current Date & Time\n\n" + now;
+        system = system.strip() + "\n\n" + modesSection("chat") + "\n\n" + CHAT + "\n\n# Current Date & Time\n\n" + now;
         eventBus.publish(Map.of("type", "system_prompt", "chars", system.length()));
         eventBus.publish(Map.of("type", "boot_done"));
         return system;
     }
 
     private String buildMessageSystemPrompt(String fromAgent, String channelLog) {
-        var base = identity();
+        var base = identityWithName();
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
-        var history = channelLog.isBlank() ? "No prior exchanges." : channelLog;
+        var history = channelLog.isBlank() ? "No prior exchanges." : truncateTail(channelLog, 8_000);
         return base.strip()
+                + "\n\n" + WORKSPACE_SETUP
+                + "\n\n" + TEAM
                 + "\n\n" + modesSection("inter-agent-message")
                 + "\n\n# Internal Channel"
                 + "\n\nThis is a private channel with other agents — not the user. "
@@ -386,22 +358,21 @@ public abstract class BaseAgent {
     // ── Private ───────────────────────────────────────────────────────────────
 
     private void runHeartbeat() {
-        var prompt = heartbeatPrompt();
-        if (prompt == null || prompt.isBlank()) return;
-
         log.info("{} heartbeat starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled heartbeat check."));
 
-        var id = identity();
-        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("heartbeat");
+        var prompt = identityWithName() + "\n\n"
+                + WORKSPACE_SETUP + "\n\n" + TEAM + "\n\n"
+                + modesSection("heartbeat") + "\n\n"
+                + HEARTBEAT;
 
         var runRecord = new AgentRunStore.RunRecord(agentName(), "heartbeat", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "heartbeat"));
 
         try {
             var result = executor.runLoop("_heartbeat_" + getClass().getSimpleName(),
-                            new ArrayList<>(messages), prompt, reflectModel(), heartbeatTools(), agentName())
+                            new ArrayList<>(messages), prompt, reflectModel(), tools(), agentName())
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
@@ -442,22 +413,21 @@ public abstract class BaseAgent {
     }
 
     private void runSelfEval() {
-        var prompt = selfEvalPrompt();
-        if (prompt == null || prompt.isBlank()) return;
-
         log.info("{} self-eval starting", agentName());
         var messages = List.<Map<String, Object>>of(
                 Map.of("role", "user", "content", "Run your scheduled self-evaluation."));
 
-        var id = identity();
-        prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("self-eval");
+        var prompt = identityWithName() + "\n\n"
+                + WORKSPACE_SETUP + "\n\n" + TEAM + "\n\n"
+                + modesSection("self-eval") + "\n\n"
+                + SELF_EVAL;
 
         var runRecord = new AgentRunStore.RunRecord(agentName(), "self-eval", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "self-eval"));
 
         try {
             var result = executor.runLoop("_selfeval_" + getClass().getSimpleName(),
-                            new ArrayList<>(messages), prompt, reflectModel(), selfEvalTools(), agentName())
+                            new ArrayList<>(messages), prompt, reflectModel(), tools(), agentName())
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
@@ -496,24 +466,23 @@ public abstract class BaseAgent {
         }
     }
 
-    /**
-     * Returns a modes section explaining all operating modes, with the current one marked active.
-     * Injected into every system prompt so agents always know which mode they're in.
-     */
+    /** Returns the identity block prefixed with the agent's system name. */
+    private String identityWithName() {
+        var id = identity();
+        var header = "Your name is **" + agentName() + "**.";
+        return id.isBlank() ? header : header + "\n\n" + id;
+    }
+
     private static String modesSection(String currentMode) {
-        return """
-                # Operating Modes
-                You run in one of five modes depending on context. The current mode is shown below.
+        return MODES + "\n\n**Current mode: " + currentMode + "**";
+    }
 
-                - **chat** — User is present and waiting for a response. Prioritize responsiveness. \
-                Avoid `message_agent` unless information is immediately critical to answering the user right now; defer coordination to post-session.
-                - **post-session** — Session just ended; user has left. No one is waiting. Good time for workspace updates, \
-                cross-agent coordination, and `message_agent` calls.
-                - **heartbeat** — Scheduled background check; no user present. Good time for proactive work and agent coordination.
-                - **self-eval** — Scheduled self-evaluation; no user present. Assess quality and improve your operating approach.
-                - **inter-agent-message** — Responding to another agent via internal channel. Be direct and concise; no user is involved.
-
-                **Current mode: %s**""".formatted(currentMode);
+    /** Returns the last {@code maxChars} characters of {@code s}, trimmed to a line boundary. */
+    private static String truncateTail(String s, int maxChars) {
+        if (s.length() <= maxChars) return s;
+        var cut = s.substring(s.length() - maxChars);
+        var nl = cut.indexOf('\n');
+        return "[…]\n" + (nl >= 0 ? cut.substring(nl + 1) : cut);
     }
 
     private static String resultPreview(String result) {

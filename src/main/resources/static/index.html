@@ -32,8 +32,6 @@
       <!-- Monitor sidebar content -->
       <nav id="monitor-sidebar-content" class="hidden">
         <button class="monitor-nav-btn active" data-tab="runs">Runs</button>
-        <button class="monitor-nav-btn" data-tab="events">Event Stream</button>
-        <button class="monitor-nav-btn" data-tab="inspector">Inspector</button>
         <button class="monitor-nav-btn" data-tab="channels">Channels</button>
         <button class="monitor-nav-btn" data-tab="cc">Claude Code</button>
       </nav>
@@ -60,15 +58,6 @@
     <div id="agent-monitor" class="hidden">
       <div id="agents-runs-panel" class="agents-tab-panel">
         <div id="agent-debug-panel"></div>
-      </div>
-      <div id="agents-events-panel" class="agents-tab-panel hidden">
-        <div id="events-body"></div>
-      </div>
-      <div id="agents-inspector-panel" class="agents-tab-panel hidden">
-        <button id="inspector-copy" title="Copy JSON">Copy</button>
-        <div id="inspector-body">
-          <span class="inspector-empty">Request JSON will appear here after you send a message.</span>
-        </div>
       </div>
       <div id="agents-channels-panel" class="agents-tab-panel hidden">
         <div id="agent-channels-panel"></div>

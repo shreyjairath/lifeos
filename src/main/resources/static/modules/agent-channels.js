@@ -53,43 +53,31 @@ function parseExchanges(markdown) {
   return exchanges;
 }
 
-function renderExchange(ex) {
-  const el = document.createElement("div");
-  el.className = "channel-exchange";
+/** Returns a single chat-row element for one message in the thread. */
+function renderMsg(agentName, text, ts, side) {
+  const row = document.createElement("div");
+  row.className = `channel-msg ${side}`;
 
   const meta = document.createElement("div");
-  meta.className = "channel-exchange-meta";
-  meta.textContent = `${ex.timestamp}`;
-
-  const outbound = document.createElement("div");
-  outbound.className = "channel-msg outbound";
-  const outLabel = document.createElement("span");
-  outLabel.className = "channel-msg-label";
-  outLabel.textContent = ex.sender;
-  const outBubble = document.createElement("div");
-  outBubble.className = "channel-msg-bubble";
-  outBubble.textContent = ex.message;
-  outbound.appendChild(outLabel);
-  outbound.appendChild(outBubble);
-
-  el.appendChild(meta);
-  el.appendChild(outbound);
-
-  if (ex.reply) {
-    const inbound = document.createElement("div");
-    inbound.className = "channel-msg inbound";
-    const inLabel = document.createElement("span");
-    inLabel.className = "channel-msg-label";
-    inLabel.textContent = ex.recipient;
-    const inBubble = document.createElement("div");
-    inBubble.className = "channel-msg-bubble";
-    inBubble.textContent = ex.reply;
-    inbound.appendChild(inLabel);
-    inbound.appendChild(inBubble);
-    el.appendChild(inbound);
+  meta.className = "channel-msg-meta";
+  const nameEl = document.createElement("span");
+  nameEl.className = "channel-msg-label";
+  nameEl.textContent = agentName;
+  meta.appendChild(nameEl);
+  if (ts) {
+    const tsEl = document.createElement("span");
+    tsEl.className = "channel-msg-ts";
+    tsEl.textContent = ts;
+    meta.appendChild(tsEl);
   }
 
-  return el;
+  const bubble = document.createElement("div");
+  bubble.className = "channel-msg-bubble";
+  bubble.textContent = text;
+
+  row.appendChild(meta);
+  row.appendChild(bubble);
+  return row;
 }
 
 async function loadChannel(pair) {
@@ -105,10 +93,17 @@ async function loadChannel(pair) {
       body.innerHTML = `<div class="channel-empty">No exchanges yet.</div>`;
       return;
     }
-    // Show newest first — reverse the parsed order
-    for (const ex of [...exchanges].reverse()) {
-      body.appendChild(renderExchange(ex));
+    // Render as a flat thread, oldest first
+    for (const ex of exchanges) {
+      const senderSide    = ex.sender    === "cos" ? "outbound" : "inbound";
+      const recipientSide = ex.recipient === "cos" ? "outbound" : "inbound";
+      body.appendChild(renderMsg(ex.sender, ex.message, ex.timestamp, senderSide));
+      if (ex.reply) {
+        body.appendChild(renderMsg(ex.recipient, ex.reply, null, recipientSide));
+      }
     }
+    // Scroll to bottom so newest messages are visible
+    body.scrollTop = body.scrollHeight;
   } catch (err) {
     body.innerHTML = `<div class="channel-empty">Failed to load: ${escHtml(err.message)}</div>`;
   }

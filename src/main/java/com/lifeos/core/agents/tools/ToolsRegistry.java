@@ -27,8 +27,10 @@ public class ToolsRegistry {
     private static final Path DISABLED_FILE = USER_DATA.resolve("disabled-tools.json").normalize();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final ConcurrentHashMap<String, Bash> agentBashInstances         = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Bash> agentBashReadonlyInstances = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bash>           agentBashInstances         = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bash>           agentBashReadonlyInstances = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ScheduledTasks> scheduledTasksInstances    = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AgentLog>       agentLogInstances          = new ConcurrentHashMap<>();
 
     private final WebSearch webSearch;
     private final Browse browse;
@@ -64,6 +66,8 @@ public class ToolsRegistry {
     public void registerAgentWorkspace(String name, Path workspace) {
         agentBashInstances.put(name, new Bash(workspace));
         agentBashReadonlyInstances.put(name, new Bash(workspace, true));
+        scheduledTasksInstances.put(name, new ScheduledTasks(workspace));
+        agentLogInstances.put(name, new AgentLog(workspace));
     }
 
     // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -94,6 +98,42 @@ public class ToolsRegistry {
                 var bash = agentBashReadonlyInstances.get(target);
                 yield bash != null ? bash.bash((String) input.get("command"))
                                    : Map.of("error", "No workspace registered for agent: " + target);
+            }
+            case "schedule_task" -> {
+                var tasks = scheduledTasksInstances.get(agentName);
+                yield tasks != null
+                        ? tasks.schedule((String) input.get("name"), (String) input.get("description"),
+                                input.get("cadence_hours") != null ? ((Number) input.get("cadence_hours")).doubleValue() : null,
+                                (String) input.get("run_at"))
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
+            case "get_scheduled_tasks" -> {
+                var tasks = scheduledTasksInstances.get(agentName);
+                yield tasks != null ? tasks.list()
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
+            case "get_overdue_tasks" -> {
+                var tasks = scheduledTasksInstances.get(agentName);
+                yield tasks != null ? tasks.getOverdue()
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
+            case "mark_task_complete" -> {
+                var tasks = scheduledTasksInstances.get(agentName);
+                yield tasks != null ? tasks.markComplete((String) input.get("id"))
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
+            case "log_entry" -> {
+                var log = agentLogInstances.get(agentName);
+                yield log != null
+                        ? log.append((String) input.get("mode"), (String) input.get("summary"),
+                                (String) input.get("changed"), (String) input.get("notes"))
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
+            }
+            case "read_log" -> {
+                var log = agentLogInstances.get(agentName);
+                yield log != null
+                        ? log.read(input.get("entries") != null ? ((Number) input.get("entries")).intValue() : null)
+                        : Map.of("error", "No workspace registered for agent: " + agentName);
             }
             case "read_agent_channel" -> agentChannels.readChannel(agentName, (String) input.get("agent"));
             case "message_agent" -> agentTools.messageAgent(agentName, (String) input.get("agent"), (String) input.get("message"));
@@ -180,6 +220,45 @@ public class ToolsRegistry {
             tool("delete_reminder", "Cancel a pending reminder by id.",
                     props(prop("id", "string", "Reminder id from list_reminders")), "id"),
 
+            tool("schedule_task",
+                    "Register a recurring or one-off task in your schedule. " +
+                    "Provide cadence_hours for a recurring task (e.g. 6 = every 6 hours), " +
+                    "or run_at (ISO-8601 datetime) for a one-off task that fires once. " +
+                    "Upserts by name — calling again with the same name updates the task.",
+                    props(prop("name", "string", "Short task name (used as the unique key)"),
+                          prop("description", "string", "What this task does when it runs"),
+                          prop("cadence_hours", "number", "How often to run, in hours (e.g. 6, 24, 168). Omit for one-off tasks."),
+                          prop("run_at", "string", "ISO-8601 datetime for a one-off task (e.g. 2026-03-20T09:00:00-05:00). Omit for recurring tasks.")),
+                    "name", "description"),
+            tool("get_scheduled_tasks",
+                    "List all scheduled tasks with their next due time.",
+                    props(), new String[]{}),
+            tool("get_overdue_tasks",
+                    "List tasks that are currently due or overdue (recurring tasks past their interval, or one-off tasks whose run_at has passed).",
+                    props(), new String[]{}),
+            tool("mark_task_complete",
+                    "Mark a scheduled task as completed now. " +
+                    "For recurring tasks, this resets the clock — the task won't be overdue again until the next interval. " +
+                    "For one-off tasks, this permanently marks them done.",
+                    props(prop("id", "string", "Task id from get_scheduled_tasks or get_overdue_tasks")),
+                    "id"),
+
+            tool("log_entry",
+                    "Append a structured log entry to _log.md. " +
+                    "Use this at the end of every background run (heartbeat, self-eval, post-session) to record what happened. " +
+                    "The timestamp is set automatically — do not include it in summary or notes.",
+                    props(prop("mode", "string", "Run mode: chat, post-session, heartbeat, self-eval, or inter-agent-message"),
+                          prop("summary", "string", "1–3 sentence summary of what happened"),
+                          prop("changed", "string", "Files changed and what changed in each (omit if nothing changed)"),
+                          prop("notes", "string", "Additional context, findings, or decisions (optional)")),
+                    "mode", "summary"),
+
+            tool("read_log",
+                    "Read your own _log.md — past activity recorded by log_entry. " +
+                    "Returns recent entries newest-last. Use entries to limit how many to return.",
+                    props(prop("entries", "number", "Number of recent entries to return (omit for all)")),
+                    new String[]{}),
+
             tool("read_agent_channel",
                     "Read the message history between you and another agent (last 10 exchanges). " +
                     "Returns a chronological log of prior exchanges in this agent pair's private channel.",
@@ -249,30 +328,30 @@ public class ToolsRegistry {
                                   "(1) Who the agent is — their role, domain, and what they own. Be specific about why they exist and what they're accountable for. " +
                                   "(2) Workspace — the agent has a personal workspace accessible via agent_bash. " +
                                   "Instruct them to use it as institutional memory: build it up over time, update it as things change. " +
-                                  "_orientation.md is the entry point — the index of what files exist and the current operating picture. " +
+                                  "_memory.md is the entry point — the index of what files exist and the current operating picture. " +
                                   "On first use, create it. Before every session, read it. Keep it current as the workspace evolves. " +
                                   "Do not prescribe a framework or file structure — the agent should figure out what works through use and self-evaluation."),
                           prop("chat_instructions", "string",
                                   "Session-mode instructions — how the agent shows up when the user is present. " +
-                                  "Start with reading _orientation.md. " +
+                                  "Start with reading _memory.md. " +
                                   "Focus on interactive posture: how the agent engages, what it surfaces, how it drives things forward in its domain. " +
                                   "Keep it short — this is not a re-statement of identity."),
                           prop("post_session_instructions", "string",
                                   "Post-session workspace update. Omit if the agent has no persistent state. " +
-                                  "Should instruct the agent to: read _orientation.md first, update workspace to reflect current state " +
-                                  "(not a log — an accurate picture of where things stand), then append an entry to _session_log.md with today's date " +
-                                  "and a bullet list of which files were changed and what was updated in each. Log even if nothing changed."),
+                                  "Should instruct the agent to: read _memory.md first, update workspace to reflect current state " +
+                                  "(not a log — an accurate picture of where things stand), then call log_entry with mode post-session " +
+                                  "summarizing which files were changed and what was updated in each. Log even if nothing changed."),
                           prop("self_eval_instructions", "string",
                                   "Scheduled self-evaluation — runs independently on a 24h schedule. Omit if not needed. " +
-                                  "Should instruct the agent to: read _orientation.md, assess how well it's doing the job " +
+                                  "Should instruct the agent to: read _memory.md, assess how well it's doing the job " +
                                   "(is its picture complete? are the right things moving? what would a great specialist do differently?), " +
-                                  "fix what's off by updating the workspace, then append an entry to _self_eval_log.md with today's date " +
-                                  "and a bullet list of what was assessed and what was changed. Log even if nothing changed. " +
+                                  "fix what's off by updating the workspace, then call log_entry with mode self-eval " +
+                                  "summarizing what was assessed and what was changed. Log even if nothing changed. " +
                                   "This is the feedback loop — how the agent course-corrects over time without being told to."),
                           prop("heartbeat_instructions", "string",
                                   "Proactive wake-up prompt — runs on a schedule even without user input. Omit if not needed. " +
-                                  "Should instruct the agent to: read _orientation.md, check _schedule.md for any recurring tasks that are due and execute them, " +
-                                  "then scan the workspace for anything genuinely urgent, then append an entry to _heartbeat_log.md with what tasks ran and what changed. " +
+                                  "Should instruct the agent to: read _memory.md, call get_overdue_tasks and execute any due tasks via mark_task_complete, " +
+                                  "then scan the workspace for anything genuinely urgent, then call log_entry with mode heartbeat summarizing what tasks ran and what changed. " +
                                   "Only surface something to the user if it's actionable right now — otherwise stay silent."),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
                                   "description", "Tool names to expose to this agent in addition to agent_bash (always included automatically). " +

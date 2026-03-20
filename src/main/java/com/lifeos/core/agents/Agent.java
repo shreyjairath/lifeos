@@ -47,47 +47,8 @@ public class Agent extends BaseAgent {
     }
 
     @Override
-    protected String chatPrompt() {
-        if (def.chatPrompt() == null || def.chatPrompt().isEmpty()) return "";
-        return def.chatPrompt().stream()
-                .map(f -> PromptParts.load(def.promptBase(), f))
-                .collect(java.util.stream.Collectors.joining("\n\n"));
-    }
-
-    @Override
     protected List<Map<String, Object>> tools() {
-        return applyFilter(def.chatTools());
-    }
-
-    @Override
-    protected String postSessionPrompt() {
-        if (def.postSessionPrompt() == null || def.postSessionPrompt().isEmpty()) return null;
-        return def.postSessionPrompt().stream()
-                .map(f -> PromptParts.load(def.promptBase(), f))
-                .collect(java.util.stream.Collectors.joining("\n\n"));
-    }
-
-    @Override
-    protected List<Map<String, Object>> postSessionTools() {
-        return applyFilter(def.postSessionTools());
-    }
-
-    @Override
-    protected String heartbeatPrompt() {
-        if (def.heartbeatPrompt() == null) return null;
-        return PromptParts.load(def.promptBase(), def.heartbeatPrompt());
-    }
-
-    @Override
-    protected String selfEvalPrompt() {
-        if (def.selfEvalPrompt() == null) return null;
-        return PromptParts.load(def.promptBase(), def.selfEvalPrompt());
-    }
-
-    @Override
-    protected List<Map<String, Object>> messageTools() {
-        if (def.messageTools() == null) return postSessionTools();
-        return applyFilter(def.messageTools());
+        return applyFilter(def.tools());
     }
 
     // ── Private ───────────────────────────────────────────────────────────────

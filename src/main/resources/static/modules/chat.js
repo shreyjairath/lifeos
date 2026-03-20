@@ -1,5 +1,4 @@
 import { renderMarkdown } from "./utils.js";
-import { setPendingRequest, resolveWithResponse } from "./inspector.js";
 import * as Voice from "./voice.js";
 
 const messagesEl = document.getElementById("messages");
@@ -16,6 +15,7 @@ let currentAgentBubble = null;
 let currentAgentText = "";
 let currentMsgEl = null;
 let currentToolBlock = null;
+let currentAgentThreadEl = null;
 let historyIndex = 0;
 let _getSessionId = () => null;
 let _onRotate = (_newSessionId) => {};
@@ -163,6 +163,43 @@ function appendToolLine(block, name, input) {
   block.appendChild(line);
 }
 
+function createAgentThreadBlock(input) {
+  const thread = document.createElement("div");
+  thread.className = "agent-thread";
+
+  const header = document.createElement("div");
+  header.className = "agent-thread-header";
+  header.textContent = `→ ${input.agent}`;
+  thread.appendChild(header);
+
+  const outbound = document.createElement("div");
+  outbound.className = "agent-thread-msg outbound";
+  outbound.textContent = input.message ?? "";
+  thread.appendChild(outbound);
+
+  const inbound = document.createElement("div");
+  inbound.className = "agent-thread-msg inbound pending";
+  inbound.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+  thread.appendChild(inbound);
+
+  thread._inbound = inbound;
+  return thread;
+}
+
+function fillAgentThreadResponse(thread, result) {
+  const el = thread._inbound;
+  if (!el) return;
+  el.classList.remove("pending");
+  if (result?.response) {
+    el.innerHTML = renderMarkdown(result.response);
+  } else if (result?.error) {
+    el.textContent = `⚠ ${result.error}`;
+    el.classList.add("error");
+  } else {
+    el.textContent = JSON.stringify(result);
+  }
+}
+
 export async function loadHistory(sessionId) {
   try {
     const resp = await fetch(`/api/chat/${sessionId}`);
@@ -256,10 +293,6 @@ async function sendMessage(getSessionId) {
           el.innerHTML = `<span class="reflection-label">New session</span>Started a new session (${event.reason})`;
           messagesEl.appendChild(el);
           scrollToBottom();
-        } else if (event.type === "request_json") {
-          setPendingRequest(event.payload);
-        } else if (event.type === "response_json") {
-          resolveWithResponse(event.payload);
         } else if (event.type === "text") {
           removeTypingIndicator();
           currentToolBlock = null;
@@ -299,7 +332,11 @@ async function sendMessage(getSessionId) {
             currentMsgEl.appendChild(header);
             messagesEl.appendChild(currentMsgEl);
           }
-          if (!currentToolBlock) {
+          if (event.name === "message_agent") {
+            currentToolBlock = null;
+            currentAgentThreadEl = createAgentThreadBlock(event.input);
+            currentMsgEl.appendChild(currentAgentThreadEl);
+          } else if (!currentToolBlock) {
             currentToolBlock = addToolBlock(event.name, event.input);
             currentMsgEl.appendChild(currentToolBlock);
           } else {
@@ -336,6 +373,15 @@ async function sendMessage(getSessionId) {
           confirm.querySelector(".allow").addEventListener("click", () => respond(true));
           confirm.querySelector(".deny").addEventListener("click", () => respond(false));
         } else if (event.type === "tool_result") {
+          if (event.name === "message_agent" && currentAgentThreadEl) {
+            fillAgentThreadResponse(currentAgentThreadEl, event.result);
+            currentAgentThreadEl = null;
+            currentMsgEl = null;
+            currentToolBlock = null;
+            addTypingIndicator();
+            scrollToBottom();
+            continue;
+          }
           if (event.name === "show_image" && event.result?.ok) {
             if (!currentMsgEl) {
               currentMsgEl = document.createElement("div");
@@ -383,6 +429,7 @@ async function sendMessage(getSessionId) {
           currentAgentBubble = null;
           currentAgentText = "";
           currentToolBlock = null;
+          currentAgentThreadEl = null;
         } else if (event.type === "done") {
           removeTypingIndicator();
           const spokenText = currentAgentText;
@@ -390,6 +437,7 @@ async function sendMessage(getSessionId) {
           currentAgentBubble = null;
           currentAgentText = "";
           currentToolBlock = null;
+          currentAgentThreadEl = null;
           Voice.onAgentDone(spokenText);
           _onDone();
           fetch(`/api/chat/${sessionId}`)
@@ -414,6 +462,7 @@ export function reset(sessionId) {
   currentAgentText = "";
   currentMsgEl = null;
   currentToolBlock = null;
+  currentAgentThreadEl = null;
   messagesEl.innerHTML = "";
 }
 

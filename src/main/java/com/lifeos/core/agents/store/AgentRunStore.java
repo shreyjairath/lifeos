@@ -22,7 +22,7 @@ public class AgentRunStore {
 
     private static final Logger log = LoggerFactory.getLogger(AgentRunStore.class);
     private static final Path AGENTS_DIR = Path.of(".user-data/agents");
-    private static final int MAX_RESULT_CHARS = 2000;
+    private static final int MAX_RESULT_CHARS = 50_000;
     private static final int MAX_PROMPT_CHARS = 20_000;
     private static final int MAX_TOOL_INPUT_CHARS = 500;
     private static final int MAX_TOOL_RESULT_CHARS = 300;

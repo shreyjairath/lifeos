@@ -38,7 +38,7 @@ public class AgentTools {
         if (agent == null)
             return Map.of("error", "Agent '" + targetAgent + "' not found. Use list_agents to see available agents.");
         try {
-            var response = agent.message(fromAgent, message);
+            var response = agent.handleIncomingAgentMessage(fromAgent, message);
             return Map.of("agent", targetAgent, "response", response);
         } catch (Exception e) {
             return Map.of("error", "Failed to message agent '" + targetAgent + "': " + e.getMessage());

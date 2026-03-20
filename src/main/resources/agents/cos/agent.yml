@@ -3,17 +3,17 @@ title: Chief of Staff
 description: Your chief of staff — owns the big picture, manages the team of specialist agents, and drives things forward on your behalf.
 identity:
   - identity.md
-chat-prompt:
-  - chat.md
-post-session-prompt:
-  - post-session.md
-self-eval-prompt: self-eval.md
-heartbeat-prompt: heartbeat.md
-chat-tools:
+tools:
   mode: include
   names:
     # workspace
     - agent_bash
+    - log_entry
+    - read_log
+    - schedule_task
+    - get_scheduled_tasks
+    - get_overdue_tasks
+    - mark_task_complete
     # team
     - message_agent
     - read_agent_channel
@@ -26,31 +26,6 @@ chat-tools:
     - web_search
     - browse_page
     - show_image
-    # session history
-    - list_sessions
-    - read_session_summary
-    - read_session_transcript
-    # time & reminders
-    - get_current_datetime
-    - set_reminder
-    - list_reminders
-    - delete_reminder
-post-session-tools:
-  mode: include
-  names:
-    # workspace
-    - agent_bash
-    # team
-    - message_agent
-    - read_agent_channel
-    - list_agents
-    - list_tools
-    - read_agent_definition
-    - update_agent
-    - create_agent
-    # research
-    - web_search
-    - browse_page
     # session history
     - list_sessions
     - read_session_summary
