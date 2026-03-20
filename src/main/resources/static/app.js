@@ -2,6 +2,7 @@ import * as Chat from "./modules/chat.js";
 import * as CC from "./modules/cc.js";
 import * as Inspector from "./modules/inspector.js";
 import * as AgentDebug from "./modules/agent-debug.js";
+import * as AgentChannels from "./modules/agent-channels.js";
 import * as EventsPanel from "./modules/events-panel.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -215,14 +216,21 @@ const agentTabPanels = {
   runs:      document.getElementById("agents-runs-panel"),
   events:    document.getElementById("agents-events-panel"),
   inspector: document.getElementById("agents-inspector-panel"),
+  channels:  document.getElementById("agents-channels-panel"),
   cc:        document.getElementById("agents-cc-panel"),
 };
+
+let channelsInitialized = false;
 
 function switchMonitorTab(tab) {
   document.querySelectorAll(".monitor-nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   Object.values(agentTabPanels).forEach(p => p.classList.add("hidden"));
   agentTabPanels[tab].classList.remove("hidden");
   if (tab === "cc") document.getElementById("cc-input").focus();
+  if (tab === "channels" && !channelsInitialized) {
+    channelsInitialized = true;
+    AgentChannels.load();
+  }
 }
 
 function showAgentMonitor() {
