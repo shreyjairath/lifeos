@@ -26,16 +26,17 @@ async function setActiveAgent(name, title) {
     b.classList.toggle("active", b.dataset.agent === name));
   inputEl.placeholder = `Talk to ${title}…`;
 
-  // Restore this agent's last session, or open a new one
+  // Restore this agent's last session if it's still open, otherwise open a new one
   const saved = localStorage.getItem(sessionKey(name));
-  if (saved) {
+  const openIds = await loadSessions();
+  if (saved && openIds.has(saved)) {
     SESSION_ID = saved;
     Chat.reset(saved);
     await Chat.loadHistory(saved);
   } else {
+    localStorage.removeItem(sessionKey(name));
     await openNewChat();
   }
-  await loadSessions();
 }
 
 function makeAgentSessionList(name) {
@@ -123,13 +124,15 @@ const inputEl = document.getElementById("input");
 
 // ── Sessions sidebar ──────────────────────────────────────────────────────────
 async function loadSessions() {
+  const openIds = new Set();
   try {
     const resp = await fetch("/api/sessions");
     const data = await resp.json();
     // Clear all per-agent session lists
     document.querySelectorAll(".agent-session-list").forEach(ul => ul.innerHTML = "");
-    if (!data.sessions) return;
+    if (!data.sessions) return openIds;
     for (const s of data.sessions) {
+      openIds.add(s.id);
       const agent = s.agent || "cos";
       const listEl = document.getElementById(`sessions-${agent}`);
       if (!listEl) continue;
@@ -174,6 +177,7 @@ async function loadSessions() {
   } catch (e) {
     console.error("Failed to load sessions", e);
   }
+  return openIds;
 }
 
 // ── New chat ──────────────────────────────────────────────────────────────────
@@ -274,13 +278,13 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
     () => AGENT_TITLES[ACTIVE_AGENT] || ACTIVE_AGENT,
   );
   CC.init();
-  if (!SESSION_ID) {
+  const openIds = await loadSessions();
+  if (!SESSION_ID || !openIds.has(SESSION_ID)) {
     await openNewChat();
   } else {
     Chat.reset(SESSION_ID);
     await Chat.loadHistory(SESSION_ID);
   }
-  await loadSessions();
   await CC.loadHistory();
 
   // In-tab reminder listener — shows bubble when tab is open
