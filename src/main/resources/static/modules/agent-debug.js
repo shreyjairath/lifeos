@@ -280,7 +280,7 @@ function renderAgent(agent, initialRuns) {
   runsDiv.className = "debug-agent-runs";
 
   function render() {
-    const filtered = activeFilter === "all" ? runs : runs.filter(r => r.mode === activeFilter);
+    const filtered = activeFilter === "all" ? runs : runs.filter(r => r.mode === activeFilter || r.mode.startsWith(activeFilter + " "));
     const totalIn  = filtered.reduce((s, r) => s + (r.input_tokens  || 0), 0);
     const totalOut = filtered.reduce((s, r) => s + (r.output_tokens || 0), 0);
     const totalCost = filtered.reduce((s, r) => s + (calcCost(r) ?? 0), 0);
