@@ -217,13 +217,16 @@ async function sendMessage(getSessionId) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      // If the user switched to a different session, discard remaining stream
+      buffer += decoder.decode(value, { stream: true });
+      // If the user switched away, drain the stream silently so the backend can finish saving
       if (getSessionId() !== streamSessionId) {
-        reader.cancel();
+        while (true) {
+          const { done: d } = await reader.read();
+          if (d) break;
+        }
         setAgentRunning(false);
         return;
       }
-      buffer += decoder.decode(value, { stream: true });
 
       const lines = buffer.split("\n\n");
       buffer = lines.pop();
