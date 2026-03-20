@@ -1,10 +1,11 @@
 const container = document.getElementById("agent-debug-panel");
 
 const MODE_COLORS = {
-  "heartbeat":    "#6b9bd2",
-  "self-eval":    "#9b7fd4",
-  "post-session": "#5aa87a",
-  "message":      "#c8974a",
+  "heartbeat":           "#6b9bd2",
+  "self-eval":           "#9b7fd4",
+  "post-session":        "#5aa87a",
+  "inter-agent-message": "#c8974a",
+  "chat":                "#d4a857",
 };
 
 function modeColor(mode) {
@@ -20,11 +21,82 @@ function formatDuration(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatTs(epochMs) {
+function relativeTime(epochMs) {
+  const diffMs = Date.now() - epochMs;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
+}
+
+function absoluteTime(epochMs) {
   return new Date(epochMs).toLocaleString([], {
     month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit", second: "2-digit"
   });
+}
+
+function tsSpan(epochMs) {
+  const el = document.createElement("span");
+  el.className = "debug-ts";
+  el.textContent = relativeTime(epochMs);
+  el.title = absoluteTime(epochMs);
+  return el;
+}
+
+function renderToolCall(tc) {
+  const row = document.createElement("div");
+  row.className = "debug-tool-row";
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "debug-tool-name";
+  nameEl.textContent = tc.name;
+
+  let inputJson = "";
+  try { inputJson = JSON.stringify(tc.input || {}, null, 2); }
+  catch { inputJson = String(tc.input || ""); }
+
+  const inputToggle = document.createElement("span");
+  inputToggle.className = "debug-tool-input-toggle";
+  inputToggle.textContent = "▸ input";
+
+  const inputPre = document.createElement("pre");
+  inputPre.className = "debug-tool-input-pre hidden";
+  inputPre.textContent = inputJson;
+
+  inputToggle.addEventListener("click", e => {
+    e.stopPropagation();
+    inputPre.classList.toggle("hidden");
+    inputToggle.textContent = inputPre.classList.contains("hidden") ? "▸ input" : "▾ input";
+  });
+
+  row.appendChild(nameEl);
+  row.appendChild(inputToggle);
+  row.appendChild(inputPre);
+
+  if (tc.result_preview) {
+    const resultToggle = document.createElement("span");
+    resultToggle.className = "debug-tool-result-toggle";
+    resultToggle.textContent = "▸ result";
+
+    const resultPre = document.createElement("pre");
+    resultPre.className = "debug-tool-result-pre hidden";
+    resultPre.textContent = tc.result_preview;
+
+    resultToggle.addEventListener("click", e => {
+      e.stopPropagation();
+      resultPre.classList.toggle("hidden");
+      resultToggle.textContent = resultPre.classList.contains("hidden") ? "▸ result" : "▾ result";
+    });
+
+    row.appendChild(resultToggle);
+    row.appendChild(resultPre);
+  }
+
+  return row;
 }
 
 function renderRun(run) {
@@ -34,13 +106,29 @@ function renderRun(run) {
   const color = modeColor(run.mode);
   const header = document.createElement("div");
   header.className = "debug-run-header";
-  header.innerHTML = `
-    <span class="debug-mode-badge" style="background:${color}">${run.mode}</span>
-    <span class="debug-ts">${formatTs(run.started_at)}</span>
-    <span class="debug-duration">${formatDuration(run.duration_ms)}</span>
-    <span class="debug-preview">${escHtml(run.result || "no output")}</span>
-    <span class="debug-toggle">▸</span>
-  `;
+
+  const badge = document.createElement("span");
+  badge.className = "debug-mode-badge";
+  badge.style.background = color;
+  badge.textContent = run.mode;
+
+  const preview = document.createElement("span");
+  preview.className = "debug-preview";
+  preview.textContent = run.result || "no output";
+
+  const duration = document.createElement("span");
+  duration.className = "debug-duration";
+  duration.textContent = formatDuration(run.duration_ms);
+
+  const toggle = document.createElement("span");
+  toggle.className = "debug-toggle";
+  toggle.textContent = "▸";
+
+  header.appendChild(badge);
+  header.appendChild(tsSpan(run.started_at));
+  header.appendChild(duration);
+  header.appendChild(preview);
+  header.appendChild(toggle);
 
   const body = document.createElement("div");
   body.className = "debug-run-body hidden";
@@ -50,15 +138,16 @@ function renderRun(run) {
   promptSection.className = "debug-section";
   const promptToggle = document.createElement("div");
   promptToggle.className = "debug-section-toggle";
-  promptToggle.textContent = `▸ System prompt (${(run.prompt || "").length.toLocaleString()} chars)`;
+  const promptLen = (run.prompt || "").length.toLocaleString();
+  promptToggle.textContent = `▸ System prompt (${promptLen} chars)`;
   const promptContent = document.createElement("pre");
   promptContent.className = "debug-prompt hidden";
   promptContent.textContent = run.prompt || "(none)";
   promptToggle.addEventListener("click", () => {
     promptContent.classList.toggle("hidden");
     promptToggle.textContent = promptContent.classList.contains("hidden")
-      ? `▸ System prompt (${(run.prompt || "").length.toLocaleString()} chars)`
-      : `▾ System prompt (${(run.prompt || "").length.toLocaleString()} chars)`;
+      ? `▸ System prompt (${promptLen} chars)`
+      : `▾ System prompt (${promptLen} chars)`;
   });
   promptSection.appendChild(promptToggle);
   promptSection.appendChild(promptContent);
@@ -68,17 +157,11 @@ function renderRun(run) {
   toolSection.className = "debug-section";
   const calls = run.tool_calls || [];
   if (calls.length > 0) {
-    toolSection.innerHTML = `<div class="debug-section-label">Tool calls (${calls.length})</div>`;
-    calls.forEach(tc => {
-      const row = document.createElement("div");
-      row.className = "debug-tool-row";
-      row.innerHTML = `
-        <span class="debug-tool-name">${escHtml(tc.name)}</span>
-        <span class="debug-tool-input">${escHtml(JSON.stringify(tc.input || {}).slice(0, 200))}</span>
-        ${tc.result_preview ? `<span class="debug-tool-result">${escHtml(tc.result_preview)}</span>` : ""}
-      `;
-      toolSection.appendChild(row);
-    });
+    const label = document.createElement("div");
+    label.className = "debug-section-label";
+    label.textContent = `Tool calls (${calls.length})`;
+    toolSection.appendChild(label);
+    calls.forEach(tc => toolSection.appendChild(renderToolCall(tc)));
   } else {
     toolSection.innerHTML = `<div class="debug-section-label" style="color:#666">No tool calls</div>`;
   }
@@ -100,33 +183,112 @@ function renderRun(run) {
 
   header.addEventListener("click", () => {
     body.classList.toggle("hidden");
-    const toggle = header.querySelector(".debug-toggle");
     toggle.textContent = body.classList.contains("hidden") ? "▸" : "▾";
   });
 
   return card;
 }
 
-function renderAgent(agent, runs) {
+const ALL_MODES = ["chat", "post-session", "heartbeat", "self-eval", "inter-agent-message"];
+
+function renderAgent(agent, initialRuns) {
+  let runs = initialRuns;
+  let activeFilter = "all";
+  let limit = 20;
+
   const section = document.createElement("div");
   section.className = "debug-agent";
 
+  // Title bar + trigger buttons
   const titleBar = document.createElement("div");
   titleBar.className = "debug-agent-title";
   titleBar.innerHTML = `<span class="debug-agent-name">${escHtml(agent.name)}</span>
-    <span class="debug-agent-title-text">${escHtml(agent.title || "")}</span>
-    <span class="debug-run-count">${runs.length} run${runs.length !== 1 ? "s" : ""}</span>`;
+    <span class="debug-agent-title-text">${escHtml(agent.title || "")}</span>`;
+
+  const btnsDiv = document.createElement("div");
+  btnsDiv.className = "debug-trigger-btns";
+
+  for (const [label, eventType] of [["Heartbeat", "heartbeat_trigger"], ["Self-Eval", "self_eval_trigger"]]) {
+    const btn = document.createElement("button");
+    btn.className = "debug-trigger-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", async e => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = "…";
+      try {
+        await fetch(`/api/agents/trigger/${eventType}`, { method: "POST" });
+        btn.textContent = "✓";
+        setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
+      } catch {
+        btn.textContent = "✗";
+        setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
+      }
+    });
+    btnsDiv.appendChild(btn);
+  }
+  titleBar.appendChild(btnsDiv);
+
+  // Mode filter bar
+  const filterBar = document.createElement("div");
+  filterBar.className = "debug-filter-bar";
+
+  const runCount = document.createElement("span");
+  runCount.className = "debug-run-count";
 
   const runsDiv = document.createElement("div");
   runsDiv.className = "debug-agent-runs";
-  if (runs.length === 0) {
-    runsDiv.innerHTML = `<div class="debug-empty">No runs recorded yet.</div>`;
-  } else {
-    runs.forEach(run => runsDiv.appendChild(renderRun(run)));
+
+  function render() {
+    const filtered = activeFilter === "all" ? runs : runs.filter(r => r.mode === activeFilter);
+    runCount.textContent = `${filtered.length} run${filtered.length !== 1 ? "s" : ""}`;
+    runsDiv.innerHTML = "";
+    if (filtered.length === 0) {
+      runsDiv.innerHTML = `<div class="debug-empty">No ${activeFilter === "all" ? "" : activeFilter + " "}runs recorded.</div>`;
+    } else {
+      filtered.forEach(run => runsDiv.appendChild(renderRun(run)));
+    }
   }
 
+  for (const mode of ["all", ...ALL_MODES]) {
+    const btn = document.createElement("button");
+    btn.className = "debug-filter-btn" + (mode === "all" ? " active" : "");
+    btn.textContent = mode;
+    btn.dataset.mode = mode;
+    btn.addEventListener("click", () => {
+      filterBar.querySelectorAll(".debug-filter-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeFilter = mode;
+      render();
+    });
+    filterBar.appendChild(btn);
+  }
+  filterBar.appendChild(runCount);
+
+  // Load more button
+  const loadMore = document.createElement("button");
+  loadMore.className = "debug-load-more";
+  loadMore.textContent = "Load more";
+  loadMore.addEventListener("click", async () => {
+    limit += 20;
+    loadMore.disabled = true;
+    loadMore.textContent = "Loading…";
+    try {
+      runs = await fetch(`/api/agents/${agent.name}/runs?limit=${limit}`).then(r => r.json());
+      render();
+    } catch (err) {
+      // ignore
+    }
+    loadMore.textContent = "Load more";
+    loadMore.disabled = false;
+  });
+
+  render();
+
   section.appendChild(titleBar);
+  section.appendChild(filterBar);
   section.appendChild(runsDiv);
+  section.appendChild(loadMore);
   return section;
 }
 
