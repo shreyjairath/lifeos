@@ -36,20 +36,29 @@ public class AgentRunStore {
         public final String id = UUID.randomUUID().toString();
         public String agent;
         public String mode;
+        public String model;
         public long startedAt;
         public long endedAt;
         public long durationMs;
+        public int inputTokens;
+        public int outputTokens;
         public String prompt;
         public final List<Map<String, Object>> toolCalls = new ArrayList<>();
         public String result;
 
-        public RunRecord(String agent, String mode, String prompt) {
+        public RunRecord(String agent, String mode, String prompt, String model) {
             this.agent = agent;
             this.mode = mode;
+            this.model = model;
             this.prompt = prompt != null && prompt.length() > MAX_PROMPT_CHARS
                     ? prompt.substring(0, MAX_PROMPT_CHARS) + "…"
                     : prompt;
             this.startedAt = System.currentTimeMillis();
+        }
+
+        public void addTokens(int input, int output) {
+            this.inputTokens += input;
+            this.outputTokens += output;
         }
 
         public void addToolCall(String name, Map<String, Object> input, Map<String, Object> result) {
@@ -140,9 +149,12 @@ public class AgentRunStore {
         m.put("id", r.id);
         m.put("agent", r.agent);
         m.put("mode", r.mode);
+        m.put("model", r.model);
         m.put("started_at", r.startedAt);
         m.put("ended_at", r.endedAt);
         m.put("duration_ms", r.durationMs);
+        m.put("input_tokens", r.inputTokens);
+        m.put("output_tokens", r.outputTokens);
         m.put("prompt", r.prompt);
         m.put("tool_calls", r.toolCalls);
         m.put("result", r.result);

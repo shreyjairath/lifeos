@@ -130,6 +130,11 @@ public abstract class BaseAgent {
         // If the stream is cancelled between the two, the orphaned tool_use is never written to disk.
         var pendingToolUse = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
 
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "chat", prompt, config.model());
+        eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "chat"));
+
+        var resultAccum = new StringBuilder();
+
         return executor.runLoop(sessionId, messages, prompt, config.model(), tools(), agentName())
                 .doOnNext(event -> {
                     if (event instanceof AgentAppendEvent ae) {
@@ -140,10 +145,26 @@ public abstract class BaseAgent {
                             var pending = pendingToolUse.getAndSet(null);
                             if (pending != null) session.appendMessage(sessionId, pending);
                             session.appendMessage(sessionId, msg);
+                            // Accumulate text for run record result
+                            if ("assistant".equals(ae.role()) && ae.content() != null) {
+                                ae.content().stream()
+                                        .filter(b -> "text".equals(b.get("type")))
+                                        .map(b -> (String) b.get("text"))
+                                        .forEach(resultAccum::append);
+                            }
                         }
                     } else if (event instanceof LlmEvent.Response resp) {
                         session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
+                        runRecord.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
+                    } else if (event instanceof ToolEvent.Result tr) {
+                        runRecord.addToolCall(tr.name(), null, tr.result());
                     }
+                })
+                .doFinally(signal -> {
+                    runRecord.finish(resultAccum.toString());
+                    agentRunStore.save(runRecord);
+                    eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "chat",
+                            "duration_ms", runRecord.durationMs, "result_preview", resultPreview(runRecord.result)));
                 });
     }
 
@@ -176,7 +197,7 @@ public abstract class BaseAgent {
                 Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
 
-        var runRecord = new AgentRunStore.RunRecord(agentName(), "inter-agent-message (from: " + fromAgent + ")", prompt);
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "inter-agent-message (from: " + fromAgent + ")", prompt, config.model());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "inter-agent-message", "from", fromAgent));
 
         try {
@@ -184,6 +205,8 @@ public abstract class BaseAgent {
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
+                        else if (event instanceof LlmEvent.Response resp)
+                            runRecord.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
                     })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
@@ -246,7 +269,7 @@ public abstract class BaseAgent {
         var id = identity();
         prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("post-session");
 
-        var runRecord = new AgentRunStore.RunRecord(agentName(), "post-session", prompt);
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "post-session", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "post-session"));
 
         try {
@@ -255,6 +278,8 @@ public abstract class BaseAgent {
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
+                        else if (event instanceof LlmEvent.Response resp)
+                            runRecord.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
                     })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
@@ -371,7 +396,7 @@ public abstract class BaseAgent {
         var id = identity();
         prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("heartbeat");
 
-        var runRecord = new AgentRunStore.RunRecord(agentName(), "heartbeat", prompt);
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "heartbeat", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "heartbeat"));
 
         try {
@@ -380,6 +405,8 @@ public abstract class BaseAgent {
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
+                        else if (event instanceof LlmEvent.Response resp)
+                            runRecord.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
                     })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)
@@ -425,7 +452,7 @@ public abstract class BaseAgent {
         var id = identity();
         prompt = (id.isBlank() ? "" : id + "\n\n") + prompt.strip() + "\n\n" + modesSection("self-eval");
 
-        var runRecord = new AgentRunStore.RunRecord(agentName(), "self-eval", prompt);
+        var runRecord = new AgentRunStore.RunRecord(agentName(), "self-eval", prompt, reflectModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "self-eval"));
 
         try {
@@ -434,6 +461,8 @@ public abstract class BaseAgent {
                     .doOnNext(event -> {
                         if (event instanceof ToolEvent.Result tr)
                             runRecord.addToolCall(tr.name(), null, tr.result());
+                        else if (event instanceof LlmEvent.Response resp)
+                            runRecord.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
                     })
                     .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                     .cast(AgentAppendEvent.class)

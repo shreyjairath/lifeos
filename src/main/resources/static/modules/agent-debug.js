@@ -1,5 +1,31 @@
 const container = document.getElementById("agent-debug-panel");
 
+const PRICING = {
+  "claude-sonnet-4-6":        { input: 3.00,  output: 15.00 },
+  "claude-opus-4-6":          { input: 15.00, output: 75.00 },
+  "claude-haiku-4-5-20251001": { input: 0.80,  output: 4.00 },
+  "claude-haiku-4-5":         { input: 0.80,  output: 4.00 },
+};
+
+function calcCost(run) {
+  if (!run.input_tokens && !run.output_tokens) return null;
+  const p = PRICING[run.model] ?? PRICING["claude-sonnet-4-6"];
+  return (run.input_tokens / 1_000_000) * p.input
+       + (run.output_tokens / 1_000_000) * p.output;
+}
+
+function fmtTokens(n) {
+  if (!n) return "0";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function fmtCost(dollars) {
+  if (dollars === null) return "";
+  if (dollars < 0.0001) return "<$0.0001";
+  if (dollars < 0.01) return `$${dollars.toFixed(4)}`;
+  return `$${dollars.toFixed(3)}`;
+}
+
 const MODE_COLORS = {
   "heartbeat":           "#6b9bd2",
   "self-eval":           "#9b7fd4",
@@ -127,6 +153,20 @@ function renderRun(run) {
   header.appendChild(badge);
   header.appendChild(tsSpan(run.started_at));
   header.appendChild(duration);
+
+  const cost = calcCost(run);
+  if (cost !== null) {
+    const tokEl = document.createElement("span");
+    tokEl.className = "debug-tokens";
+    tokEl.textContent = `${fmtTokens(run.input_tokens)}↑ ${fmtTokens(run.output_tokens)}↓`;
+    tokEl.title = `${run.input_tokens?.toLocaleString()} input / ${run.output_tokens?.toLocaleString()} output`;
+    const costEl = document.createElement("span");
+    costEl.className = "debug-cost";
+    costEl.textContent = fmtCost(cost);
+    header.appendChild(tokEl);
+    header.appendChild(costEl);
+  }
+
   header.appendChild(preview);
   header.appendChild(toggle);
 
@@ -241,7 +281,13 @@ function renderAgent(agent, initialRuns) {
 
   function render() {
     const filtered = activeFilter === "all" ? runs : runs.filter(r => r.mode === activeFilter);
-    runCount.textContent = `${filtered.length} run${filtered.length !== 1 ? "s" : ""}`;
+    const totalIn  = filtered.reduce((s, r) => s + (r.input_tokens  || 0), 0);
+    const totalOut = filtered.reduce((s, r) => s + (r.output_tokens || 0), 0);
+    const totalCost = filtered.reduce((s, r) => s + (calcCost(r) ?? 0), 0);
+    const hasTokens = totalIn > 0 || totalOut > 0;
+    runCount.textContent = hasTokens
+      ? `${filtered.length} run${filtered.length !== 1 ? "s" : ""} · ${fmtTokens(totalIn)}↑ ${fmtTokens(totalOut)}↓ · ${fmtCost(totalCost)}`
+      : `${filtered.length} run${filtered.length !== 1 ? "s" : ""}`;
     runsDiv.innerHTML = "";
     if (filtered.length === 0) {
       runsDiv.innerHTML = `<div class="debug-empty">No ${activeFilter === "all" ? "" : activeFilter + " "}runs recorded.</div>`;

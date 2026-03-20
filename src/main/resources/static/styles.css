@@ -821,6 +821,21 @@ figure.inline-image figcaption {
   flex-shrink: 0;
 }
 
+.debug-tokens {
+  color: var(--muted);
+  font-size: 10px;
+  font-family: monospace;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.debug-cost {
+  color: #7ab87a;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .debug-run-body {
   padding: 6px 8px 8px 16px;
 }
