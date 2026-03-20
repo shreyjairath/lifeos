@@ -195,6 +195,9 @@ async function sendMessage(getSessionId) {
   historyIndex += 1;
   addTypingIndicator();
 
+  // Capture the session this request belongs to; bail if the user switches away mid-stream
+  const streamSessionId = sessionId;
+
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
@@ -214,6 +217,12 @@ async function sendMessage(getSessionId) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // If the user switched to a different session, discard remaining stream
+      if (getSessionId() !== streamSessionId) {
+        reader.cancel();
+        setAgentRunning(false);
+        return;
+      }
       buffer += decoder.decode(value, { stream: true });
 
       const lines = buffer.split("\n\n");
