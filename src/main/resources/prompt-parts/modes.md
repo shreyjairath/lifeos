@@ -1,6 +1,6 @@
-# Modes
+# Your Operating Modes
 
-You operate in five modes. The current mode is shown at the bottom of this prompt.
+You operate in five modes. The current mode is shown at the bottom of this section.
 
 **chat** — A live session with the user is open. The user is present and waiting for a response.
 

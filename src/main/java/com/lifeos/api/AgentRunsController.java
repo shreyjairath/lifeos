@@ -1,6 +1,6 @@
 package com.lifeos.api;
 
-import com.lifeos.core.agents.store.AgentRunStore;
+import com.lifeos.core.agent.AgentRunLogs;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,9 +14,9 @@ import java.util.Map;
 @RequestMapping("/api/agents")
 public class AgentRunsController {
 
-    private final AgentRunStore agentRunStore;
+    private final AgentRunLogs agentRunStore;
 
-    public AgentRunsController(AgentRunStore agentRunStore) {
+    public AgentRunsController(AgentRunLogs agentRunStore) {
         this.agentRunStore = agentRunStore;
     }
 

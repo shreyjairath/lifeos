@@ -24,7 +24,6 @@ import java.util.stream.Stream;
  *       messages.json       ← Anthropic message array
  *       summary.md          ← written at rotation time
  */
-@Component
 public class SessionStore {
 
     private static final Path ROOT = Path.of(System.getProperty("user.dir"))

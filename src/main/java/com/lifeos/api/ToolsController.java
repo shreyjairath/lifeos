@@ -1,6 +1,6 @@
 package com.lifeos.api;
 
-import com.lifeos.core.agents.tools.ToolsRegistry;
+import com.lifeos.core.managers.tools.ToolsRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;

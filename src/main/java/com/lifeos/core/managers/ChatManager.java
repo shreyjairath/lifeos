@@ -5,11 +5,11 @@ import com.lifeos.core.helpers.Hooks;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lifeos.core.agents.AgentRegistry;
-import com.lifeos.core.agents.executor.Cancellation;
-import com.lifeos.core.agents.executor.events.ExecutorEvent;
-import com.lifeos.core.agents.executor.events.LlmEvent;
-import com.lifeos.core.agents.executor.events.ToolEvent;
+import com.lifeos.core.managers.AgentRegistry;
+import com.lifeos.core.agent.SessionHandler;
+import com.lifeos.core.executor.events.ExecutorEvent;
+import com.lifeos.core.executor.events.LlmEvent;
+import com.lifeos.core.executor.events.ToolEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
@@ -29,17 +29,16 @@ public class ChatManager {
     private static final Logger log = LoggerFactory.getLogger(ChatManager.class);
 
     private final AgentRegistry agentRegistry;
-    private final SessionManager session;
-    private final Cancellation cancellation;
     private final Hooks hooks;
     private final EventBus eventBus;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ChatManager(AgentRegistry agentRegistry,
-                       SessionManager session, Cancellation cancellation, Hooks hooks, EventBus eventBus) {
+    public ChatManager(
+        AgentRegistry agentRegistry,
+        Hooks hooks, 
+        EventBus eventBus
+    ) {
         this.agentRegistry = agentRegistry;
-        this.session = session;
-        this.cancellation = cancellation;
         this.hooks = hooks;
         this.eventBus = eventBus;
     }
@@ -58,14 +57,15 @@ public class ChatManager {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    private Flux<ServerSentEvent<String>> handleInner(String sessionId, String message, String agent) {
-        var rotation = session.checkRotation(sessionId);
+    private Flux<ServerSentEvent<String>> handleInner(String sessionId, String message, String agentName) {
+        var agent = agentRegistry.get(agentName);
+        var rotation = agent.getSessionHandler().checkRotation(sessionId);
         if (!rotation.shouldRotate()) {
-            return runAgent(sessionId, message, agent);
+            return runAgent(sessionId, message, agentName);
         }
 
         hooks.fire("on_reflection_done", Map.of("session_id", sessionId));
-        var newSessionId = session.rotate(sessionId); // emits session_closed internally
+        var newSessionId = agent.getSessionHandler().rotate(sessionId); // emits session_closed internally
         hooks.fire("on_session_rotate", Map.of(
                 "old_session_id", sessionId,
                 "new_session_id", newSessionId,
@@ -74,18 +74,16 @@ public class ChatManager {
         return Flux.concat(
                 Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason()))),
                 Flux.just(sse(Map.of("type", "session_rotated", "session_id", newSessionId, "reason", rotation.reason()))),
-                runAgent(newSessionId, message, agent));
+                runAgent(newSessionId, message, agentName));
     }
 
-    private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message, String agent) {
+    private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message, String agentName) {
         hooks.fire("on_agent_start", Map.of("session_id", sessionId, "user_message", message));
 
+        var agent = agentRegistry.get(agentName);
         var stopped = new AtomicBoolean(false);
-        var meta = session.getSessionMeta(sessionId);
-        var resolvedAgent = (String) meta.getOrDefault("agent", agent != null ? agent : "cos");
-        var activeAgent = agentRegistry.get(resolvedAgent);
-
-        return activeAgent.chat(sessionId, message)
+        
+        return agent.handleUserMessage(sessionId, message)
                 .doOnNext(event -> {
                     if (event instanceof LlmEvent.Response resp) {
                         hooks.fire("on_llm_response", Map.of(
@@ -99,7 +97,7 @@ public class ChatManager {
                 })
                 .mapNotNull(this::toSse)
                 .concatWith(Flux.defer(() -> {
-                    var wasStopped = stopped.get() || cancellation.isCancelled(sessionId);
+                    var wasStopped = stopped.get();
                     hooks.fire("on_agent_done", Map.of("session_id", sessionId, "stopped", wasStopped));
                     return Flux.just(sse(Map.of("type", wasStopped ? "stopped" : "done")));
                 }));

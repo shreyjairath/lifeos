@@ -73,57 +73,73 @@ function tsSpan(epochMs) {
   return el;
 }
 
-function renderToolCall(tc) {
-  const row = document.createElement("div");
-  row.className = "debug-tool-row";
-
-  const nameEl = document.createElement("span");
-  nameEl.className = "debug-tool-name";
-  nameEl.textContent = tc.name;
-
-  let inputJson = "";
-  try { inputJson = JSON.stringify(tc.input || {}, null, 2); }
-  catch { inputJson = String(tc.input || ""); }
-
-  const inputToggle = document.createElement("span");
-  inputToggle.className = "debug-tool-input-toggle";
-  inputToggle.textContent = "▸ input";
-
-  const inputPre = document.createElement("pre");
-  inputPre.className = "debug-tool-input-pre hidden";
-  inputPre.textContent = inputJson;
-
-  inputToggle.addEventListener("click", e => {
+function makeTogglePre(labelOpen, labelClose, content) {
+  const toggle = document.createElement("span");
+  toggle.className = "debug-tool-input-toggle";
+  toggle.textContent = labelOpen;
+  const pre = document.createElement("pre");
+  pre.className = "debug-tool-input-pre hidden";
+  pre.textContent = content;
+  toggle.addEventListener("click", e => {
     e.stopPropagation();
-    inputPre.classList.toggle("hidden");
-    inputToggle.textContent = inputPre.classList.contains("hidden") ? "▸ input" : "▾ input";
+    pre.classList.toggle("hidden");
+    toggle.textContent = pre.classList.contains("hidden") ? labelOpen : labelClose;
   });
-
-  row.appendChild(nameEl);
-  row.appendChild(inputToggle);
-  row.appendChild(inputPre);
-
-  if (tc.result_preview) {
-    const resultToggle = document.createElement("span");
-    resultToggle.className = "debug-tool-result-toggle";
-    resultToggle.textContent = "▸ result";
-
-    const resultPre = document.createElement("pre");
-    resultPre.className = "debug-tool-result-pre hidden";
-    resultPre.textContent = tc.result_preview;
-
-    resultToggle.addEventListener("click", e => {
-      e.stopPropagation();
-      resultPre.classList.toggle("hidden");
-      resultToggle.textContent = resultPre.classList.contains("hidden") ? "▸ result" : "▾ result";
-    });
-
-    row.appendChild(resultToggle);
-    row.appendChild(resultPre);
-  }
-
-  return row;
+  return [toggle, pre];
 }
+
+function renderTurns(turns) {
+  const wrap = document.createElement("div");
+  wrap.className = "debug-turns";
+  for (const turn of turns) {
+    const turnEl = document.createElement("div");
+    turnEl.className = `debug-turn debug-turn-${turn.role}`;
+    const label = document.createElement("span");
+    label.className = "debug-turn-label";
+    const isToolResults = turn.role !== "assistant" && Array.isArray(turn.content)
+      && turn.content.some(b => b?.type === "tool_result");
+    label.textContent = turn.role === "assistant" ? "assistant" : isToolResults ? "tool results" : "user";
+    turnEl.appendChild(label);
+    if (typeof turn.content === "string") {
+      const p = document.createElement("div");
+      p.className = "debug-turn-text";
+      p.textContent = turn.content;
+      turnEl.appendChild(p);
+      wrap.appendChild(turnEl);
+      continue;
+    }
+    for (const block of (turn.content || [])) {
+      if (block.type === "text" && block.text) {
+        const p = document.createElement("div");
+        p.className = "debug-turn-text";
+        p.textContent = block.text;
+        turnEl.appendChild(p);
+      } else if (block.type === "tool_use") {
+        const row = document.createElement("div");
+        row.className = "debug-tool-row";
+        const name = document.createElement("span");
+        name.className = "debug-tool-name";
+        name.textContent = block.name;
+        row.appendChild(name);
+        let inputJson = "";
+        try { inputJson = JSON.stringify(block.input || {}, null, 2); } catch { inputJson = String(block.input || ""); }
+        const [t, p] = makeTogglePre("▸ input", "▾ input", inputJson);
+        row.appendChild(t); row.appendChild(p);
+        turnEl.appendChild(row);
+      } else if (block.type === "tool_result") {
+        const row = document.createElement("div");
+        row.className = "debug-tool-row";
+        const content = typeof block.content === "string" ? block.content : JSON.stringify(block.content || "", null, 2);
+        const [t, p] = makeTogglePre("▸ result", "▾ result", content);
+        row.appendChild(t); row.appendChild(p);
+        turnEl.appendChild(row);
+      }
+    }
+    wrap.appendChild(turnEl);
+  }
+  return wrap;
+}
+
 
 function renderRun(run) {
   const card = document.createElement("div");
@@ -192,32 +208,64 @@ function renderRun(run) {
   promptSection.appendChild(promptToggle);
   promptSection.appendChild(promptContent);
 
-  // Tool calls
+  // Turns / tool calls
   const toolSection = document.createElement("div");
   toolSection.className = "debug-section";
-  const calls = run.tool_calls || [];
-  if (calls.length > 0) {
+  if (run.turns && run.turns.length > 0) {
     const label = document.createElement("div");
     label.className = "debug-section-label";
-    label.textContent = `Tool calls (${calls.length})`;
+    label.textContent = `Transcript (${run.turns.length} turns)`;
     toolSection.appendChild(label);
-    calls.forEach(tc => toolSection.appendChild(renderToolCall(tc)));
+    toolSection.appendChild(renderTurns(run.turns));
   } else {
-    toolSection.innerHTML = `<div class="debug-section-label" style="color:#666">No tool calls</div>`;
+    toolSection.innerHTML = `<div class="debug-section-label" style="color:#666">No transcript</div>`;
   }
 
-  // Full result
-  const resultSection = document.createElement("div");
-  resultSection.className = "debug-section";
-  resultSection.innerHTML = `<div class="debug-section-label">Result</div>`;
-  const resultPre = document.createElement("pre");
-  resultPre.className = "debug-result";
-  resultPre.textContent = run.result || "(no output)";
-  resultSection.appendChild(resultPre);
-
   body.appendChild(promptSection);
+
+  // Tools
+  if (run.tool_names && run.tool_names.length > 0) {
+    const toolNamesSection = document.createElement("div");
+    toolNamesSection.className = "debug-section";
+    const toolNamesToggle = document.createElement("div");
+    toolNamesToggle.className = "debug-section-toggle";
+    toolNamesToggle.textContent = `▸ Tools (${run.tool_names.length})`;
+    const toolNamesList = document.createElement("div");
+    toolNamesList.className = "debug-tool-names hidden";
+    toolNamesList.textContent = run.tool_names.join(", ");
+    toolNamesToggle.addEventListener("click", () => {
+      toolNamesList.classList.toggle("hidden");
+      toolNamesToggle.textContent = toolNamesList.classList.contains("hidden")
+        ? `▸ Tools (${run.tool_names.length})`
+        : `▾ Tools (${run.tool_names.length})`;
+    });
+    toolNamesSection.appendChild(toolNamesToggle);
+    toolNamesSection.appendChild(toolNamesList);
+    body.appendChild(toolNamesSection);
+  }
+
+  // Message history
+  if (run.initial_messages && run.initial_messages.length > 0) {
+    const histSection = document.createElement("div");
+    histSection.className = "debug-section";
+    const histToggle = document.createElement("div");
+    histToggle.className = "debug-section-toggle";
+    histToggle.textContent = `▸ Message history (${run.initial_messages.length} messages)`;
+    const histContent = document.createElement("div");
+    histContent.className = "hidden";
+    histContent.appendChild(renderTurns(run.initial_messages));
+    histToggle.addEventListener("click", () => {
+      histContent.classList.toggle("hidden");
+      histToggle.textContent = histContent.classList.contains("hidden")
+        ? `▸ Message history (${run.initial_messages.length} messages)`
+        : `▾ Message history (${run.initial_messages.length} messages)`;
+    });
+    histSection.appendChild(histToggle);
+    histSection.appendChild(histContent);
+    body.appendChild(histSection);
+  }
+
   body.appendChild(toolSection);
-  body.appendChild(resultSection);
   card.appendChild(header);
   card.appendChild(body);
 

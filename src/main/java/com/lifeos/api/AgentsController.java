@@ -1,6 +1,6 @@
 package com.lifeos.api;
 
-import com.lifeos.core.agents.AgentRegistry;
+import com.lifeos.core.managers.AgentRegistry;
 import com.lifeos.core.helpers.EventBus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

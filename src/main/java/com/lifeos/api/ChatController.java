@@ -1,10 +1,10 @@
 package com.lifeos.api;
 
 import com.lifeos.api.dto.ChatRequest;
+import com.lifeos.core.managers.AgentRegistry;
 import com.lifeos.core.managers.ChatManager;
-import com.lifeos.core.managers.SessionManager;
-import com.lifeos.core.agents.executor.Cancellation;
-import com.lifeos.core.agents.executor.Confirmations;
+import com.lifeos.core.agent.SessionHandler;
+import com.lifeos.core.executor.Confirmations;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -17,15 +17,15 @@ import java.util.Map;
 public class ChatController {
 
     private final ChatManager chatManager;
-    private final SessionManager session;
-    private final Cancellation cancellation;
+    private final AgentRegistry agentRegistry;
     private final Confirmations confirmations;
 
-    public ChatController(ChatManager chatManager, SessionManager session,
-                          Cancellation cancellation, Confirmations confirmations) {
+    public ChatController(ChatManager chatManager,
+        AgentRegistry agentRegistry, 
+        Confirmations confirmations
+    ) {
         this.chatManager = chatManager;
-        this.session = session;
-        this.cancellation = cancellation;
+        this.agentRegistry = agentRegistry;
         this.confirmations = confirmations;
     }
 
@@ -34,29 +34,39 @@ public class ChatController {
         return chatManager.handleMessage(request.sessionId(), request.message(), request.agent());
     }
 
-    @GetMapping("/chat/{sessionId}")
-    public Map<String, Object> getChatHistory(@PathVariable String sessionId) {
-        return session.getDisplayHistory(sessionId);
+    @GetMapping("/chat/{agentName}/{sessionId}")
+    public Map<String, Object> getChatHistory(
+        @PathVariable String agentName,
+        @PathVariable String sessionId
+    ) {
+        return agentRegistry.get(agentName).getSessionHandler().getDisplayHistory(sessionId);
     }
 
-    @DeleteMapping("/chat/{sessionId}")
-    public Map<String, String> clearChat(@PathVariable String sessionId) {
-        session.clearSession(sessionId);
+    @DeleteMapping("/chat/{agentName}/{sessionId}")
+    public Map<String, String> clearChat(
+        @PathVariable String agentName,
+        @PathVariable String sessionId
+    ) {
+        agentRegistry.get(agentName).getSessionHandler().clearSession(sessionId);
         return Map.of("cleared", sessionId);
     }
 
-    @PostMapping("/chat/{sessionId}/truncate")
+    @PostMapping("/chat/{agentName}/{sessionId}/truncate")
     public Map<String, Object> truncateChat(
-            @PathVariable String sessionId,
-            @RequestBody Map<String, Integer> body
+        @PathVariable String agentName,
+        @PathVariable String sessionId,
+        @RequestBody Map<String, Integer> body
     ) {
-        int remaining = session.truncateSession(sessionId, body.getOrDefault("index", 0));
+        int remaining = agentRegistry.get(agentName).getSessionHandler().truncateSession(sessionId, body.getOrDefault("index", 0));
         return Map.of("session_id", sessionId, "remaining", remaining);
     }
 
-    @PostMapping("/chat/{sessionId}/stop")
-    public Map<String, Boolean> stop(@PathVariable String sessionId) {
-        cancellation.cancel(sessionId);
+    @PostMapping("/chat/{agentName}/{sessionId}/stop")
+    public Map<String, Boolean> stop(
+        @PathVariable String agentName,
+        @PathVariable String sessionId
+    ) {
+        agentRegistry.get(agentName).cancel(sessionId);
         return Map.of("ok", true);
     }
 

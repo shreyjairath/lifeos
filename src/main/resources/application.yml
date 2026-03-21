@@ -15,17 +15,14 @@ spring:
 
 lifeos:
   model: claude-sonnet-4-6
-  reflect-model: claude-sonnet-4-6
+  background-model: claude-sonnet-4-6
   anthropic-api-key: ${ANTHROPIC_API_KEY}
-  paths:
-    environment: .user-data/environment
-    user: .user-data/user
   session:
     token-threshold: 50000
     time-threshold-hours: 4
   session-expiry-check:
-    interval-ms: 14400000  # 4 hours
+    cron: "0 0 * * * *"      # top of every hour
   heartbeat:
-    interval-ms: 21600000  # 6 hours
+    cron: "0 0 */6 * * *"    # midnight, 6am, noon, 6pm
   self-eval:
-    interval-ms: 43200000  # 12 hours
+    cron: "0 0 5 * * *"      # 5am daily

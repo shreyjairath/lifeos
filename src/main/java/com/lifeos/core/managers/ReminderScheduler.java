@@ -1,7 +1,7 @@
 package com.lifeos.core.managers;
 
 import com.lifeos.core.helpers.EventBus;
-import com.lifeos.core.agents.tools.Reminders;
+import com.lifeos.core.managers.tools.Reminders;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 

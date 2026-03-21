@@ -29,7 +29,7 @@ function scrollToBottom() {
 
 async function rewindTo(msgEl, fromIndex) {
   const sessionId = _getSessionId();
-  await fetch(`/api/chat/${sessionId}/truncate`, {
+  await fetch(`/api/chat/cos/${sessionId}/truncate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ index: fromIndex }),
@@ -202,7 +202,7 @@ function fillAgentThreadResponse(thread, result) {
 
 export async function loadHistory(sessionId) {
   try {
-    const resp = await fetch(`/api/chat/${sessionId}`);
+    const resp = await fetch(`/api/chat/cos/${sessionId}`);
     if (!resp.ok) return;
     const data = await resp.json();
     for (const msg of data.messages ?? []) {
@@ -440,7 +440,7 @@ async function sendMessage(getSessionId) {
           currentAgentThreadEl = null;
           Voice.onAgentDone(spokenText);
           _onDone();
-          fetch(`/api/chat/${sessionId}`)
+          fetch(`/api/chat/cos/${sessionId}`)
             .then(r => r.json())
             .then(d => { historyIndex = d.total ?? historyIndex; })
             .catch(() => {});
@@ -491,7 +491,7 @@ export function init(getSessionId, onRotate, getAgent, onDone, getAgentTitle) {
     stopBtn.addEventListener("click", () => {
       const sessionId = getSessionId();
       if (sessionId) {
-        fetch(`/api/chat/${sessionId}/stop`, { method: "POST" });
+        fetch(`/api/chat/cos/${sessionId}/stop`, { method: "POST" });
       }
     });
   }

@@ -5,16 +5,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "lifeos")
 public record AppConfig(
     String model,
-    String reflectModel,
+    String backgroundModel,
     String anthropicApiKey,
-    Paths paths,
     Session session
 ) {
-    public record Paths(
-        String environment,
-        String user
-    ) {}
-
     public record Session(
         int tokenThreshold,
         int timeThresholdHours

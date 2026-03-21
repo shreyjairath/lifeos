@@ -783,6 +783,44 @@ figure.inline-image figcaption {
   display: none;
 }
 
+.debug-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debug-turn {
+  border-radius: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+}
+
+.debug-turn-assistant {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+
+.debug-turn-user {
+  background: var(--bg);
+}
+
+.debug-turn-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.debug-turn-text {
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 4px;
+}
+
 .debug-tool-row {
   display: flex;
   flex-direction: column;
@@ -801,16 +839,11 @@ figure.inline-image figcaption {
 }
 
 
-.debug-result {
+.debug-tool-names {
+  padding: 6px 8px;
   font-size: 11px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  padding: 8px;
-  border-radius: 3px;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
+  color: #aaa;
+  line-height: 1.7;
   word-break: break-word;
 }
 

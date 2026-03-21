@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * Emits a `heartbeat_trigger` event on a fixed schedule (default every 30 minutes).
+ * Emits a `heartbeat_trigger` event on a cron schedule (default: midnight, 6am, noon, 6pm).
  *
  * Downstream listeners react independently:
  *   SessionManager  — scans for expired sessions, emits `session_closed` for each
@@ -27,8 +27,7 @@ public class HeartbeatScheduler {
         this.eventBus = eventBus;
     }
 
-    @Scheduled(fixedDelayString = "${lifeos.heartbeat.interval-ms:14400000}",
-               initialDelayString = "${lifeos.heartbeat.interval-ms:14400000}")
+    @Scheduled(cron = "${lifeos.heartbeat.cron:0 0 */6 * * *}")
     public void tick() {
         log.debug("HeartbeatScheduler.tick()");
         eventBus.publish(Map.of("type", "heartbeat_trigger"));

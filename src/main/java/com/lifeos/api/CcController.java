@@ -2,8 +2,8 @@ package com.lifeos.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.config.AppConfig;
-import com.lifeos.core.agents.executor.LlmClient;
-import com.lifeos.core.agents.executor.events.LlmEvent;
+import com.lifeos.core.executor.LlmClient;
+import com.lifeos.core.executor.events.LlmEvent;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -34,8 +34,8 @@ public class CcController {
     private final String model;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public CcController(LlmClient llmClient, AppConfig config) {
-        this.llmClient = llmClient;
+    public CcController(AppConfig config) {
+        this.llmClient = new LlmClient(config.anthropicApiKey());
         this.model = config.model();
     }
 

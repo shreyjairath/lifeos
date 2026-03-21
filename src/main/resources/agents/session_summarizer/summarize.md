@@ -1,3 +1,6 @@
+On the very first line, output exactly: TITLE: <4-6 word session title, no punctuation, no quotes>
+Then a blank line, then the summary.
+
 Write a concise summary of this session for archival. This summary will be injected into the next session's context, so write it to be maximally useful to an agent picking up where this one left off.
 
 Cover:

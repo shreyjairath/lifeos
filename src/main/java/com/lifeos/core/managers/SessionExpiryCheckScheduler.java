@@ -25,8 +25,7 @@ public class SessionExpiryCheckScheduler {
         this.eventBus = eventBus;
     }
 
-    @Scheduled(fixedDelayString = "${lifeos.session-expiry-check.interval-ms:14400000}",
-               initialDelayString = "${lifeos.session-expiry-check.interval-ms:14400000}")
+    @Scheduled(cron = "${lifeos.session-expiry-check.cron:0 0 * * * *}")
     public void tick() {
         log.debug("SessionExpiryCheckScheduler.tick()");
         eventBus.publish(Map.of("type", "session_expiry_check_trigger"));
