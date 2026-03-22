@@ -152,7 +152,7 @@ async function loadSessions() {
       del.title = "Delete session";
       del.addEventListener("click", async (e) => {
         e.stopPropagation();
-        await fetch(`/api/sessions/${s.id}`, { method: "DELETE" });
+        await fetch(`/api/sessions/${s.agent}/${s.id}`, { method: "DELETE" });
         if (s.id === SESSION_ID) await openNewChat();
         await loadSessions();
       });

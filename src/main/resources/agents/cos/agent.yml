@@ -35,3 +35,11 @@ tools:
     - set_reminder
     - list_reminders
     - delete_reminder
+
+background-modes:
+  - trigger: heartbeat_trigger
+    mode: heartbeat
+    prompt: heartbeat.md
+  - trigger: self_eval_trigger
+    mode: self-eval
+    prompt: self-eval.md

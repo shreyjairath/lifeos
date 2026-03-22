@@ -22,7 +22,8 @@ lifeos:
     time-threshold-hours: 4
   session-expiry-check:
     cron: "0 0 * * * *"      # top of every hour
-  heartbeat:
-    cron: "0 0 */6 * * *"    # midnight, 6am, noon, 6pm
-  self-eval:
-    cron: "0 0 5 * * *"      # 5am daily
+  scheduled-triggers:
+    - type: heartbeat_trigger
+      cron: "0 0 */6 * * *"  # midnight, 6am, noon, 6pm
+    - type: self_eval_trigger
+      cron: "0 0 5 * * *"    # 5am daily
