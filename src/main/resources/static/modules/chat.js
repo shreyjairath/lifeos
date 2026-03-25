@@ -13,6 +13,8 @@ function setAgentRunning(running) {
 
 let currentAgentBubble = null;
 let currentAgentText = "";
+let currentReasoningText = "";
+let currentReasoningEl = null;
 let currentMsgEl = null;
 let currentToolBlock = null;
 let currentAgentThreadEl = null;
@@ -22,6 +24,7 @@ let _onRotate = (_newSessionId) => {};
 let _onDone = () => {};
 let _getAgent = () => "main";
 let _getAgentTitle = () => "Agent";
+let _getModel = () => "";
 
 function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -121,29 +124,42 @@ function toolSummary(name, input) {
   switch (name) {
     case "agent_bash":            return `$ ${input.command}`;
     case "web_search":            return `web_search  "${input.query}"`;
-    case "browse_page":           return `browse  ${input.url}`;
+    case "browse_page":           return `browse_page  ${input.url}`;
     case "get_current_datetime":  return `get_current_datetime`;
     case "set_reminder":          return `set_reminder  ${input.time}  "${input.message}"`;
     case "list_reminders":        return `list_reminders`;
     case "delete_reminder":       return `delete_reminder  ${input.id}`;
+    case "schedule_task":         return `schedule_task  ${input.name}`;
+    case "get_scheduled_tasks":   return `get_scheduled_tasks`;
+    case "get_overdue_tasks":     return `get_overdue_tasks`;
+    case "mark_task_complete":    return `mark_task_complete  ${input.id}`;
+    case "log_entry":             return `log_entry  ${input.mode}`;
+    case "read_log":              return `read_log`;
     case "list_sessions":         return `list_sessions`;
     case "read_session_summary":  return `read_session_summary  ${input.session_id}`;
     case "read_session_transcript": return `read_session_transcript  ${input.session_id}`;
     case "message_agent": {
       const msg = input.message ?? "";
       const preview = msg.length > 50 ? msg.slice(0, 50) + "…" : msg;
-      return `→ ${input.agent}  "${preview}"`;
+      return `message_agent  ${input.agent}  "${preview}"`;
     }
-    case "read_agent_workspace":  return `${input.agent}  $ ${input.command}`;
+    case "message_agent_async": {
+      const msg = input.message ?? "";
+      const preview = msg.length > 50 ? msg.slice(0, 50) + "…" : msg;
+      return `message_agent_async  ${input.agent}  "${preview}"`;
+    }
+    case "read_agent_message_history": return `read_agent_message_history  ${input.agent}`;
+    case "read_agent_workspace":  return `read_agent_workspace  ${input.agent}  $ ${input.command}`;
     case "read_agent_definition": return `read_agent_definition  ${input.agent}`;
     case "list_agents":           return `list_agents`;
     case "list_tools":            return `list_tools`;
     case "create_agent":          return `create_agent  ${input.name}`;
     case "update_agent":          return `update_agent  ${input.name}`;
-    case "parse_redfin_search":   return `redfin_search  ${input.url}`;
-    case "parse_redfin_listing":  return `redfin  ${input.url}`;
+    case "parse_redfin_search":   return `parse_redfin_search  ${input.url}`;
+    case "parse_redfin_listing":  return `parse_redfin_listing  ${input.url}`;
     case "show_image":            return `show_image  ${input.url}`;
     case "property_report":       return `property_report  ${input.address}`;
+    case "render_artifact":       return `render_artifact  ${input.title || input.path}`;
     default:                      return name;
   }
 }
@@ -207,7 +223,14 @@ export async function loadHistory(sessionId) {
     const data = await resp.json();
     for (const msg of data.messages ?? []) {
       const role = msg.role === "assistant" ? "agent" : "user";
-      addMessage(role, msg.text, msg.raw_index, msg.ts);
+      const bubble = addMessage(role, msg.text, msg.raw_index, msg.ts);
+      if (msg.reasoning && bubble) {
+        const details = document.createElement("details");
+        details.className = "reasoning-block";
+        details.innerHTML = `<summary>Reasoning</summary><div class="reasoning-content"></div>`;
+        details.querySelector(".reasoning-content").textContent = msg.reasoning;
+        bubble.parentElement.insertBefore(details, bubble);
+      }
     }
     historyIndex = data.total ?? 0;
   } catch (e) {
@@ -218,8 +241,20 @@ export async function loadHistory(sessionId) {
 async function sendMessage(getSessionId) {
   let sessionId = getSessionId();
   if (!sessionId) {
-    addMessage("agent", "⚠ No active session.");
-    return;
+    try {
+      const resp = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent: _getAgent() }),
+      });
+      const data = await resp.json();
+      _onRotate(data.session_id);
+      sessionId = data.session_id;
+      _onDone();
+    } catch {
+      addMessage("agent", "⚠ Failed to create session.");
+      return;
+    }
   }
   const text = inputEl.value.trim();
   if (!text) return;
@@ -239,7 +274,7 @@ async function sendMessage(getSessionId) {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, message: text, agent: _getAgent() }),
+      body: JSON.stringify({ session_id: sessionId, message: text, agent: _getAgent(), model: _getModel() || undefined }),
     });
     if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
 
@@ -248,6 +283,8 @@ async function sendMessage(getSessionId) {
     let buffer = "";
 
     currentAgentText = "";
+    currentReasoningText = "";
+    currentReasoningEl = null;
     currentAgentBubble = null;
     currentMsgEl = null;
 
@@ -293,9 +330,38 @@ async function sendMessage(getSessionId) {
           el.innerHTML = `<span class="reflection-label">New session</span>Started a new session (${event.reason})`;
           messagesEl.appendChild(el);
           scrollToBottom();
+        } else if (event.type === "reasoning") {
+          removeTypingIndicator();
+          if (!currentMsgEl) {
+            currentMsgEl = document.createElement("div");
+            currentMsgEl.className = "msg agent";
+            const header = document.createElement("div");
+            header.className = "msg-header";
+            const label = document.createElement("div");
+            label.className = "msg-label";
+            label.textContent = _getAgentTitle();
+            header.appendChild(label);
+            currentMsgEl.appendChild(header);
+            messagesEl.appendChild(currentMsgEl);
+          }
+          if (!currentReasoningEl) {
+            currentReasoningEl = document.createElement("details");
+            currentReasoningEl.className = "reasoning-block";
+            currentReasoningEl.open = false;
+            currentReasoningEl.innerHTML = `<summary>Reasoning…</summary><div class="reasoning-content"></div>`;
+            currentMsgEl.appendChild(currentReasoningEl);
+          }
+          currentReasoningText += event.text;
+          currentReasoningEl.querySelector(".reasoning-content").textContent = currentReasoningText;
+          scrollToBottom();
         } else if (event.type === "text") {
           removeTypingIndicator();
           currentToolBlock = null;
+          if (currentReasoningEl) {
+            currentReasoningEl.removeAttribute("open");
+            currentReasoningEl.querySelector("summary").textContent = "Reasoning";
+            currentReasoningEl = null;
+          }
           if (!currentMsgEl) {
             currentMsgEl = document.createElement("div");
             currentMsgEl.className = "msg agent";
@@ -320,6 +386,12 @@ async function sendMessage(getSessionId) {
           removeTypingIndicator();
           currentAgentBubble = null;
           currentAgentText = "";
+          if (currentReasoningEl) {
+            currentReasoningEl.removeAttribute("open");
+            currentReasoningEl.querySelector("summary").textContent = "Reasoning";
+            currentReasoningEl = null;
+          }
+          currentReasoningText = "";
           if (!currentMsgEl) {
             currentMsgEl = document.createElement("div");
             currentMsgEl.className = "msg agent";
@@ -378,9 +450,14 @@ async function sendMessage(getSessionId) {
             currentAgentThreadEl = null;
             currentMsgEl = null;
             currentToolBlock = null;
+            currentReasoningEl = null;
+            currentReasoningText = "";
             addTypingIndicator();
             scrollToBottom();
             continue;
+          }
+          if (event.name === "render_artifact" && event.result?.url) {
+            showArtifact(event.result.url, event.result.title);
           }
           if (event.name === "show_image" && event.result?.ok) {
             if (!currentMsgEl) {
@@ -412,6 +489,8 @@ async function sendMessage(getSessionId) {
           }
           currentMsgEl = null;
           currentToolBlock = null;
+          currentReasoningEl = null;
+          currentReasoningText = "";
           addTypingIndicator();
         } else if (event.type === "reflection") {
           const el = document.createElement("div");
@@ -428,6 +507,8 @@ async function sendMessage(getSessionId) {
           currentMsgEl = null;
           currentAgentBubble = null;
           currentAgentText = "";
+          currentReasoningText = "";
+          currentReasoningEl = null;
           currentToolBlock = null;
           currentAgentThreadEl = null;
         } else if (event.type === "done") {
@@ -436,6 +517,8 @@ async function sendMessage(getSessionId) {
           currentMsgEl = null;
           currentAgentBubble = null;
           currentAgentText = "";
+          currentReasoningText = "";
+          currentReasoningEl = null;
           currentToolBlock = null;
           currentAgentThreadEl = null;
           Voice.onAgentDone(spokenText);
@@ -456,22 +539,64 @@ async function sendMessage(getSessionId) {
   inputEl.focus();
 }
 
-export function reset(sessionId) {
+let _currentArtifactUrl = "";
+
+export async function showArtifact(url, title) {
+  _currentArtifactUrl = url;
+  const iframe = document.getElementById("artifact-iframe");
+  document.getElementById("artifact-title").textContent = title || "Artifact";
+  document.getElementById("app").classList.add("artifact-open");
+
+  const isMarkdown = url.match(/\.md(\?|$)/i) && !url.startsWith("http");
+  if (isMarkdown) {
+    const resp = await fetch(url);
+    const md = await resp.text();
+    iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; max-width: 760px; margin: 0 auto; padding: 24px 32px; }
+      h1,h2,h3,h4 { margin: 1.2em 0 0.4em; font-weight: 600; }
+      h1 { font-size: 1.6em; border-bottom: 1px solid #e5e5e5; padding-bottom: 0.3em; }
+      h2 { font-size: 1.3em; }
+      code { background: #f5f5f5; padding: 2px 5px; border-radius: 3px; font-size: 0.88em; }
+      pre { background: #f5f5f5; padding: 14px; border-radius: 6px; overflow-x: auto; }
+      pre code { background: none; padding: 0; }
+      blockquote { border-left: 3px solid #d0d0d0; margin: 0; padding-left: 16px; color: #555; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #e0e0e0; padding: 6px 12px; text-align: left; }
+      th { background: #f8f8f8; font-weight: 600; }
+      a { color: #0066cc; }
+      hr { border: none; border-top: 1px solid #e5e5e5; }
+      p { margin: 0.6em 0; }
+    </style></head><body>${renderMarkdown(md)}</body></html>`;
+    return;
+  }
+
+  if (iframe.src === url || iframe.src === location.origin + url) {
+    iframe.contentWindow?.location.reload();
+  } else {
+    iframe.srcdoc = "";
+    iframe.src = url;
+  }
+}
+
+export function reset() {
   historyIndex = 0;
   currentAgentBubble = null;
   currentAgentText = "";
+  currentReasoningText = "";
+  currentReasoningEl = null;
   currentMsgEl = null;
   currentToolBlock = null;
   currentAgentThreadEl = null;
   messagesEl.innerHTML = "";
 }
 
-export function init(getSessionId, onRotate, getAgent, onDone, getAgentTitle) {
+export function init(getSessionId, onRotate, getAgent, onDone, getAgentTitle, getModel) {
   _getSessionId = getSessionId;
   if (onRotate) _onRotate = onRotate;
   if (getAgent) _getAgent = getAgent;
   if (onDone) _onDone = onDone;
   if (getAgentTitle) _getAgentTitle = getAgentTitle;
+  if (getModel) _getModel = getModel;
   Voice.init((text) => {
     inputEl.value = text;
     sendMessage(_getSessionId);
@@ -487,6 +612,54 @@ export function init(getSessionId, onRotate, getAgent, onDone, getAgentTitle) {
     }
   });
   sendBtn.addEventListener("click", () => sendMessage(getSessionId));
+  const artifactCloseBtn = document.getElementById("artifact-close");
+  if (artifactCloseBtn) {
+    artifactCloseBtn.addEventListener("click", () => {
+      document.getElementById("app").classList.remove("artifact-open");
+      document.getElementById("artifact-iframe").src = "";
+    });
+  }
+
+  const artifactBrowseBtn = document.getElementById("artifact-browse");
+  const artifactBrowser = document.getElementById("artifact-browser");
+  const artifactBrowserList = document.getElementById("artifact-browser-list");
+
+  if (artifactBrowseBtn) {
+    artifactBrowseBtn.addEventListener("click", async () => {
+      const isOpen = !artifactBrowser.classList.contains("hidden");
+      if (isOpen) {
+        artifactBrowser.classList.add("hidden");
+        return;
+      }
+      const agent = _getAgent();
+      artifactBrowserList.innerHTML = `<div class="artifact-browser-empty">Loading…</div>`;
+      artifactBrowser.classList.remove("hidden");
+      try {
+        const resp = await fetch(`/api/artifacts/${agent}`);
+        const files = await resp.json();
+        if (!files.length) {
+          artifactBrowserList.innerHTML = `<div class="artifact-browser-empty">No artifacts yet.</div>`;
+          return;
+        }
+        artifactBrowserList.innerHTML = "";
+        for (const f of files) {
+          const url = `/api/artifacts/${agent}/${f}`;
+          const btn = document.createElement("button");
+          btn.className = "artifact-file-item" + (url === _currentArtifactUrl ? " active" : "");
+          btn.textContent = f;
+          btn.title = f;
+          btn.addEventListener("click", () => {
+            artifactBrowser.classList.add("hidden");
+            showArtifact(url, f);
+          });
+          artifactBrowserList.appendChild(btn);
+        }
+      } catch {
+        artifactBrowserList.innerHTML = `<div class="artifact-browser-empty">Failed to load.</div>`;
+      }
+    });
+  }
+
   if (stopBtn) {
     stopBtn.addEventListener("click", () => {
       const sessionId = getSessionId();

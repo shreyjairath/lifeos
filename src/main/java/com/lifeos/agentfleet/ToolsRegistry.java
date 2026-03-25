@@ -14,6 +14,7 @@ import com.lifeos.agentfleet.tools.Redfin;
 import com.lifeos.agentfleet.tools.ScheduledTasks;
 import com.lifeos.agentfleet.tools.SessionTools;
 import com.lifeos.agentfleet.tools.WebSearch;
+import com.lifeos.agentfleet.EventBus;
 import jakarta.annotation.PostConstruct;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
@@ -52,11 +53,12 @@ public class ToolsRegistry {
     private final ReminderScheduler reminderScheduler;
     private final AgentTools agentTools;
     private final AgentChannels agentChannels;
+    private final EventBus eventBus;
 
     public ToolsRegistry(WebSearch webSearch, Browse browse, Media media,
                          Redfin redfin, PropertyReport propertyReport,
                          @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools,
-                         AgentChannels agentChannels) {
+                         AgentChannels agentChannels, EventBus eventBus) {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
@@ -65,6 +67,7 @@ public class ToolsRegistry {
         this.reminderScheduler = reminderScheduler;
         this.agentTools = agentTools;
         this.agentChannels = agentChannels;
+        this.eventBus = eventBus;
         this.sessionTools = new SessionTools();
     }
 
@@ -146,7 +149,7 @@ public class ToolsRegistry {
                         ? log.read(input.get("entries") != null ? ((Number) input.get("entries")).intValue() : null)
                         : Map.of("error", "No workspace registered for agent: " + agentName);
             }
-            case "read_agent_channel" -> agentChannels.readChannel(agentName, (String) input.get("agent"));
+            case "read_agent_message_history" -> agentChannels.readChannel(agentName, (String) input.get("agent"));
             case "message_agent" -> agentTools.messageAgent(agentName, (String) input.get("agent"), (String) input.get("message"));
             case "message_agent_async" -> agentTools.messageAgentAsync(agentName, (String) input.get("agent"), (String) input.get("message"));
             case "read_agent_definition" -> agentTools.readAgentDefinition((String) input.get("agent"));
@@ -184,6 +187,24 @@ public class ToolsRegistry {
                     input.get("tools") instanceof List<?> rawList
                             ? rawList.stream().map(Object::toString).toList()
                             : List.of());
+            case "render_artifact" -> {
+                var path = (String) input.get("path");
+                var title = (String) input.getOrDefault("title", "");
+                if (path == null || path.isBlank())
+                    yield Map.of("error", "path is required");
+                if (path.startsWith("http://") || path.startsWith("https://"))
+                    yield Map.of("url", path, "title", title, "path", path);
+                var artifacts = AGENTS_DIR.resolve(agentName).resolve("workspace").resolve("_artifacts").normalize();
+                var file = artifacts.resolve(path).normalize();
+                if (!file.startsWith(artifacts))
+                    yield Map.of("error", "Path outside _artifacts folder: " + path);
+                if (!Files.exists(file))
+                    yield Map.of("error", "File not found in _artifacts/: " + path);
+                var url = "/api/artifacts/" + agentName + "/" + path;
+                eventBus.publish(Map.of("type", "artifact_updated", "agent", agentName,
+                                        "url", url, "title", title, "path", path));
+                yield Map.<String, Object>of("url", url, "title", title, "path", path);
+            }
             default -> Map.of("error", "Unknown tool: " + toolName);
         };
     }
@@ -197,7 +218,8 @@ public class ToolsRegistry {
                     "Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.",
                     props(prop("command", "string", "Bash command to run.")), "command"),
             tool("browse_page",
-                    "Fetch and read the content of a web page.",
+                    "Fetch and read the content of a web page. " +
+                    "Use to read a specific URL in full. For discovery, use web_search first.",
                     props(prop("url", "string", "Full URL to fetch")), "url"),
             tool("parse_redfin_listing",
                     "Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.",
@@ -212,16 +234,20 @@ public class ToolsRegistry {
                     props(prop("address", "string", "Full street address including unit number if applicable (e.g. '123 Main St #4N, Chicago, IL')")),
                     "address"),
             tool("web_search",
-                    "Search the web for information.",
+                    "Search the web for information. " +
+                    "Use for discovery and finding URLs. Follow up with browse_page to read specific pages in full.",
                     props(prop("query", "string", "Search query")), "query"),
             tool("show_image", "Display an image inline in the chat.",
                     props(prop("url", "string", "Image URL"), prop("caption", "string", "Optional caption")),
                     "url"),
-            tool("get_current_datetime", "Get the current date and time.",
+            tool("get_current_datetime",
+                    "Get the current date and time. " +
+                    "Call before set_reminder, schedule_task with run_at, or any time-relative calculation.",
                     props(), new String[]{}),
             tool("set_reminder",
                     "Schedule a reminder that fires at a specific time. " +
-                    "The reminder will appear as a chat message and a push notification (even if the browser is backgrounded or closed). " +
+                    "User-facing only — sends a chat message and push notification to the user (even if the browser is backgrounded or closed). " +
+                    "For internal agent task tracking (no user notification), use schedule_task instead. " +
                     "Always call get_current_datetime first to know the current time before computing the target time. " +
                     "time must be a full ISO-8601 datetime with timezone offset (e.g. 2026-03-15T15:00:00-05:00).",
                     props(prop("time", "string", "ISO-8601 datetime with timezone offset when the reminder should fire (e.g. 2026-03-15T15:00:00-05:00)"),
@@ -234,6 +260,7 @@ public class ToolsRegistry {
 
             tool("schedule_task",
                     "Register a recurring or one-off task in your schedule. " +
+                    "Internal only — no user notification is sent. For user-facing time-based alerts, use set_reminder instead. " +
                     "Provide cadence_hours for a recurring task (e.g. 6 = every 6 hours), " +
                     "or run_at (ISO-8601 datetime) for a one-off task that fires once. " +
                     "Upserts by name — calling again with the same name updates the task.",
@@ -257,7 +284,8 @@ public class ToolsRegistry {
 
             tool("log_entry",
                     "Append a structured log entry to _log.md. " +
-                    "Use this at the end of every background run (heartbeat, self-eval, post-session) to record what happened. " +
+                    "Call at the end of every background run: post-session, heartbeat, self-eval, and inter-agent-message. " +
+                    "Call even if nothing changed — log \"no updates needed\" so the audit trail stays continuous. " +
                     "The timestamp is set automatically — do not include it in summary or notes.",
                     props(prop("mode", "string", "Run mode: chat, post-session, heartbeat, self-eval, or inter-agent-message"),
                           prop("summary", "string", "1–3 sentence summary of what happened"),
@@ -267,31 +295,37 @@ public class ToolsRegistry {
 
             tool("read_log",
                     "Read your own _log.md — past activity recorded by log_entry. " +
+                    "Call at the start of heartbeat and self-eval runs to understand your recent activity before deciding what to do next. " +
                     "Returns recent entries newest-last. Use entries to limit how many to return.",
                     props(prop("entries", "number", "Number of recent entries to return (omit for all)")),
                     new String[]{}),
 
-            tool("read_agent_channel",
+            tool("read_agent_message_history",
                     "Read the message history between you and another agent (last 10 exchanges). " +
-                    "Returns a chronological log of prior exchanges in this agent pair's private channel.",
+                    "Returns a chronological log of prior exchanges in this agent pair's private channel. " +
+                    "Call this before message_agent or message_agent_async to review prior context before writing your next message. " +
+                    "Entries are labeled \"sender → receiver\" so you can orient to who said what.",
                     props(prop("agent", "string", "Agent name (e.g. 'therapist'). Use list_agents to see available agents.")),
                     "agent"),
 
             tool("message_agent",
                     "Send a message to another agent and receive their response synchronously. " +
                     "This is an internal agent-to-agent channel — separate from the user-facing chat. " +
-                    "Always call read_agent_channel first to review prior exchanges before sending a new message. " +
-                    "BLOCKING: waits for the full response before returning — this stalls the user during chat. " +
-                    "PRIMARY USE: self-eval, post-session, and heartbeat modes where no user is waiting. " +
-                    "During user chat: prefer message_agent_async instead.",
+                    "Always call read_agent_message_history first to review prior exchanges before sending a new message. " +
+                    "BLOCKING: waits for the full response before returning — up to 90 seconds. " +
+                    "NEVER call this during user chat — it blocks the thread and stalls the user for up to 90 seconds. " +
+                    "Use message_agent_async for all chat-mode outreach. This tool is for background modes only: " +
+                    "post-session, heartbeat, self-eval, inter-agent-message.",
                     props(prop("agent", "string", "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
                           prop("message", "string", "Message to send to the agent.")),
                     "agent", "message"),
 
             tool("message_agent_async",
                     "Send a non-blocking message to another agent. Returns immediately — safe to use during user chat. " +
-                    "The agent processes your message in the background; use read_agent_channel after a moment to see their reply. " +
-                    "Always call read_agent_channel first to review prior exchanges before sending a new message. " +
+                    "Always call read_agent_message_history first to review prior exchanges before sending a new message. " +
+                    "The agent processes your message in the background. " +
+                    "Do not poll immediately — the target agent may take 30–90 seconds. " +
+                    "Check read_agent_message_history at the end of your current run or during your next heartbeat. " +
                     "Keep exchanges meaningful: share what's new, what changed, or what you specifically need.",
                     props(prop("agent", "string", "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
                           prop("message", "string", "Message to send to the agent.")),
@@ -335,6 +369,17 @@ public class ToolsRegistry {
                     "List all tools available in the system with their names and descriptions. " +
                     "Use this before calling create_agent to know which tools can be granted to a new dynamic agent.",
                     props(), new String[]{}),
+
+            tool("render_artifact",
+                    "Display a file in a persistent panel next to the chat. " +
+                    "Use this instead of chat for anything long-form: reports, summaries, plans, analyses, structured documents, HTML visualizations, or any content that benefits from its own space. " +
+                    "Keep chat responses short — offload depth and detail here. " +
+                    "Accepts a path relative to your workspace/_artifacts/ folder (e.g. 'report.md', 'viz.html') or a full URL (https://...) to embed directly. " +
+                    "For workspace files, write them to workspace/_artifacts/ first using agent_bash, then pass just the filename (e.g. 'report.md'). " +
+                    "The artifact stays visible while the conversation continues.",
+                    props(prop("path", "string", "Filename within workspace/_artifacts/ (e.g. 'report.md', 'chart.html') or a full https:// URL"),
+                          prop("title", "string", "Optional title shown in the artifact panel header")),
+                    "path"),
 
             tool("create_agent",
                     "Create a new specialist agent and register it immediately. " +

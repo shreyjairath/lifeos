@@ -1,5 +1,7 @@
 package com.lifeos.agent.executor;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.agent.executor.events.AgentAppendEvent;
 import com.lifeos.agent.executor.events.ExecutorEvent;
 import com.lifeos.agent.executor.events.ToolEvent;
@@ -19,6 +21,7 @@ public class Executor {
     private final LlmClient llmClient;
     private final ToolsClient toolsClient;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public Executor(String apiKey, Confirmations confirmations) {
         this.llmClient = new LlmClient(apiKey);
@@ -38,11 +41,12 @@ public class Executor {
             String model,
             List<Map<String, Object>> tools,
             String agentName,
+            Map<String, Object> reasoning,
             ToolInvoker dispatch
     ) {
         var local = new ArrayList<>(messages);
 
-        return Flux.defer(() -> runOneIteration(local, system, model, tools, agentName, dispatch))
+        return Flux.defer(() -> runOneIteration(local, system, model, tools, agentName, reasoning, dispatch))
                 .repeat()
                 .takeUntil(event -> event instanceof LoopControl lc && lc.shouldStop())
                 .filter(event -> !(event instanceof LoopControl));
@@ -56,6 +60,7 @@ public class Executor {
             String system, String model,
             List<Map<String, Object>> tools,
             String agentName,
+            Map<String, Object> reasoning,
             ToolInvoker dispatch
     ) {
         if (cancelled.get()) {
@@ -64,7 +69,7 @@ public class Executor {
 
         var llmResult = new LlmClient.LlmResult();
 
-        return llmClient.stream(model, system, List.copyOf(local), tools, llmResult)
+        return llmClient.stream(model, system, List.copyOf(local), tools, reasoning, llmResult)
                 .<ExecutorEvent>map(e -> e)
                 .concatWith(Flux.defer(() -> afterLlm(local, llmResult, agentName, dispatch)));
     }
@@ -76,27 +81,43 @@ public class Executor {
             String agentName,
             ToolInvoker dispatch
     ) {
-        // Build assistant content
-        var assistantContent = new ArrayList<Map<String, Object>>();
-        if (!llmResult.getFullText().isEmpty()) {
-            assistantContent.add(Map.of("type", "text", "text", llmResult.getFullText()));
-        }
-        for (var toolUse : llmResult.getParsedToolUses()) {
-            assistantContent.add(Map.of(
-                    "type", "tool_use",
-                    "id", toolUse.get("id"),
-                    "name", toolUse.get("name"),
-                    "input", toolUse.get("input")
-            ));
+        // Build assistant message in OpenAI format
+        var assistantMsg = new LinkedHashMap<String, Object>();
+        assistantMsg.put("role", "assistant");
+        var toolUses = llmResult.getParsedToolUses();
+        var rawText = llmResult.getFullText();
+        assistantMsg.put("content", rawText.isEmpty() ? null : rawText);
+        if (!toolUses.isEmpty()) {
+            var toolCalls = toolUses.stream().map(tu -> {
+                String arguments;
+                try {
+                    arguments = mapper.writeValueAsString(tu.get("input"));
+                } catch (JsonProcessingException e) {
+                    arguments = "{}";
+                }
+                return Map.of(
+                        "id", tu.get("id"),
+                        "type", "function",
+                        "function", Map.of(
+                                "name", tu.get("name"),
+                                "arguments", arguments
+                        )
+                );
+            }).toList();
+            assistantMsg.put("tool_calls", toolCalls);
         }
 
-        local.add(Map.of("role", "assistant", "content", assistantContent));
+        if (!llmResult.getFullReasoning().isEmpty()) {
+            assistantMsg.put("reasoning", llmResult.getFullReasoning());
+        }
+
+        local.add(assistantMsg);
         prepareMessages(local);
 
-        var appendEvent = new AgentAppendEvent("assistant", assistantContent);
+        var appendEvent = new AgentAppendEvent(assistantMsg);
 
         // If no tool use, we're done
-        if (!"tool_use".equals(llmResult.getStopReason()) || llmResult.getParsedToolUses().isEmpty()) {
+        if (!"tool_use".equals(llmResult.getStopReason()) || toolUses.isEmpty()) {
             return Flux.just(appendEvent, LoopControl.STOP);
         }
 
@@ -104,38 +125,32 @@ public class Executor {
         var toolsResult = new ToolsClient.ToolsResult();
         return Flux.<ExecutorEvent>just(appendEvent)
                 .concatWith(
-                        toolsClient.invoke(llmResult.getParsedToolUses(), cancelled::get, toolsResult, agentName, dispatch)
+                        toolsClient.invoke(toolUses, cancelled::get, toolsResult, agentName, dispatch)
                                 .<ExecutorEvent>map(e -> e)
                                 .doOnComplete(() -> {
-                                    local.add(Map.of("role", "user", "content", toolsResult.getMessages()));
+                                    toolsResult.getMessages().forEach(local::add);
                                     prepareMessages(local);
                                 })
                                 .concatWith(Flux.defer(() -> {
-                                    var toolAppend = new AgentAppendEvent("user", toolsResult.getMessages());
+                                    var toolMsgs = toolsResult.getMessages();
+                                    var appendEvents = toolMsgs.stream()
+                                            .<ExecutorEvent>map(AgentAppendEvent::new)
+                                            .toList();
                                     if (toolsResult.isCancelled()) {
-                                        return Flux.just(toolAppend, LoopControl.STOP);
+                                        return Flux.fromIterable(appendEvents)
+                                                .concatWith(Flux.just(LoopControl.STOP));
                                     }
-                                    return Flux.<ExecutorEvent>just(toolAppend);
+                                    return Flux.fromIterable(appendEvents);
                                 }))
                 );
     }
 
     /**
-     * Trim leading orphaned tool_result blocks from history (mutates in place).
+     * Trim leading orphaned role:tool messages from history (mutates in place).
      */
-    @SuppressWarnings("unchecked")
     public static void prepareMessages(List<Map<String, Object>> messages) {
-        while (!messages.isEmpty()) {
-            var content = messages.getFirst().get("content");
-            if (content instanceof List<?> blocks) {
-                boolean allToolResults = blocks.stream().allMatch(b ->
-                        b instanceof Map<?, ?> m && "tool_result".equals(m.get("type")));
-                if (allToolResults) {
-                    messages.removeFirst();
-                    continue;
-                }
-            }
-            break;
+        while (!messages.isEmpty() && "tool".equals(messages.getFirst().get("role"))) {
+            messages.removeFirst();
         }
     }
 

@@ -20,10 +20,15 @@ public class AgentsController {
     public AgentsController(AgentFleet agentFleet) { this.agentFleet = agentFleet; }
 
     @GetMapping
-    public List<Map<String, String>> list() {
+    public List<Map<String, Object>> list() {
         return agentFleet.all().stream()
-                .map(a -> Map.of("name", a.getName(), "title", a.getTitle()))
+                .map(agentFleet::agentInfo)
                 .toList();
+    }
+
+    @GetMapping("/{name}/definition")
+    public Map<String, Object> getDefinition(@PathVariable String name) {
+        return agentFleet.agentDefinitionText(name);
     }
 
     @PostMapping("/trigger/{eventType}")
@@ -33,7 +38,7 @@ public class AgentsController {
         return Map.of("triggered", eventType);
     }
 
-    private static final Path CHANNELS_DIR = Path.of(".user-data/agents/inter-agent-channels");
+    private static final Path CHANNELS_DIR = Path.of(".user-data/inter-agent-channels");
 
     @GetMapping("/channels")
     public List<Map<String, Object>> listChannels() {

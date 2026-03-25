@@ -36,8 +36,8 @@ public class AgentRouter {
         this.eventBus = eventBus;
     }
 
-    public Flux<ServerSentEvent<String>> handleMessage(String sessionId, String message, String agent) {
-        return handleInner(sessionId, message, agent)
+    public Flux<ServerSentEvent<String>> handleMessage(String sessionId, String message, String agent, String model) {
+        return handleInner(sessionId, message, agent, model)
                 .onErrorResume(e -> {
                     log.error("Error handling message", e);
                     eventBus.publish(Map.of("type", "error", "text", e.getMessage()));
@@ -50,11 +50,11 @@ public class AgentRouter {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    private Flux<ServerSentEvent<String>> handleInner(String sessionId, String message, String agentName) {
+    private Flux<ServerSentEvent<String>> handleInner(String sessionId, String message, String agentName, String model) {
         var agent = agentRegistry.get(agentName);
         var rotation = agent.getSessionHandler().checkRotation(sessionId);
         if (!rotation.shouldRotate()) {
-            return runAgent(sessionId, message, agentName);
+            return runAgent(sessionId, message, agentName, model);
         }
 
         var newSessionId = agent.getSessionHandler().rotate(sessionId); // emits session_closed internally
@@ -62,14 +62,14 @@ public class AgentRouter {
         return Flux.concat(
                 Flux.just(sse(Map.of("type", "session_rotating", "reason", rotation.reason()))),
                 Flux.just(sse(Map.of("type", "session_rotated", "session_id", newSessionId, "reason", rotation.reason()))),
-                runAgent(newSessionId, message, agentName));
+                runAgent(newSessionId, message, agentName, model));
     }
 
-    private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message, String agentName) {
+    private Flux<ServerSentEvent<String>> runAgent(String sessionId, String message, String agentName, String model) {
         var agent = agentRegistry.get(agentName);
         var stopped = new AtomicBoolean(false);
-        
-        return agent.handleUserMessage(sessionId, message)
+
+        return agent.handleUserMessage(sessionId, message, model)
                 .doOnNext(event -> {
                     if (event instanceof ToolEvent.Cancelled) {
                         stopped.set(true);
@@ -88,6 +88,7 @@ public class AgentRouter {
                     Map.of("model", r.model(), "max_tokens", r.maxTokens(),
                             "system", r.system(), "messages", r.messages(), "tools", r.tools()));
             case LlmEvent.Text t -> Map.of("type", "text", "text", t.text());
+            case LlmEvent.Reasoning t -> Map.of("type", "reasoning", "text", t.text());
             case LlmEvent.ToolCall tc -> Map.of("type", "tool_call", "name", tc.name(), "input", tc.input());
             case LlmEvent.Response r -> Map.of("type", "response_json", "payload",
                     Map.of("stop_reason", r.stopReason(), "usage", r.usage(), "content", r.content()));

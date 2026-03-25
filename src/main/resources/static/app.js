@@ -3,6 +3,14 @@ import * as CC from "./modules/cc.js";
 import * as AgentDebug from "./modules/agent-debug.js";
 import * as AgentChannels from "./modules/agent-channels.js";
 
+// ── iOS Safari viewport height fix ───────────────────────────────────────────
+// CSS vh/dvh units include area under Safari chrome; window.innerHeight does not.
+function updateVH() {
+  document.documentElement.style.setProperty("--vh", window.innerHeight * 0.01 + "px");
+}
+updateVH();
+window.addEventListener("resize", updateVH);
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - base64String.length % 4) % 4);
@@ -14,9 +22,25 @@ function urlBase64ToUint8Array(base64String) {
 // ── Agent selection ───────────────────────────────────────────────────────────
 let ACTIVE_AGENT = localStorage.getItem("chief-agent") || "cos";
 const AGENT_TITLES = { cos: "Chief of Staff" };
+const AGENT_MODELS = {};
 
 const agentToggle = document.getElementById("agent-toggle");
 const subAgentToggle = document.getElementById("sub-agent-toggle");
+
+function updateModelPlaceholder(agentName) {
+  if (!modelInputEl.value.trim()) {
+    modelInputEl.placeholder = AGENT_MODELS[agentName] || "Model override…";
+  }
+}
+
+function closeArtifactPanel() {
+  document.getElementById("app").classList.remove("artifact-open");
+  const iframe = document.getElementById("artifact-iframe");
+  iframe.srcdoc = "";
+  iframe.src = "";
+  document.getElementById("artifact-title").textContent = "Artifact";
+  document.getElementById("artifact-browser")?.classList.add("hidden");
+}
 
 async function setActiveAgent(name, title) {
   ACTIVE_AGENT = name;
@@ -24,10 +48,12 @@ async function setActiveAgent(name, title) {
   document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.agent === name));
   inputEl.placeholder = `Talk to ${title}…`;
+  updateModelPlaceholder(name);
+  closeArtifactPanel();
 
   // Restore this agent's last session if it's still open, otherwise open a new one
   const saved = localStorage.getItem(sessionKey(name));
-  const openIds = await loadSessions();
+  const { openIds } = await loadSessions();
   if (saved && openIds.has(saved)) {
     SESSION_ID = saved;
     Chat.reset(saved);
@@ -60,9 +86,10 @@ function makeAgentRow(btn, agentName, agentTitle) {
       document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
         b.classList.toggle("active", b.dataset.agent === agentName));
       inputEl.placeholder = `Talk to ${agentTitle}…`;
+      updateModelPlaceholder(agentName);
+      closeArtifactPanel();
     }
     await openNewChat();
-    await loadSessions();
   });
   row.appendChild(btn);
   row.appendChild(plus);
@@ -83,7 +110,7 @@ async function loadAgents() {
 
     // Dynamic agents load beneath
     const agents = await fetch("/api/agents").then(r => r.json());
-    const subAgents = agents.filter(a => a.name !== "cos");
+    const subAgents = agents.filter(a => a.name !== "cos" && !a.disabledModes?.includes("chat"));
     subAgentToggle.innerHTML = "";
     subAgentToggle.style.display = subAgents.length ? "" : "none";
     document.getElementById("agent-separator").style.display = subAgents.length ? "" : "none";
@@ -97,14 +124,20 @@ async function loadAgents() {
       subAgentToggle.appendChild(makeAgentSessionList(name));
     }
 
-    // Populate title map
-    for (const { name, title } of subAgents) AGENT_TITLES[name] = title;
+    // Populate title + model maps
+    for (const { name, title, effectiveModel } of agents) {
+      AGENT_TITLES[name] = title;
+      if (effectiveModel) AGENT_MODELS[name] = effectiveModel;
+    }
 
     // Validate stored agent; fall back to cos if unknown
     const allAgents = [{ name: "cos", title: "Chief of Staff" }, ...subAgents];
     const current = allAgents.find(a => a.name === ACTIVE_AGENT);
     if (!current) setActiveAgent("cos", "Chief of Staff");
-    else inputEl.placeholder = `Talk to ${current.title}…`;
+    else {
+      inputEl.placeholder = `Talk to ${current.title}…`;
+      updateModelPlaceholder(current.name);
+    }
   } catch (e) {
     console.error("Failed to load agents", e);
   }
@@ -120,55 +153,102 @@ function setSession(sessionId) {
 }
 
 const inputEl = document.getElementById("input");
+const modelInputEl = document.getElementById("model-input");
+modelInputEl.value = localStorage.getItem("chief-model") || "";
+modelInputEl.addEventListener("input", () => {
+  const v = modelInputEl.value.trim();
+  localStorage.setItem("chief-model", v);
+  modelInputEl.placeholder = v ? "Model override…" : (AGENT_MODELS[ACTIVE_AGENT] || "Model override…");
+});
 
 // ── Sessions sidebar ──────────────────────────────────────────────────────────
+
+function sessionRelTime(epochSec) {
+  const diff = Math.floor(Date.now() / 1000) - epochSec;
+  if (diff < 60)    return "now";
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  const d = new Date(epochSec * 1000);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function fmtTok(n) {
+  if (!n || n === 0) return "";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
 async function loadSessions() {
   const openIds = new Set();
+  const sessions = [];
   try {
     const resp = await fetch("/api/sessions");
     const data = await resp.json();
     // Clear all per-agent session lists
     document.querySelectorAll(".agent-session-list").forEach(ul => ul.innerHTML = "");
-    if (!data.sessions) return openIds;
+    if (!data.sessions) return { openIds, sessions };
     for (const s of data.sessions) {
       openIds.add(s.id);
+      sessions.push(s);
       const agent = s.agent || "cos";
       const listEl = document.getElementById(`sessions-${agent}`);
       if (!listEl) continue;
       const li = document.createElement("li");
       li.className = "agent-session-item" + (s.id === SESSION_ID ? " active" : "");
-      const ts = s.created_at > 0 ? new Date(s.created_at * 1000) : null;
-      const dateStr = ts ? ts.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-        + " " + ts.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+      const refEpoch = s.last_message_at > 0 ? s.last_message_at : s.created_at;
       const time = document.createElement("span");
       time.className = "session-time";
-      time.textContent = dateStr;
+      time.textContent = refEpoch > 0 ? sessionRelTime(refEpoch) : "";
+      time.title = refEpoch > 0 ? new Date(refEpoch * 1000).toLocaleString() : "";
       const label = document.createElement("span");
       label.className = "session-label";
       label.textContent = s.title || s.id;
+      const tok = document.createElement("span");
+      tok.className = "session-tokens";
+      tok.textContent = fmtTok(s.last_input_tokens);
       const del = document.createElement("button");
       del.className = "session-delete-btn";
       del.textContent = "×";
       del.title = "Delete session";
       del.addEventListener("click", async (e) => {
         e.stopPropagation();
-        await fetch(`/api/sessions/${s.agent}/${s.id}`, { method: "DELETE" });
-        if (s.id === SESSION_ID) await openNewChat();
-        await loadSessions();
+        if (!confirm("Delete this session?")) return;
+        await fetch(`/api/sessions/${s.agent || "cos"}/${s.id}`, { method: "DELETE" });
+        if (s.id === SESSION_ID) {
+          const { sessions: remaining } = await loadSessions();
+          const next = remaining.find(r => r.agent === ACTIVE_AGENT);
+          if (next) {
+            setSession(next.id);
+            Chat.reset(next.id);
+            await Chat.loadHistory(next.id);
+            await loadSessions();
+          } else {
+            SESSION_ID = null;
+            localStorage.removeItem(sessionKey(ACTIVE_AGENT));
+            Chat.reset(null);
+            await loadSessions();
+          }
+        } else {
+          await loadSessions();
+        }
       });
       li.appendChild(time);
       li.appendChild(label);
+      li.appendChild(tok);
       li.appendChild(del);
       li.addEventListener("click", async () => {
         closeSidebar();
+        closeArtifactPanel();
         ACTIVE_AGENT = s.agent || "cos";
         localStorage.setItem("chief-agent", ACTIVE_AGENT);
         document.querySelectorAll(".agent-btn, .sub-agent-btn").forEach(b =>
           b.classList.toggle("active", b.dataset.agent === ACTIVE_AGENT));
+        inputEl.placeholder = `Talk to ${AGENT_TITLES[ACTIVE_AGENT] || ACTIVE_AGENT}…`;
+        updateModelPlaceholder(ACTIVE_AGENT);
         setSession(s.id);
         Chat.reset(s.id);
         await Chat.loadHistory(s.id);
-        await loadSessions();
+        document.querySelectorAll(".agent-session-item").forEach(el => el.classList.remove("active"));
+        li.classList.add("active");
         inputEl.focus();
       });
       listEl.appendChild(li);
@@ -176,7 +256,7 @@ async function loadSessions() {
   } catch (e) {
     console.error("Failed to load sessions", e);
   }
-  return openIds;
+  return { openIds, sessions };
 }
 
 // ── New chat ──────────────────────────────────────────────────────────────────
@@ -258,7 +338,9 @@ document.getElementById("agent-monitor-btn").addEventListener("click", () => {
 });
 
 document.querySelectorAll(".monitor-nav-btn").forEach(btn => {
-  btn.addEventListener("click", () => { closeSidebar(); switchMonitorTab(btn.dataset.tab); });
+  btn.addEventListener("click", () => {
+    switchMonitorTab(btn.classList.contains("active") ? "runs" : btn.dataset.tab);
+  });
 });
 
 document.querySelector(".sidebar-header h1").addEventListener("click", () => {
@@ -276,9 +358,10 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
     () => ACTIVE_AGENT,
     () => loadSessions(),
     () => AGENT_TITLES[ACTIVE_AGENT] || ACTIVE_AGENT,
+    () => modelInputEl.value.trim(),
   );
   CC.init();
-  const openIds = await loadSessions();
+  const { openIds } = await loadSessions();
   if (!SESSION_ID || !openIds.has(SESSION_ID)) {
     await openNewChat();
   } else {
@@ -286,6 +369,11 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
     await Chat.loadHistory(SESSION_ID);
   }
   await CC.loadHistory();
+
+  document.getElementById("artifacts-btn")?.addEventListener("click", () => {
+    document.getElementById("app").classList.add("artifact-open");
+    document.getElementById("artifact-browse")?.click();
+  });
 
   // In-tab reminder listener — shows bubble when tab is open
   const reminderSource = new EventSource("/api/events");
@@ -295,7 +383,9 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
       if (event.type === "reminder") {
         Chat.addMessage("agent", `⏰ ${event.message}`, null, Math.floor(Date.now() / 1000));
       } else if (event.type === "agents_updated") {
-        loadAgents();
+        loadAgents().then(() => loadSessions());
+      } else if (event.type === "artifact_updated" && event.agent === ACTIVE_AGENT) {
+        Chat.showArtifact(event.url, event.title);
       }
     } catch {}
   };

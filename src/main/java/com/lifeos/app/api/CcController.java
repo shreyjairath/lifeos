@@ -35,7 +35,7 @@ public class CcController {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public CcController(AppConfig config) {
-        this.llmClient = new LlmClient(config.anthropicApiKey());
+        this.llmClient = new LlmClient(config.apiKey());
         this.model = config.model();
     }
 

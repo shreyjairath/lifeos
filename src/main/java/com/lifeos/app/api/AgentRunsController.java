@@ -1,8 +1,10 @@
 package com.lifeos.app.api;
 
 import com.lifeos.agent.AgentRunLogs;
+import com.lifeos.agentfleet.tools.ScheduledTasks;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -25,5 +27,10 @@ public class AgentRunsController {
             @PathVariable String name,
             @RequestParam(defaultValue = "20") int limit) {
         return agentRunStore.getRecentRuns(name, Math.min(limit, 100));
+    }
+
+    @GetMapping("/{name}/tasks")
+    public Map<String, Object> getTasks(@PathVariable String name) {
+        return new ScheduledTasks(Path.of(".user-data/agents", name, "workspace")).list();
     }
 }

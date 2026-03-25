@@ -7,7 +7,7 @@ import java.util.Map;
  * Events emitted by the LLM client during streaming.
  */
 public sealed interface LlmEvent extends ExecutorEvent
-        permits LlmEvent.Request, LlmEvent.Text, LlmEvent.ToolCall, LlmEvent.Response {
+        permits LlmEvent.Request, LlmEvent.Text, LlmEvent.Reasoning, LlmEvent.ToolCall, LlmEvent.Response {
 
     record Request(
         String model,
@@ -18,6 +18,8 @@ public sealed interface LlmEvent extends ExecutorEvent
     ) implements LlmEvent {}
 
     record Text(String text) implements LlmEvent {}
+
+    record Reasoning(String text) implements LlmEvent {}
 
     record ToolCall(String name, Map<String, Object> input) implements LlmEvent {}
 

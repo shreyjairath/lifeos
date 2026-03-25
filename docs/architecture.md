@@ -120,4 +120,5 @@ owns the schedule; agentfleet owns the execution machinery.
 
 - [agent-layer.md](agent-layer.md) — Agent interface, BaseAgent, SessionHandler, run modes
 - [platform-layer.md](platform-layer.md) — AgentFleet surface, bootstrap, tools, schedulers
+- [tool-invocation-flow.md](tool-invocation-flow.md) — Full trace: LLM tool-use → dispatch → result → next iteration; inter-agent messaging contract
 - [getting-started.md](getting-started.md) — Step-by-step guide: bootstrap a new app with two agents

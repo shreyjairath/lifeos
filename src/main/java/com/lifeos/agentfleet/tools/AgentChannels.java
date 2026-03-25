@@ -35,12 +35,12 @@ public class AgentChannels implements com.lifeos.agent.ChannelLog {
     }
 
     /** Appends an exchange to the channel log and prunes to MAX_ENTRIES. */
-    public void append(String agentA, String agentB, String inbound, String response) {
-        var file = channelFile(agentA, agentB);
+    public void append(String fromAgent, String toAgent, String inbound, String response) {
+        var file = channelFile(fromAgent, toAgent);
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z"));
-        var entry = "## " + now + " | " + agentA + " → " + agentB + "\n"
+        var entry = "## " + now + " | " + fromAgent + " → " + toAgent + "\n"
                 + inbound + "\n\n"
-                + "**" + agentB + " replied:**\n" + response + "\n\n---\n\n";
+                + "**" + toAgent + " replied:**\n" + response + "\n\n---\n\n";
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, entry, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
@@ -50,7 +50,7 @@ public class AgentChannels implements com.lifeos.agent.ChannelLog {
         }
     }
 
-    /** Tool handler for read_agent_channel — returns last 10 entries. */
+    /** Tool handler for read_agent_message_history — returns last 10 entries. */
     public Map<String, Object> readChannel(String callerAgent, String partnerAgent) {
         var raw = loadFull(callerAgent, partnerAgent);
         if (raw.isBlank()) return Map.of("log", "No prior exchanges.");
@@ -64,7 +64,7 @@ public class AgentChannels implements com.lifeos.agent.ChannelLog {
 
     private static java.nio.file.Path channelFile(String agentA, String agentB) {
         var pair = agentA.compareTo(agentB) < 0 ? agentA + "-" + agentB : agentB + "-" + agentA;
-        return ToolsRegistry.AGENTS_DIR.resolve("inter-agent-channels").resolve(pair + ".md");
+        return ToolsRegistry.AGENTS_DIR.getParent().resolve("inter-agent-channels").resolve(pair + ".md");
     }
 
     private static void prune(java.nio.file.Path file) throws IOException {

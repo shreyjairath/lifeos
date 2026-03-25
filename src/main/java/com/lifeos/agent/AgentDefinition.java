@@ -16,7 +16,10 @@ public record AgentDefinition(
         List<String> identity,             // used in all modes (chat, post-session, heartbeat, messaging)
         ToolsFilter tools,                 // used in all modes; null = all tools
         Set<String> disabledModes,         // modes to skip; empty = all enabled
-        List<BackgroundMode> backgroundModes  // event-triggered bg runs; empty = none
+        List<BackgroundMode> backgroundModes,  // event-triggered bg runs; empty = none
+        String model,                      // overrides global model for chat runs; null = use global
+        String backgroundModel,            // overrides global background-model; null = use global
+        Reasoning reasoning                // overrides global reasoning config; null = use global
 ) {
     /**
      * Defines which tools are available.
@@ -28,9 +31,12 @@ public record AgentDefinition(
 
     /**
      * Maps an event bus trigger (e.g. "heartbeat_trigger") to a run mode name and prompt file.
-     * The trigger value should match a constant in AgentEvents.
+     * The trigger value must match the {@code type} of a {@code scheduled-triggers} entry in application.yml.
      */
-    public record BackgroundMode(String trigger, String mode, String promptFile) {}
+    public record BackgroundMode(String trigger, String promptFile) {}
+
+    /** Per-agent reasoning override. Mirrors AppConfig.Reasoning. */
+    public record Reasoning(String effort, Integer maxTokens) {}
 
     @SuppressWarnings("unchecked")
     public static AgentDefinition parse(Map<String, Object> map, String promptBase) {
@@ -42,10 +48,21 @@ public record AgentDefinition(
         var disabledList      = (List<String>) map.getOrDefault("disabled-modes", List.of());
         var bgRaw             = (List<Map<String, Object>>) map.getOrDefault("background-modes", List.of());
         var backgroundModes   = bgRaw.stream()
-                .map(m -> new BackgroundMode((String) m.get("trigger"), (String) m.get("mode"), (String) m.get("prompt")))
+                .map(m -> new BackgroundMode((String) m.get("trigger"), (String) m.get("prompt")))
                 .toList();
+        var model             = (String) map.get("model");
+        var backgroundModel   = (String) map.get("background-model");
+        var reasoningMap      = (Map<String, Object>) map.get("reasoning");
         return new AgentDefinition(name, title, description, promptBase, identity,
-                parseFilter(toolsMap), Set.copyOf(disabledList), backgroundModes);
+                parseFilter(toolsMap), Set.copyOf(disabledList), backgroundModes,
+                model, backgroundModel, parseReasoning(reasoningMap));
+    }
+
+    private static Reasoning parseReasoning(Map<String, Object> map) {
+        if (map == null) return null;
+        var effort    = (String) map.get("effort");
+        var maxTokens = map.get("max-tokens") instanceof Number n ? n.intValue() : null;
+        return new Reasoning(effort, maxTokens);
     }
 
     @SuppressWarnings("unchecked")

@@ -15,7 +15,7 @@ public class SessionController {
 
     @GetMapping("/sessions")
     public Map<String, Object> listSessions() {
-        return Map.of("sessions", agentFleet.listSessions("cos"));
+        return Map.of("sessions", agentFleet.listAllSessions());
     }
 
     @GetMapping("/sessions/{agentName}")

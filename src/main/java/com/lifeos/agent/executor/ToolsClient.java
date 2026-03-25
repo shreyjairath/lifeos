@@ -97,8 +97,8 @@ class ToolsClient {
             content = "{\"error\":\"Failed to serialize tool result\"}";
         }
         result.addMessage(Map.of(
-                "type", "tool_result",
-                "tool_use_id", toolUseId,
+                "role", "tool",
+                "tool_call_id", toolUseId,
                 "content", content
         ));
     }
@@ -112,8 +112,8 @@ class ToolsClient {
                 content = "{\"error\":\"" + error + "\"}";
             }
             result.addMessage(Map.of(
-                    "type", "tool_result",
-                    "tool_use_id", toolUse.get("id"),
+                    "role", "tool",
+                    "tool_call_id", toolUse.get("id"),
                     "content", content
             ));
         }
@@ -121,7 +121,7 @@ class ToolsClient {
 
     private void stubUndispatched(List<Map<String, Object>> toolUses, ToolsResult result, Exception exc) {
         var dispatchedIds = new HashSet<String>();
-        for (var msg : result.getMessages()) dispatchedIds.add((String) msg.get("tool_use_id"));
+        for (var msg : result.getMessages()) dispatchedIds.add((String) msg.get("tool_call_id"));
         var undispatched = toolUses.stream().filter(t -> !dispatchedIds.contains(t.get("id"))).toList();
         var errorMsg = exc.getMessage();
         stubTools(undispatched, result, errorMsg != null && !errorMsg.isEmpty() ? errorMsg : "Interrupted");

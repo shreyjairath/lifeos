@@ -2,13 +2,11 @@ package com.lifeos.agent.session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lifeos.config.AppConfig;
-import com.lifeos.agentfleet.EventBus;
 import com.lifeos.agent.PromptParts;
 import com.lifeos.agent.executor.LlmClient;
 import com.lifeos.agent.session.SessionStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -38,28 +36,17 @@ public class SessionHandler {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final AppConfig config;
     private final SessionStore store;
-    private final EventBus eventBus;
     private final LlmClient llmClient;
     private final String agentName;
     private final Consumer<String> onSessionClosed;
 
-    public SessionHandler(AppConfig config, EventBus eventBus, String agentName,
+    public SessionHandler(AppConfig config, String agentName,
                           Consumer<String> onSessionClosed) {
         this.config = config;
-        this.eventBus = eventBus;
         this.agentName = agentName;
         this.onSessionClosed = onSessionClosed;
         this.store = new SessionStore(agentName);
-        this.llmClient = new LlmClient(config.anthropicApiKey());
-    }
-
-    public void initListeners() {
-        eventBus.subscribe()
-                .filter(e -> "session_expiry_check_trigger".equals(e.get("type")))
-                .publishOn(Schedulers.boundedElastic())
-                .subscribe(
-                        e -> checkExpiredSessions(),
-                        err -> log.warn("SessionHandler session_expiry_check_trigger stream error: {}", err.getMessage()));
+        this.llmClient = new LlmClient(config.apiKey());
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
@@ -239,6 +226,7 @@ public class SessionHandler {
                     "title", meta.getOrDefault("title", sessionId),
                     "created_at", meta.getOrDefault("created_at", 0),
                     "last_message_at", meta.getOrDefault("last_message_at", 0),
+                    "last_input_tokens", meta.getOrDefault("last_input_tokens", 0),
                     "agent", meta.getOrDefault("agent", "cos")
             ));
         }
@@ -325,7 +313,7 @@ public class SessionHandler {
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    private void checkExpiredSessions() {
+    public void checkExpiredSessions() {
         for (var dir : store.listSessionDirs()) {
             var sessionId = dir.getFileName().toString();
             try {
@@ -351,7 +339,7 @@ public class SessionHandler {
             var result = new LlmClient.LlmResult();
             llmClient.stream(summaryModel(), PromptParts.load(SUMMARIZE_PROMPT_BASE, SUMMARIZE_PROMPT_FILE),
                     List.of(Map.<String, Object>of("role", "user", "content", transcript)),
-                    List.of(), 1024, result).blockLast();
+                    List.of(), 1024, null, result).blockLast();
             var text = result.getFullText().strip();
             if (text.isEmpty()) return;
 
@@ -401,8 +389,13 @@ public class SessionHandler {
             if (!"user".equals(role) && !"assistant".equals(role)) continue;
             var content = msg.get("content");
             var ts = msg.containsKey("_ts") ? ((Number) msg.get("_ts")).longValue() : 0L;
+            var reasoning = msg.get("reasoning") instanceof String s ? s : null;
             if (content instanceof String text) {
-                display.add(Map.of("role", role, "text", text, "raw_index", i, "ts", ts));
+                var entry = new LinkedHashMap<String, Object>();
+                entry.put("role", role); entry.put("text", text);
+                entry.put("raw_index", i); entry.put("ts", ts);
+                if (reasoning != null) entry.put("reasoning", reasoning);
+                display.add(entry);
             } else if (content instanceof List<?> blocks) {
                 var textParts = new ArrayList<String>();
                 for (var block : blocks) {
@@ -411,7 +404,13 @@ public class SessionHandler {
                     }
                 }
                 var text = String.join(" ", textParts);
-                if (!text.isEmpty()) display.add(Map.of("role", role, "text", text, "raw_index", i, "ts", ts));
+                if (!text.isEmpty()) {
+                    var entry = new LinkedHashMap<String, Object>();
+                    entry.put("role", role); entry.put("text", text);
+                    entry.put("raw_index", i); entry.put("ts", ts);
+                    if (reasoning != null) entry.put("reasoning", reasoning);
+                    display.add(entry);
+                }
             }
         }
         return display;

@@ -14,11 +14,13 @@ spring:
       enabled: true
 
 lifeos:
-  model: claude-sonnet-4-6
-  background-model: claude-sonnet-4-6
-  anthropic-api-key: ${ANTHROPIC_API_KEY}
+  api-key: ${OPENROUTER_API_KEY}
+  model: minimax/minimax-m2.7
+  background-model: minimax/minimax-m2.7
+  reasoning:
+    effort: medium        # "low" | "medium" | "high" — or use max-tokens instead
   session:
-    token-threshold: 50000
+    token-threshold: 100000
     time-threshold-hours: 4
   session-expiry-check:
     cron: "0 0 * * * *"      # top of every hour
@@ -27,3 +29,5 @@ lifeos:
       cron: "0 0 */6 * * *"  # midnight, 6am, noon, 6pm
     - type: self_eval_trigger
       cron: "0 0 5 * * *"    # 5am daily
+    - type: self_learning_trigger
+      cron: "0 0 3 * * *"    # 3am daily

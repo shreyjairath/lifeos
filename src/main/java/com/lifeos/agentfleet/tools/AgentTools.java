@@ -111,8 +111,8 @@ public class AgentTools {
             if (tools != null) {
                 newTools = tools;
             } else {
-                var chatToolsMap = (Map<String, Object>) currentYaml.get("chat-tools");
-                newTools = chatToolsMap != null ? (List<String>) chatToolsMap.get("names") : List.of();
+                var toolsMap = (Map<String, Object>) currentYaml.get("tools");
+                newTools = toolsMap != null ? (List<String>) toolsMap.getOrDefault("names", List.of()) : List.of();
             }
 
             Files.writeString(agentDir.resolve("identity.md"), newWhoYouAre != null ? newWhoYouAre : "");
@@ -124,7 +124,7 @@ public class AgentTools {
             if (newHeartbeat != null && !newHeartbeat.isBlank())
                 Files.writeString(agentDir.resolve("heartbeat.md"), newHeartbeat);
 
-            var yaml = buildAgentYaml(name, newTitle, newDesc, newPostSession, newSelfEval, newHeartbeat, newTools);
+            var yaml = buildAgentYaml(name, newTitle, newDesc, newSelfEval, newHeartbeat, newTools);
             Files.writeString(agentDir.resolve("agent.yml"), yaml);
 
             Map<String, Object> yamlMap = new Yaml().load(yaml);
@@ -167,7 +167,7 @@ public class AgentTools {
                 Files.writeString(agentDir.resolve("heartbeat.md"), heartbeatInstructions);
             }
 
-            var yaml = buildAgentYaml(name, title, description, postSessionInstructions, selfEvalInstructions, heartbeatInstructions, tools);
+            var yaml = buildAgentYaml(name, title, description, selfEvalInstructions, heartbeatInstructions, tools);
             Files.writeString(agentDir.resolve("agent.yml"), yaml);
 
             var yamlParser = new Yaml();
@@ -181,7 +181,7 @@ public class AgentTools {
         }
     }
 
-    private String buildAgentYaml(String name, String title, String description, String postSessionInstructions,
+    private String buildAgentYaml(String name, String title, String description,
                                    String selfEvalInstructions, String heartbeatInstructions, List<String> tools) {
         // agent_bash is always available — workspace is provisioned by AgentRegistry
         var allTools = new ArrayList<>(tools);
@@ -192,19 +192,14 @@ public class AgentTools {
         sb.append("title: ").append(title != null && !title.isBlank() ? title : name).append("\n");
         if (description != null && !description.isBlank())
             sb.append("description: ").append(description).append("\n");
-        sb.append("persona:\n  - identity.md\n  - chat.md\n");
-        if (postSessionInstructions != null && !postSessionInstructions.isBlank()) {
-            sb.append("post-session-prompt:\n  - post-session.md\n");
-            sb.append("post-session-tools:\n  mode: include\n  names:\n");
-            for (var tool : allTools) sb.append("    - ").append(tool).append("\n");
-        }
+        sb.append("identity:\n  - identity.md\n  - chat.md\n");
         if (selfEvalInstructions != null && !selfEvalInstructions.isBlank()) {
             sb.append("self-eval-prompt: self-eval.md\n");
         }
         if (heartbeatInstructions != null && !heartbeatInstructions.isBlank()) {
             sb.append("heartbeat-prompt: heartbeat.md\n");
         }
-        sb.append("chat-tools:\n  mode: include\n  names:\n");
+        sb.append("tools:\n  mode: include\n  names:\n");
         for (var tool : allTools) sb.append("    - ").append(tool).append("\n");
         return sb.toString();
     }

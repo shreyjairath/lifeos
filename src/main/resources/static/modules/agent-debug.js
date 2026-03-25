@@ -1,5 +1,7 @@
 const container = document.getElementById("agent-debug-panel");
 
+// ── Pricing ───────────────────────────────────────────────────────────────────
+
 const PRICING = {
   "claude-sonnet-4-6":        { input: 3.00,  output: 15.00 },
   "claude-opus-4-6":          { input: 15.00, output: 75.00 },
@@ -93,53 +95,66 @@ function renderTurns(turns) {
   wrap.className = "debug-turns";
   for (const turn of turns) {
     const turnEl = document.createElement("div");
-    turnEl.className = `debug-turn debug-turn-${turn.role}`;
+    const role = turn.role;
+    turnEl.className = `debug-turn debug-turn-${role}`;
     const label = document.createElement("span");
     label.className = "debug-turn-label";
-    const isToolResults = turn.role !== "assistant" && Array.isArray(turn.content)
-      && turn.content.some(b => b?.type === "tool_result");
-    label.textContent = turn.role === "assistant" ? "assistant" : isToolResults ? "tool results" : "user";
+    label.textContent = role === "assistant" ? "assistant" : role === "tool" ? "tool result" : "user";
     turnEl.appendChild(label);
-    if (typeof turn.content === "string") {
+
+    // Reasoning block
+    if (typeof turn.reasoning === "string" && turn.reasoning) {
+      const details = document.createElement("details");
+      details.className = "debug-reasoning-block";
+      const summary = document.createElement("summary");
+      summary.textContent = "Reasoning";
+      const pre = document.createElement("pre");
+      pre.className = "debug-reasoning-pre";
+      pre.textContent = turn.reasoning;
+      details.appendChild(summary);
+      details.appendChild(pre);
+      turnEl.appendChild(details);
+    }
+
+    // OpenAI format: assistant text content (string) — skip for tool results (handled below)
+    if (typeof turn.content === "string" && turn.content && role !== "tool") {
       const p = document.createElement("div");
       p.className = "debug-turn-text";
       p.textContent = turn.content;
       turnEl.appendChild(p);
-      wrap.appendChild(turnEl);
-      continue;
     }
-    for (const block of (turn.content || [])) {
-      if (block.type === "text" && block.text) {
-        const p = document.createElement("div");
-        p.className = "debug-turn-text";
-        p.textContent = block.text;
-        turnEl.appendChild(p);
-      } else if (block.type === "tool_use") {
+
+    // OpenAI format: assistant tool_calls array
+    if (Array.isArray(turn.tool_calls)) {
+      for (const tc of turn.tool_calls) {
         const row = document.createElement("div");
         row.className = "debug-tool-row";
         const name = document.createElement("span");
         name.className = "debug-tool-name";
-        name.textContent = block.name;
+        name.textContent = tc.function?.name ?? tc.id;
         row.appendChild(name);
-        let inputJson = "";
-        try { inputJson = JSON.stringify(block.input || {}, null, 2); } catch { inputJson = String(block.input || ""); }
-        const [t, p] = makeTogglePre("▸ input", "▾ input", inputJson);
-        row.appendChild(t); row.appendChild(p);
-        turnEl.appendChild(row);
-      } else if (block.type === "tool_result") {
-        const row = document.createElement("div");
-        row.className = "debug-tool-row";
-        const content = typeof block.content === "string" ? block.content : JSON.stringify(block.content || "", null, 2);
-        const [t, p] = makeTogglePre("▸ result", "▾ result", content);
+        const args = tc.function?.arguments ?? "";
+        let argsJson = args;
+        try { argsJson = JSON.stringify(JSON.parse(args), null, 2); } catch { /* keep raw */ }
+        const [t, p] = makeTogglePre("▸ input", "▾ input", argsJson);
         row.appendChild(t); row.appendChild(p);
         turnEl.appendChild(row);
       }
     }
+
+    // OpenAI format: role=tool message (string content)
+    if (role === "tool" && typeof turn.content === "string") {
+      const row = document.createElement("div");
+      row.className = "debug-tool-row";
+      const [t, p] = makeTogglePre("▸ result", "▾ result", turn.content);
+      row.appendChild(t); row.appendChild(p);
+      turnEl.appendChild(row);
+    }
+
     wrap.appendChild(turnEl);
   }
   return wrap;
 }
-
 
 function renderRun(run) {
   const card = document.createElement("div");
@@ -277,31 +292,380 @@ function renderRun(run) {
   return card;
 }
 
+function escHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+
+// ── Observability shell ───────────────────────────────────────────────────────
+
 const ALL_MODES = ["chat", "post-session", "heartbeat", "self-eval", "inter-agent-message"];
 
-function renderAgent(agent, initialRuns) {
-  let runs = initialRuns;
-  let activeFilter = "all";
-  let limit = 20;
+const STATS_LIMIT = 100; // backend max — used for all aggregate stats
 
-  const section = document.createElement("div");
-  section.className = "debug-agent";
+let selectedAgent = null;
+let selectedLimit = 20;
+let selectedFilter = "all";
+let agentItemEls = {};    // name → .obs-agent-item element
+let agentsData = [];      // [{name, title}]
+let agentStatsCache = {}; // name → runs[] fetched at STATS_LIMIT, used only for stats
 
-  // Title bar + trigger buttons
-  const titleBar = document.createElement("div");
-  titleBar.className = "debug-agent-title";
-  titleBar.innerHTML = `<span class="debug-agent-name">${escHtml(agent.name)}</span>
-    <span class="debug-agent-title-text">${escHtml(agent.title || "")}</span>`;
+// Shell DOM refs (set once in buildShell)
+const CRON_LABELS = {
+  session_closed:        "on session close",
+  heartbeat_trigger:     "every 6h",
+  self_eval_trigger:     "daily 5am",
+  self_learning_trigger: "daily 3am",
+};
 
+let agentListEl = null;
+let runPanelHeaderEl = null;
+let tasksSectionEl = null;
+let filterBarEl = null;
+let runPanelBodyEl = null;
+
+function statusDotClass(runs) {
+  if (!runs || runs.length === 0) return "grey";
+  const last = runs[0].started_at;
+  const diffMin = (Date.now() - last) / 60000;
+  if (diffMin < 10) return "green";
+  if (diffMin < 120) return "yellow";
+  return "grey";
+}
+
+function agentStats(runs) {
+  const count = runs.length;
+  const totalIn  = runs.reduce((s, r) => s + (r.input_tokens  || 0), 0);
+  const totalOut = runs.reduce((s, r) => s + (r.output_tokens || 0), 0);
+  const totalCost = runs.reduce((s, r) => s + (calcCost(r) ?? 0), 0);
+  return { count, totalIn, totalOut, totalCost };
+}
+
+function buildShell() {
+  container.innerHTML = "";
+
+  // Agent list lives in the sidebar
+  agentListEl = document.getElementById("monitor-agent-list");
+  agentListEl.innerHTML = "";
+
+  // Run panel fills the main content area
+  runPanelHeaderEl = document.createElement("div");
+  runPanelHeaderEl.className = "obs-run-panel-header";
+
+  filterBarEl = document.createElement("div");
+  filterBarEl.className = "obs-filter-bar debug-filter-bar";
+
+  runPanelBodyEl = document.createElement("div");
+  runPanelBodyEl.className = "obs-run-panel-body";
+
+  tasksSectionEl = document.createElement("div");
+  tasksSectionEl.className = "obs-tasks-section";
+
+  const runPanel = document.createElement("div");
+  runPanel.className = "obs-run-panel";
+  runPanel.appendChild(runPanelHeaderEl);
+  runPanel.appendChild(tasksSectionEl);
+  runPanel.appendChild(filterBarEl);
+  runPanel.appendChild(runPanelBodyEl);
+
+  container.appendChild(runPanel);
+}
+
+function renderAgentListItems() {
+  // Remove existing items (keep header)
+  agentListEl.querySelectorAll(".obs-agent-item").forEach(el => el.remove());
+  agentItemEls = {};
+
+  for (const agent of agentsData) {
+    const runs = agentStatsCache[agent.name] || [];
+    const { count, totalIn, totalOut, totalCost } = agentStats(runs);
+    const lastRun = runs.length > 0 ? runs[0].started_at : null;
+    const dotClass = statusDotClass(runs);
+
+    const item = document.createElement("div");
+    item.className = "obs-agent-item" + (selectedAgent?.name === agent.name ? " selected" : "");
+
+    const nameLine = document.createElement("div");
+    nameLine.className = "obs-agent-item-name";
+    const dot = document.createElement("span");
+    dot.className = `obs-status-dot ${dotClass}`;
+    nameLine.appendChild(dot);
+    nameLine.appendChild(document.createTextNode(agent.title || agent.name));
+
+    const meta = document.createElement("div");
+    meta.className = "obs-agent-item-meta";
+    const parts = [];
+    if (count > 0) parts.push(`${count}${runs.length === STATS_LIMIT ? "+" : ""} run${count !== 1 ? "s" : ""}`);
+    if (totalCost > 0) parts.push(fmtCost(totalCost));
+    if (lastRun) parts.push(relativeTime(lastRun));
+    meta.textContent = parts.join(" · ") || "no runs";
+
+    item.appendChild(nameLine);
+    item.appendChild(meta);
+    item.addEventListener("click", () => {
+      // Show runs panel, clear any active tab highlight
+      document.querySelectorAll(".agents-tab-panel").forEach(p => p.classList.add("hidden"));
+      document.getElementById("agents-runs-panel")?.classList.remove("hidden");
+      document.querySelectorAll(".monitor-nav-btn").forEach(b => b.classList.remove("active"));
+      selectAgent(agent);
+    });
+    agentListEl.appendChild(item);
+    agentItemEls[agent.name] = item;
+  }
+
+}
+
+function isTaskOverdue(task, nowSec) {
+  if (task.cadence_hours != null) {
+    if (task.last_run == null) return true;
+    return task.last_run + task.cadence_hours * 3600 <= nowSec;
+  }
+  if (task.run_at != null) return task.last_run == null && task.run_at <= nowSec;
+  return false;
+}
+
+function renderTasksSection(agent, tasks) {
+  tasksSectionEl.innerHTML = "";
+  const bgs = agent.backgroundModes || [];
+  // post-session always runs for every agent (hardcoded in BaseAgent)
+  const total = 1 + bgs.length + tasks.length;
+  if (total === 0) return;
+
+  let expanded = true;
+
+  const header = document.createElement("div");
+  header.className = "obs-tasks-toggle";
+  header.textContent = `▾ SCHEDULED TASKS (${total})`;
+
+  const body = document.createElement("div");
+  body.className = "obs-tasks-body";
+
+  // Post-session — always runs for every agent on session close
+  {
+    const row = document.createElement("div");
+    row.className = "obs-task-row";
+    const nameEl = document.createElement("span");
+    nameEl.className = "obs-task-name";
+    nameEl.textContent = "session_closed";
+    const cadenceEl = document.createElement("span");
+    cadenceEl.className = "obs-task-meta";
+    cadenceEl.textContent = "on session close";
+    const emptyA = document.createElement("span");
+    const emptyB = document.createElement("span");
+    const typeEl = document.createElement("span");
+    typeEl.className = "obs-task-platform";
+    typeEl.textContent = "(platform)";
+    row.appendChild(nameEl);
+    row.appendChild(cadenceEl);
+    row.appendChild(emptyA);
+    row.appendChild(emptyB);
+    row.appendChild(typeEl);
+    body.appendChild(row);
+  }
+
+  // Platform trigger rows (from agent.backgroundModes)
+  for (const bg of bgs) {
+    const row = document.createElement("div");
+    row.className = "obs-task-row";
+    const nameEl = document.createElement("span");
+    nameEl.className = "obs-task-name";
+    nameEl.textContent = bg.trigger;
+    const cadenceEl = document.createElement("span");
+    cadenceEl.className = "obs-task-meta";
+    cadenceEl.textContent = CRON_LABELS[bg.trigger] || "—";
+    const emptyA = document.createElement("span");
+    const emptyB = document.createElement("span");
+    const typeEl = document.createElement("span");
+    typeEl.className = "obs-task-platform";
+    typeEl.textContent = "(platform)";
+    row.appendChild(nameEl);
+    row.appendChild(cadenceEl);
+    row.appendChild(emptyA);
+    row.appendChild(emptyB);
+    row.appendChild(typeEl);
+    body.appendChild(row);
+  }
+
+  // Workspace task rows
+  const nowSec = Date.now() / 1000;
+  for (const t of tasks) {
+    const overdue = isTaskOverdue(t, nowSec);
+    const cadence = t.cadence_hours != null
+      ? `every ${t.cadence_hours}h`
+      : t.run_at != null
+        ? `once ${new Date(t.run_at * 1000).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}`
+        : "—";
+    const lastRunStr = t.last_run ? relativeTime(t.last_run * 1000) : "never";
+    const nextDueStr = t.next_due ? relativeTime(new Date(t.next_due).getTime()) : "—";
+
+    const row = document.createElement("div");
+    row.className = "obs-task-row";
+    const nameEl = document.createElement("span");
+    nameEl.className = "obs-task-name";
+    nameEl.textContent = t.name;
+    nameEl.title = t.description || "";
+    const cadenceEl = document.createElement("span");
+    cadenceEl.className = "obs-task-meta";
+    cadenceEl.textContent = cadence;
+    const lastEl = document.createElement("span");
+    lastEl.className = "obs-task-meta";
+    lastEl.textContent = lastRunStr;
+    const nextEl = document.createElement("span");
+    nextEl.className = "obs-task-meta";
+    nextEl.textContent = nextDueStr;
+    const statusEl = document.createElement("span");
+    statusEl.className = overdue ? "obs-task-overdue" : "obs-task-ok";
+    statusEl.textContent = overdue ? "OVERDUE" : "✓";
+    row.appendChild(nameEl);
+    row.appendChild(cadenceEl);
+    row.appendChild(lastEl);
+    row.appendChild(nextEl);
+    row.appendChild(statusEl);
+    body.appendChild(row);
+  }
+
+  header.addEventListener("click", () => {
+    expanded = !expanded;
+    body.classList.toggle("hidden", !expanded);
+    header.textContent = (expanded ? "▾" : "▸") + ` SCHEDULED TASKS (${total})`;
+  });
+
+  tasksSectionEl.appendChild(header);
+  tasksSectionEl.appendChild(body);
+}
+
+function renderDefinitionSection(agent, defData) {
+  // Remove any existing def block from header
+  runPanelHeaderEl.querySelectorAll(".obs-def-inheader").forEach(el => el.remove());
+
+  const block = document.createElement("div");
+  block.className = "obs-def-inheader";
+
+  // Description
+  if (agent.description) {
+    const desc = document.createElement("div");
+    desc.className = "obs-def-desc";
+    desc.textContent = agent.description;
+    block.appendChild(desc);
+  }
+
+  // Model / reasoning config line
+  const modelStr  = agent.model           ? `Model: ${agent.model}`             : "Model: global";
+  const bgModel   = agent.backgroundModel ? `BG: ${agent.backgroundModel}`      : null;
+  const reasoning = agent.reasoning?.effort ? `Reasoning: ${agent.reasoning.effort}` : null;
+  const configLine = document.createElement("div");
+  configLine.className = "obs-def-config";
+  configLine.textContent = [modelStr, bgModel, reasoning].filter(Boolean).join("  ·  ");
+  block.appendChild(configLine);
+
+  // Tools filter line
+  if (agent.tools) {
+    const names  = agent.tools.names || [];
+    const shown  = names.slice(0, 5).join(", ");
+    const rest   = names.length > 5 ? ` +${names.length - 5} more` : "";
+    const toolsLine = document.createElement("div");
+    toolsLine.className = "obs-def-config";
+    toolsLine.textContent = `Tools: ${agent.tools.mode} [${shown}${rest}]`;
+    toolsLine.title = names.join(", ");
+    block.appendChild(toolsLine);
+  }
+
+  // Identity prompt (collapsible)
+  if (defData?.identityText) {
+    const [t, p] = makeTogglePre(
+      `▸ Identity  (${defData.identityText.length.toLocaleString()} chars)`,
+      `▾ Identity  (${defData.identityText.length.toLocaleString()} chars)`,
+      defData.identityText
+    );
+    t.className = "obs-def-prompt-toggle";
+    p.className = "debug-prompt hidden";
+    block.appendChild(t);
+    block.appendChild(p);
+  }
+
+  // Background-mode prompts (one per trigger)
+  if (defData?.backgroundModePrompts) {
+    for (const [trigger, text] of Object.entries(defData.backgroundModePrompts)) {
+      if (!text) continue;
+      const [t, p] = makeTogglePre(
+        `▸ ${trigger}  (${text.length.toLocaleString()} chars)`,
+        `▾ ${trigger}  (${text.length.toLocaleString()} chars)`,
+        text
+      );
+      t.className = "obs-def-prompt-toggle";
+      p.className = "debug-prompt hidden";
+      block.appendChild(t);
+      block.appendChild(p);
+    }
+  }
+
+  runPanelHeaderEl.appendChild(block);
+}
+
+async function selectAgent(agent, silent = false) {
+  selectedAgent = agent;
+  if (!silent) {
+    selectedLimit = 20;
+    selectedFilter = "all";
+  }
+
+  // Highlight sidebar item
+  Object.values(agentItemEls).forEach(el => el.classList.remove("selected"));
+  if (agentItemEls[agent.name]) agentItemEls[agent.name].classList.add("selected");
+
+  // Fetch panel display runs, stats runs, tasks, and definition in parallel
+  let runs, statsRuns, agentTasks, agentDef;
+  try {
+    [runs, statsRuns, agentTasks, agentDef] = await Promise.all([
+      fetch(`/api/agents/${agent.name}/runs?limit=${selectedLimit}`).then(r => r.json()),
+      fetch(`/api/agents/${agent.name}/runs?limit=${STATS_LIMIT}`).then(r => r.json()),
+      fetch(`/api/agents/${agent.name}/tasks`).then(r => r.json()).then(d => d.tasks || []),
+      fetch(`/api/agents/${agent.name}/definition`).then(r => r.json()).catch(() => null),
+    ]);
+  } catch {
+    runs = []; statsRuns = []; agentTasks = []; agentDef = null;
+  }
+
+  // Update stats cache and sidebar
+  agentStatsCache[agent.name] = statsRuns;
+  renderAgentListItems();
+
+  // Render header — stats always from the full STATS_LIMIT fetch
+  runPanelHeaderEl.innerHTML = "";
+
+  const infoEl = document.createElement("div");
+  infoEl.className = "obs-agent-info";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "obs-agent-title";
+  titleEl.textContent = agent.title || agent.name;
+
+  const { count, totalIn, totalOut, totalCost } = agentStats(statsRuns);
+  const hasTokens = totalIn > 0 || totalOut > 0;
+  const subtitleEl = document.createElement("div");
+  subtitleEl.className = "obs-agent-subtitle";
+  const subtitleParts = [`${count}${statsRuns.length === STATS_LIMIT ? "+" : ""} run${count !== 1 ? "s" : ""}`];
+  if (hasTokens) subtitleParts.push(`${fmtTokens(totalIn)}↑ ${fmtTokens(totalOut)}↓`);
+  if (totalCost > 0) subtitleParts.push(fmtCost(totalCost));
+  if (statsRuns.length === STATS_LIMIT) subtitleParts.push("last 100");
+  subtitleEl.textContent = subtitleParts.join(" · ");
+
+  infoEl.appendChild(titleEl);
+  infoEl.appendChild(subtitleEl);
+  runPanelHeaderEl.appendChild(infoEl);
+
+  // Trigger buttons
   const btnsDiv = document.createElement("div");
-  btnsDiv.className = "debug-trigger-btns";
-
+  btnsDiv.className = "obs-trigger-btns";
   for (const [label, eventType] of [["Heartbeat", "heartbeat_trigger"], ["Self-Eval", "self_eval_trigger"]]) {
     const btn = document.createElement("button");
     btn.className = "debug-trigger-btn";
     btn.textContent = label;
-    btn.addEventListener("click", async e => {
-      e.stopPropagation();
+    btn.addEventListener("click", async () => {
       btn.disabled = true;
       btn.textContent = "…";
       try {
@@ -315,99 +679,144 @@ function renderAgent(agent, initialRuns) {
     });
     btnsDiv.appendChild(btn);
   }
-  titleBar.appendChild(btnsDiv);
+  runPanelHeaderEl.appendChild(btnsDiv);
 
-  // Mode filter bar
-  const filterBar = document.createElement("div");
-  filterBar.className = "debug-filter-bar";
+  // Render definition (description + config + prompt toggles) into the header
+  renderDefinitionSection(agent, agentDef);
+
+  // Render tasks section
+  renderTasksSection(agent, agentTasks);
+
+  // Render filter bar
+  renderFilterBar(runs);
+
+  // Render run cards
+  renderRunCards(runs);
+}
+
+function renderFilterBar(runs) {
+  filterBarEl.innerHTML = "";
 
   const runCount = document.createElement("span");
   runCount.className = "debug-run-count";
 
-  const runsDiv = document.createElement("div");
-  runsDiv.className = "debug-agent-runs";
+  for (const mode of ["all", ...ALL_MODES]) {
+    const btn = document.createElement("button");
+    btn.className = "debug-filter-btn" + (mode === selectedFilter ? " active" : "");
+    btn.textContent = mode;
+    btn.dataset.mode = mode;
+    btn.addEventListener("click", () => {
+      selectedFilter = mode;
+      filterBarEl.querySelectorAll(".debug-filter-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      // Re-render cards with current runs (re-fetch not needed)
+      fetch(`/api/agents/${selectedAgent.name}/runs?limit=${selectedLimit}`)
+        .then(r => r.json())
+        .then(runs => renderRunCards(runs))
+        .catch(() => {});
+    });
+    filterBarEl.appendChild(btn);
+  }
+  filterBarEl.appendChild(runCount);
+}
 
-  function render() {
-    const filtered = activeFilter === "all" ? runs : runs.filter(r => r.mode === activeFilter || r.mode.startsWith(activeFilter + " "));
+function renderRunCards(allRuns) {
+  runPanelBodyEl.innerHTML = "";
+
+  const filtered = selectedFilter === "all"
+    ? allRuns
+    : allRuns.filter(r => r.mode === selectedFilter || r.mode.startsWith(selectedFilter + " "));
+
+  // Update run count in filter bar
+  const runCountEl = filterBarEl.querySelector(".debug-run-count");
+  if (runCountEl) {
     const totalIn  = filtered.reduce((s, r) => s + (r.input_tokens  || 0), 0);
     const totalOut = filtered.reduce((s, r) => s + (r.output_tokens || 0), 0);
     const totalCost = filtered.reduce((s, r) => s + (calcCost(r) ?? 0), 0);
     const hasTokens = totalIn > 0 || totalOut > 0;
-    runCount.textContent = hasTokens
+    runCountEl.textContent = hasTokens
       ? `${filtered.length} run${filtered.length !== 1 ? "s" : ""} · ${fmtTokens(totalIn)}↑ ${fmtTokens(totalOut)}↓ · ${fmtCost(totalCost)}`
       : `${filtered.length} run${filtered.length !== 1 ? "s" : ""}`;
-    runsDiv.innerHTML = "";
-    if (filtered.length === 0) {
-      runsDiv.innerHTML = `<div class="debug-empty">No ${activeFilter === "all" ? "" : activeFilter + " "}runs recorded.</div>`;
-    } else {
-      filtered.forEach(run => runsDiv.appendChild(renderRun(run)));
-    }
   }
 
-  for (const mode of ["all", ...ALL_MODES]) {
-    const btn = document.createElement("button");
-    btn.className = "debug-filter-btn" + (mode === "all" ? " active" : "");
-    btn.textContent = mode;
-    btn.dataset.mode = mode;
-    btn.addEventListener("click", () => {
-      filterBar.querySelectorAll(".debug-filter-btn").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeFilter = mode;
-      render();
-    });
-    filterBar.appendChild(btn);
+  if (filtered.length === 0) {
+    runPanelBodyEl.innerHTML = `<div class="debug-empty">No ${selectedFilter === "all" ? "" : selectedFilter + " "}runs recorded.</div>`;
+    return;
   }
-  filterBar.appendChild(runCount);
+
+  filtered.forEach(run => runPanelBodyEl.appendChild(renderRun(run)));
 
   // Load more button
   const loadMore = document.createElement("button");
   loadMore.className = "debug-load-more";
   loadMore.textContent = "Load more";
   loadMore.addEventListener("click", async () => {
-    limit += 20;
+    selectedLimit = Math.min(selectedLimit + 20, 100);
     loadMore.disabled = true;
     loadMore.textContent = "Loading…";
     try {
-      runs = await fetch(`/api/agents/${agent.name}/runs?limit=${limit}`).then(r => r.json());
-      render();
-    } catch (err) {
-      // ignore
+      const runs = await fetch(`/api/agents/${selectedAgent.name}/runs?limit=${selectedLimit}`).then(r => r.json());
+      agentRunsCache[selectedAgent.name] = runs;
+      renderRunCards(runs);
+    } catch {
+      loadMore.textContent = "Load more";
+      loadMore.disabled = false;
     }
-    loadMore.textContent = "Load more";
-    loadMore.disabled = false;
   });
-
-  render();
-
-  section.appendChild(titleBar);
-  section.appendChild(filterBar);
-  section.appendChild(runsDiv);
-  section.appendChild(loadMore);
-  return section;
+  runPanelBodyEl.appendChild(loadMore);
 }
 
-function escHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+async function refreshAgentList() {
+  await Promise.all(
+    agentsData.map(a =>
+      fetch(`/api/agents/${a.name}/runs?limit=${STATS_LIMIT}`)
+        .then(r => r.json())
+        .then(runs => { agentStatsCache[a.name] = runs; })
+        .catch(() => {})
+    )
+  );
+  renderAgentListItems();
 }
+
+
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function load() {
-  container.innerHTML = `<div class="debug-loading">Loading agent runs…</div>`;
+  container.innerHTML = `<div class="debug-loading">Loading agents…</div>`;
   try {
-    const agents = await fetch("/api/agents").then(r => r.json());
-    const runResults = await Promise.all(
-      agents.map(a => fetch(`/api/agents/${a.name}/runs?limit=20`).then(r => r.json()).then(runs => ({ agent: a, runs })))
-    );
-    container.innerHTML = "";
-    for (const { agent, runs } of runResults) {
-      container.appendChild(renderAgent(agent, runs));
-    }
-    if (agents.length === 0) {
+    agentsData = await fetch("/api/agents").then(r => r.json());
+
+    if (agentsData.length === 0) {
       container.innerHTML = `<div class="debug-empty">No agents registered.</div>`;
+      return;
     }
+
+    // Fetch up to STATS_LIMIT runs per agent for sidebar stats
+    await Promise.all(
+      agentsData.map(a =>
+        fetch(`/api/agents/${a.name}/runs?limit=${STATS_LIMIT}`)
+          .then(r => r.json())
+          .then(runs => { agentStatsCache[a.name] = runs; })
+          .catch(() => { agentStatsCache[a.name] = []; })
+      )
+    );
+
+    buildShell();
+    renderAgentListItems();
+    await selectAgent(agentsData[0]);
+
+    // Live refresh via event bus
+    const es = new EventSource("/api/events");
+    es.onmessage = async e => {
+      try {
+        const ev = JSON.parse(e.data);
+        if (["session_closed", "heartbeat_trigger", "self_eval_trigger", "agent_run"].includes(ev.type)) {
+          await refreshAgentList();
+          if (selectedAgent) await selectAgent(selectedAgent, true);
+        }
+      } catch { /* ignore */ }
+    };
+
   } catch (err) {
     container.innerHTML = `<div class="debug-empty">Failed to load: ${escHtml(err.message)}</div>`;
   }

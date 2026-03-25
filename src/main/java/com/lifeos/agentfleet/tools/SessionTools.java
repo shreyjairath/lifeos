@@ -83,14 +83,16 @@ public class SessionTools {
 
     public static final List<Map<String, Object>> DEFINITIONS = List.of(
             tool("list_sessions",
-                    "List past sessions with their date and title. Use this to find relevant past conversations before reading a specific session summary.",
+                    "List past sessions with their date and title. " +
+                    "Start here. Find the session_id, then call read_session_summary for an overview or read_session_transcript for the full conversation.",
                     Map.of(), new String[]{}),
             tool("read_session_summary",
                     "Read the summary of a past session by its session_id.",
                     props(prop("session_id", "string", "Session ID from list_sessions")),
                     "session_id"),
             tool("read_session_transcript",
-                    "Read the conversation transcript of a past session (user and assistant messages only, no tool calls). Use after list_sessions to recall the actual conversation.",
+                    "Read the conversation transcript of a past session (user and assistant messages only, no tool calls). " +
+                    "Call list_sessions first to find the session_id. Use read_session_summary if you only need an overview — transcripts are large.",
                     props(prop("session_id", "string", "Session ID from list_sessions")),
                     "session_id")
     );

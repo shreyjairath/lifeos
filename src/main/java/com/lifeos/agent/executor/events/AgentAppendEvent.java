@@ -1,12 +1,11 @@
 package com.lifeos.agent.executor.events;
 
-import java.util.List;
 import java.util.Map;
 
 /**
  * Signals the caller to append a message to persistent history.
+ * The message is a complete OpenAI-format message map.
  */
-public record AgentAppendEvent(
-    String role,
-    List<Map<String, Object>> content
-) implements ExecutorEvent {}
+public record AgentAppendEvent(Map<String, Object> message) implements ExecutorEvent {
+    public String role() { return (String) message.get("role"); }
+}

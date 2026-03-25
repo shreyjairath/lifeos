@@ -2,6 +2,19 @@
 
 lifeos is a personal life-OS: a Spring Boot (Java 25) + WebFlux backend with a vanilla JS frontend, wrapping Claude (raw Anthropic HTTP API) into a persistent multi-agent personal assistant called **chief**.
 
+## Docs
+
+Detailed architecture and design docs live in `docs/`:
+
+| File | Contents |
+|------|----------|
+| `docs/architecture.md` | System overview and layer diagram |
+| `docs/getting-started.md` | Setup and first-run guide |
+| `docs/agent-layer.md` | Agent execution model, prompt modes, session lifecycle |
+| `docs/platform-layer.md` | AgentFleet, AgentRegistry, routing, schedulers |
+| `docs/background-triggers.md` | Heartbeat, self-eval, and scheduled trigger system |
+| `docs/tool-invocation-flow.md` | Tool dispatch, ToolsRegistry, per-agent filtering |
+
 ## Product Vision
 
 An agent team that knows you deeply and grows with you over time. Each agent is a specialist — therapist, dating coach, chief of staff, real estate advisor — sharing a common runtime but operating independently. The long-term vision: autocomplete everything in a person's life that can be automated or assisted.

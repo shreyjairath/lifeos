@@ -41,6 +41,9 @@ public class Bash {
     }
 
     public Map<String, Object> bash(String command) {
+        if (command == null || command.isBlank()) {
+            return Map.of("error", "No command provided");
+        }
         for (var blocked : BLOCKED) {
             if (blocked.matcher(command).find())
                 return Map.of("error", "Blocked command pattern: " + command);

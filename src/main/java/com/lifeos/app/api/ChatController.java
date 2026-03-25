@@ -24,7 +24,7 @@ public class ChatController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request) {
-        return agentFleet.handleMessage(request.sessionId(), request.message(), request.agent());
+        return agentFleet.handleMessage(request.sessionId(), request.message(), request.agent(), request.model());
     }
 
     @GetMapping("/chat/{agentName}/{sessionId}")

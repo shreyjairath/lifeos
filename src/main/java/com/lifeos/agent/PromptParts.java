@@ -6,17 +6,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Loads prompt files from classpath, with filesystem fallback for dynamically created agents.
+ * Loads prompt files with a 3-tier override chain:
  *
- * Two variants:
- *   load(name)       — classpath /prompt-parts/{name}
- *   load(base, name) — classpath /{base}/{name}, fallback to filesystem {base}/{name}
+ *   load(name)       — /prompt-parts/{name} (classpath only)
+ *   load(base, name) — /{base}/{name} (classpath)
+ *                    → {base}/{name} (filesystem, for .user-data agents)
+ *                    → /prompt-parts/{name} (generic fallback)
  */
 public final class PromptParts {
 
     private PromptParts() {}
 
-    /** Loads a prompt file from classpath /{base}/{name}, falling back to filesystem {base}/{name}. */
+    /**
+     * Loads a prompt file with override chain:
+     *   1. Classpath /{base}/{name}
+     *   2. Filesystem {base}/{name}
+     *   3. Classpath /prompt-parts/{name}  (generic fallback)
+     */
     public static String load(String base, String name) {
         try (var stream = PromptParts.class.getResourceAsStream("/" + base + "/" + name)) {
             if (stream != null) return new String(stream.readAllBytes(), StandardCharsets.UTF_8).strip();
@@ -25,6 +31,8 @@ public final class PromptParts {
             var file = Path.of(base, name);
             if (Files.exists(file)) return Files.readString(file, StandardCharsets.UTF_8).strip();
         } catch (IOException ignored) {}
+        // Generic fallback — only if not already looking in prompt-parts
+        if (!"prompt-parts".equals(base)) return load(name);
         return "";
     }
 

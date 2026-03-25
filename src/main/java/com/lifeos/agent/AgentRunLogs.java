@@ -10,16 +10,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Persists system-captured agent run records to per-agent JSONL files.
+ * Persists system-captured agent run records as individual JSON files.
  * Records are written by BaseAgent infrastructure — not by the agents themselves.
  *
- * Storage: .user-data/agents/{name}/_runs.json (sibling to agent.yml, outside workspace/)
+ * Storage: .user-data/agents/{name}/runs/{started_at_ms}_{id}.json
  */
 @Component
 public class AgentRunLogs {
@@ -34,7 +31,6 @@ public class AgentRunLogs {
     private static final int MAX_INITIAL_MESSAGES = 50;
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final ConcurrentHashMap<String, ReentrantLock> fileLocks = new ConcurrentHashMap<>();
 
     /**
      * A run record built incrementally during execution, then saved on completion.
@@ -71,28 +67,43 @@ public class AgentRunLogs {
         }
 
         @SuppressWarnings("unchecked")
-        public void addTurn(String role, List<Map<String, Object>> content) {
-            if (content == null) return;
-            var truncated = new ArrayList<Map<String, Object>>();
-            for (var block : content) {
-                var type = (String) block.get("type");
-                if ("text".equals(type)) {
-                    var text = (String) block.get("text");
-                    truncated.add(Map.of("type", "text", "text", truncate(text, MAX_TEXT_CHARS)));
-                } else if ("tool_use".equals(type)) {
-                    var entry = new LinkedHashMap<>(block);
-                    entry.put("input", truncateValues((Map<String, Object>) block.get("input"), MAX_TOOL_INPUT_CHARS));
-                    truncated.add(entry);
-                } else if ("tool_result".equals(type)) {
-                    var entry = new LinkedHashMap<>(block);
-                    var c = block.get("content");
-                    entry.put("content", c instanceof String s ? truncate(s, MAX_TOOL_RESULT_CHARS) : c);
-                    truncated.add(entry);
-                } else {
-                    truncated.add(block);
-                }
+        public void addTurn(String role, Map<String, Object> message) {
+            if (message == null) return;
+            var truncated = new LinkedHashMap<>(message);
+            // Truncate string content
+            var content = message.get("content");
+            if (content instanceof String s) {
+                int limit = "tool".equals(role) ? MAX_TOOL_RESULT_CHARS : MAX_TEXT_CHARS;
+                truncated.put("content", truncate(s, limit));
             }
-            turns.add(Map.of("role", role, "content", truncated));
+            // Truncate tool_calls arguments
+            var toolCalls = message.get("tool_calls");
+            if (toolCalls instanceof List<?> tcs) {
+                var truncatedTcs = new ArrayList<Map<String, Object>>();
+                for (var raw : tcs) {
+                    if (raw instanceof Map<?, ?> tc) {
+                        var fn = (Map<?, ?>) tc.get("function");
+                        if (fn != null) {
+                            var truncFn = new LinkedHashMap<String, Object>();
+                            truncFn.put("name", fn.get("name"));
+                            var args = fn.get("arguments");
+                            truncFn.put("arguments", args instanceof String s ? truncate(s, MAX_TOOL_INPUT_CHARS) : args);
+                            var truncTc = new LinkedHashMap<String, Object>((Map<String, Object>) tc);
+                            truncTc.put("function", truncFn);
+                            truncatedTcs.add(truncTc);
+                        } else {
+                            truncatedTcs.add((Map<String, Object>) tc);
+                        }
+                    }
+                }
+                truncated.put("tool_calls", truncatedTcs);
+            }
+            // Truncate reasoning if present
+            var reasoning = message.get("reasoning");
+            if (reasoning instanceof String s) {
+                truncated.put("reasoning", truncate(s, MAX_TEXT_CHARS * 4)); // allow more for reasoning
+            }
+            turns.add((Map<String, Object>) (Map<?, ?>) truncated);
         }
 
         /** Captures the initial messages list passed to the first LLM call. Idempotent — only set once. */
@@ -106,8 +117,10 @@ public class AgentRunLogs {
             for (var msg : capped) {
                 var role = msg.get("role");
                 var content = msg.get("content");
+                var entry = new LinkedHashMap<String, Object>();
+                entry.put("role", role);
                 if (content instanceof String s) {
-                    result.add(Map.of("role", role, "content", truncate(s, MAX_TEXT_CHARS)));
+                    entry.put("content", truncate(s, MAX_TEXT_CHARS));
                 } else if (content instanceof List<?> blocks) {
                     var truncatedBlocks = new ArrayList<Map<String, Object>>();
                     for (var raw : blocks) {
@@ -117,22 +130,27 @@ public class AgentRunLogs {
                             truncatedBlocks.add(Map.of("type", "text", "text",
                                     truncate((String) block.get("text"), MAX_TEXT_CHARS)));
                         } else if ("tool_use".equals(type)) {
-                            var entry = new LinkedHashMap<>((Map<String, Object>) block);
-                            entry.put("input", truncateValues((Map<String, Object>) block.get("input"), MAX_TOOL_INPUT_CHARS));
-                            truncatedBlocks.add(entry);
+                            var b = new LinkedHashMap<>((Map<String, Object>) block);
+                            b.put("input", truncateValues((Map<String, Object>) block.get("input"), MAX_TOOL_INPUT_CHARS));
+                            truncatedBlocks.add(b);
                         } else if ("tool_result".equals(type)) {
-                            var entry = new LinkedHashMap<>((Map<String, Object>) block);
+                            var b = new LinkedHashMap<>((Map<String, Object>) block);
                             var c = block.get("content");
-                            entry.put("content", c instanceof String str ? truncate(str, MAX_TOOL_RESULT_CHARS) : c);
-                            truncatedBlocks.add(entry);
+                            b.put("content", c instanceof String str ? truncate(str, MAX_TOOL_RESULT_CHARS) : c);
+                            truncatedBlocks.add(b);
                         } else {
                             truncatedBlocks.add((Map<String, Object>) block);
                         }
                     }
-                    result.add(Map.of("role", role, "content", truncatedBlocks));
+                    entry.put("content", truncatedBlocks);
                 } else {
-                    result.add((Map<String, Object>) msg);
+                    entry.put("content", content);
                 }
+                // Preserve reasoning on assistant messages
+                if (msg.get("reasoning") instanceof String r) {
+                    entry.put("reasoning", truncate(r, MAX_TEXT_CHARS * 4));
+                }
+                result.add(entry);
             }
             this.initialMessages = result;
         }
@@ -174,16 +192,15 @@ public class AgentRunLogs {
             // Static agents (e.g. cos) may not have a .user-data/agents dir — skip
             return;
         }
-        var file = agentDir.resolve("_runs.json");
-        var lock = fileLocks.computeIfAbsent(record.agent, k -> new ReentrantLock());
-        lock.lock();
         try {
-            Files.writeString(file, mapper.writeValueAsString(toMap(record)) + "\n",
-                    StandardCharsets.UTF_8, StandardOpenOption.APPEND, StandardOpenOption.CREATE);
+            var runsDir = agentDir.resolve("runs");
+            Files.createDirectories(runsDir);
+            var filename = record.startedAt + "_" + record.id + ".json";
+            Files.writeString(runsDir.resolve(filename),
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(toMap(record)),
+                    StandardCharsets.UTF_8);
         } catch (IOException e) {
             log.warn("Failed to save run record for agent {}: {}", record.agent, e.getMessage());
-        } finally {
-            lock.unlock();
         }
     }
 
@@ -191,18 +208,25 @@ public class AgentRunLogs {
      * Returns the last {@code limit} records for the agent, newest first.
      */
     public List<Map<String, Object>> getRecentRuns(String agent, int limit) {
-        var file = AGENTS_DIR.resolve(agent).resolve("_runs.json");
-        if (!Files.exists(file)) return List.of();
-        try {
-            var lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        var runsDir = AGENTS_DIR.resolve(agent).resolve("runs");
+        if (!Files.isDirectory(runsDir)) return List.of();
+        try (var stream = Files.list(runsDir)) {
+            var files = stream
+                    .filter(p -> p.getFileName().toString().endsWith(".json"))
+                    .sorted(Comparator.comparing(p -> p.getFileName().toString(), Comparator.reverseOrder()))
+                    .limit(limit)
+                    .toList();
             var result = new ArrayList<Map<String, Object>>();
-            for (int i = lines.size() - 1; i >= 0 && result.size() < limit; i--) {
-                if (lines.get(i).isBlank()) continue;
-                result.add(mapper.readValue(lines.get(i), new TypeReference<>() {}));
+            for (var file : files) {
+                try {
+                    result.add(mapper.readValue(Files.readString(file, StandardCharsets.UTF_8), new TypeReference<>() {}));
+                } catch (IOException e) {
+                    log.warn("Failed to read run file {}: {}", file, e.getMessage());
+                }
             }
             return result;
         } catch (IOException e) {
-            log.warn("Failed to read run log for agent {}: {}", agent, e.getMessage());
+            log.warn("Failed to list runs for agent {}: {}", agent, e.getMessage());
             return List.of();
         }
     }

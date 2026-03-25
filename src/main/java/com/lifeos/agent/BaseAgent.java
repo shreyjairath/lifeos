@@ -40,7 +40,7 @@ import java.util.concurrent.Executors;
 public class BaseAgent implements Agent {
 
     private static final Logger log = LoggerFactory.getLogger(BaseAgent.class);
-    private static final String DEFAULT_BACKGROUND_MODEL = "claude-haiku-4-5-20251001";
+    private static final String DEFAULT_BACKGROUND_MODEL = "anthropic/claude-haiku-4-5-20251001";
 
     /** Serializes all background runs (heartbeat, self-eval, post-session) for this agent. */
     private final ExecutorService backgroundExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -86,7 +86,7 @@ public class BaseAgent implements Agent {
         this.config = config;
         this.webPush = webPush;
         this.agentRunStore = agentRunStore;
-        this.session = new SessionHandler(config, eventBus, def.name(),
+        this.session = new SessionHandler(config, def.name(),
                 sessionId -> backgroundExecutor.submit(() -> handleSystemMessage("post-session", sessionId)));
         initListeners();
     }
@@ -103,21 +103,19 @@ public class BaseAgent implements Agent {
     }
 
     private void initListeners() {
-        session.initListeners();
-
         for (var bg : def.backgroundModes()) {
             eventBus.subscribe()
                     .filter(e -> bg.trigger().equals(e.get("type")))
                     .publishOn(Schedulers.boundedElastic())
                     .subscribe(
                             e -> backgroundExecutor.submit(() ->
-                                    handleSystemMessage(bg.mode(), null)),
+                                    handleSystemMessage(bg.trigger(), null)),
                             err -> log.warn("{} {} stream error: {}",
                                     agentName(), bg.trigger(), err.getMessage()));
         }
     }
 
-    public Flux<ExecutorEvent> handleUserMessage(String sessionId, String userMessage) {
+    public Flux<ExecutorEvent> handleUserMessage(String sessionId, String userMessage, String modelOverride) {
         log.info("{} chat starting — session {}", agentName(), sessionId);
 
         var prompt = buildSystemPrompt("chat", PromptOptions.forSession(sessionId));
@@ -130,7 +128,8 @@ public class BaseAgent implements Agent {
         // If the stream is cancelled between the two, the orphaned tool_use is never written to disk.
         var pendingToolUse = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
 
-        var runRecord = new AgentRunLogs.RunRecord(agentName(), "chat", prompt, config.model());
+        var model = effectiveChatModel(modelOverride);
+        var runRecord = new AgentRunLogs.RunRecord(agentName(), "chat", prompt, model);
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "chat"));
 
         var resultAccum = new StringBuilder();
@@ -138,23 +137,21 @@ public class BaseAgent implements Agent {
         var exec = newExecutor();
         activeRuns.put(sessionId, exec);
 
-        return withLogging(exec.runLoop(messages, prompt, config.model(), tools(), agentName(), toolInvoker::invoke), runRecord)
+        return withLogging(exec.runLoop(messages, prompt, model, tools(), agentName(), reasoningConfig(), toolInvoker::invoke), runRecord)
                 .doOnNext(event -> {
                     if (event instanceof AgentAppendEvent ae) {
-                        var msg = Map.of("role", ae.role(), "content", ae.content());
-                        if ("assistant".equals(ae.role()) && hasToolUse(ae.content())) {
+                        var msg = ae.message();
+                        if ("assistant".equals(ae.role()) && hasToolUse(msg)) {
                             pendingToolUse.set(msg);  // hold, don't save yet
                         } else {
                             var pending = pendingToolUse.getAndSet(null);
                             if (pending != null) session.appendMessage(sessionId, pending);
                             session.appendMessage(sessionId, msg);
                         }
-                        // Accumulate ALL text from ALL assistant turns (including those with tool_use)
-                        if ("assistant".equals(ae.role()) && ae.content() != null) {
-                            ae.content().stream()
-                                    .filter(b -> "text".equals(b.get("type")))
-                                    .map(b -> (String) b.get("text"))
-                                    .forEach(resultAccum::append);
+                        // Accumulate text from assistant turns
+                        if ("assistant".equals(ae.role())) {
+                            var c = msg.get("content");
+                            if (c instanceof String s) resultAccum.append(s);
                         }
                     } else if (event instanceof LlmEvent.Response resp) {
                         session.updateSessionMeta(sessionId, resp.usage().get("input_tokens"));
@@ -184,15 +181,15 @@ public class BaseAgent implements Agent {
                 Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
 
-        var runRecord = new AgentRunLogs.RunRecord(agentName(), "inter-agent-message (from: " + fromAgent + ")", prompt, config.model());
+        var runRecord = new AgentRunLogs.RunRecord(agentName(), "inter-agent-message (from: " + fromAgent + ")", prompt, chatModel());
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "inter-agent-message", "from", fromAgent));
 
         try {
             var result = extractText(withLogging(
-                    newExecutor().runLoop(messages, prompt, config.model(), tools(), agentName(), toolInvoker),
+                    newExecutor().runLoop(messages, prompt, chatModel(), tools(), agentName(), reasoningConfig(), toolInvoker),
                     runRecord)).block(java.time.Duration.ofSeconds(90));
             if (result == null) result = "";
-            agentChannels.append(agentName(), fromAgent, content, result);
+            agentChannels.append(fromAgent, agentName(), content, result);
             runRecord.finish(result);
             agentRunStore.save(runRecord);
             eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", "inter-agent-message",
@@ -224,7 +221,7 @@ public class BaseAgent implements Agent {
 
         try {
             var result = extractText(withLogging(
-                    newExecutor().runLoop(messages, systemPrompt, backgroundModel(), tools(), agentName(), toolInvoker),
+                    newExecutor().runLoop(messages, systemPrompt, backgroundModel(), tools(), agentName(), null, toolInvoker),
                     runRecord)).block();
             if (result == null) result = "";
 
@@ -251,9 +248,10 @@ public class BaseAgent implements Agent {
 
     // ── Agent interface ────────────────────────────────────────────────────────
 
-    @Override public String getName()        { return def.name(); }
-    @Override public String getTitle()       { return def.title(); }
-    @Override public String getDescription() { return def.description(); }
+    @Override public String getName()              { return def.name(); }
+    @Override public String getTitle()             { return def.title(); }
+    @Override public String getDescription()       { return def.description(); }
+    @Override public AgentDefinition getDefinition() { return def; }
 
     // ── Protected ─────────────────────────────────────────────────────────────
 
@@ -277,7 +275,28 @@ public class BaseAgent implements Agent {
     // ── Private ───────────────────────────────────────────────────────────────
 
     private Executor newExecutor() {
-        return new Executor(config.anthropicApiKey(), confirmations);
+        return new Executor(config.apiKey(), confirmations);
+    }
+
+    private String chatModel() {
+        return def.model() != null ? def.model() : config.model();
+    }
+
+    private String effectiveChatModel(String override) {
+        if (override != null && !override.isBlank()) return override;
+        return chatModel();
+    }
+
+    private Map<String, Object> reasoningConfig() {
+        // Agent-level reasoning overrides global; null on either side means "no override"
+        var r = def.reasoning() != null ? def.reasoning()
+              : config.reasoning() != null ? new AgentDefinition.Reasoning(
+                    config.reasoning().effort(), config.reasoning().maxTokens()) : null;
+        if (r == null) return null;
+        var map = new java.util.LinkedHashMap<String, Object>();
+        if (r.effort() != null) map.put("effort", r.effort());
+        else if (r.maxTokens() != null) map.put("max_tokens", r.maxTokens());
+        return map.isEmpty() ? null : map;
     }
 
     /** Wraps a flux with doOnNext to keep the RunRecord up to date. */
@@ -289,7 +308,7 @@ public class BaseAgent implements Agent {
                     record.toolNames = req.tools().stream()
                             .map(t -> (String) t.get("name")).filter(java.util.Objects::nonNull).toList();
             } else if (event instanceof AgentAppendEvent ae) {
-                record.addTurn(ae.role(), ae.content());
+                record.addTurn(ae.role(), ae.message());
             } else if (event instanceof LlmEvent.Response resp) {
                 record.addTokens(resp.usage().get("input_tokens"), resp.usage().get("output_tokens"));
             }
@@ -301,14 +320,14 @@ public class BaseAgent implements Agent {
         return flux
                 .filter(e -> e instanceof AgentAppendEvent ae && "assistant".equals(ae.role()))
                 .cast(AgentAppendEvent.class)
-                .flatMapIterable(AgentAppendEvent::content)
-                .filter(b -> b instanceof Map<?, ?> m && "text".equals(m.get("type")))
-                .map(b -> (String) ((Map<?, ?>) b).get("text"))
+                .filter(ae -> ae.message().get("content") instanceof String)
+                .map(ae -> (String) ae.message().get("content"))
                 .reduce(String::concat)
                 .defaultIfEmpty("");
     }
 
     private String backgroundModel() {
+        if (def.backgroundModel() != null && !def.backgroundModel().isBlank()) return def.backgroundModel();
         var m = config.backgroundModel();
         return (m != null && !m.isBlank()) ? m : DEFAULT_BACKGROUND_MODEL;
     }
@@ -355,18 +374,24 @@ public class BaseAgent implements Agent {
         return id.isBlank() ? header : header + "\n\n" + id;
     }
 
-    private static boolean hasToolUse(List<Map<String, Object>> content) {
-        return content != null && content.stream().anyMatch(b -> "tool_use".equals(b.get("type")));
+    private static boolean hasToolUse(Map<String, Object> msg) {
+        var tc = msg.get("tool_calls");
+        return tc instanceof List<?> list && !list.isEmpty();
     }
 
-    private static String modesSection(String currentMode) {
-        return MODES + "\n\n**Current mode: " + currentMode + "**";
+    private String modesSection(String currentMode) {
+        var sb = new StringBuilder(MODES);
+        for (var bg : def.backgroundModes()) {
+            sb.append("\n\n**").append(bg.trigger()).append("** — Scheduled background run.");
+        }
+        sb.append("\n\n**Current mode: ").append(currentMode).append("**");
+        return sb.toString();
     }
 
     private String modePrompt(String mode) {
         if ("post-session".equals(mode)) return POST_SESSION;
         return def.backgroundModes().stream()
-                .filter(bg -> bg.mode().equals(mode))
+                .filter(bg -> bg.trigger().equals(mode))
                 .findFirst()
                 .map(bg -> PromptParts.load(def.promptBase(), bg.promptFile()))
                 .orElseThrow(() -> new IllegalArgumentException("Unknown system mode: " + mode));
