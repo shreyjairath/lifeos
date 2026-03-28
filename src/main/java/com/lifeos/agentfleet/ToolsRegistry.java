@@ -8,6 +8,7 @@ import com.lifeos.agentfleet.tools.AgentLog;
 import com.lifeos.agentfleet.tools.AgentTools;
 import com.lifeos.agentfleet.tools.Bash;
 import com.lifeos.agentfleet.tools.Browse;
+import com.lifeos.agentfleet.tools.McpToolsClient;
 import com.lifeos.agentfleet.tools.Media;
 import com.lifeos.agentfleet.tools.PropertyReport;
 import com.lifeos.agentfleet.tools.Redfin;
@@ -39,10 +40,10 @@ public class ToolsRegistry {
     private static final Path DISABLED_FILE = USER_DATA.resolve("disabled-tools.json").normalize();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final ConcurrentHashMap<String, Bash>           agentBashInstances         = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Bash>           agentBashReadonlyInstances = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, ScheduledTasks> scheduledTasksInstances    = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AgentLog>       agentLogInstances          = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bash>     agentBashInstances         = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bash>     agentBashReadonlyInstances = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AgentLog> agentLogInstances          = new ConcurrentHashMap<>();
+    private final ScheduledTasks sharedTasks = new ScheduledTasks(USER_DATA.resolve("tasks.json"));
 
     private final WebSearch webSearch;
     private final Browse browse;
@@ -54,11 +55,13 @@ public class ToolsRegistry {
     private final AgentTools agentTools;
     private final AgentChannels agentChannels;
     private final EventBus eventBus;
+    private final McpToolsClient mcpToolsClient;
 
     public ToolsRegistry(WebSearch webSearch, Browse browse, Media media,
                          Redfin redfin, PropertyReport propertyReport,
                          @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools,
-                         AgentChannels agentChannels, EventBus eventBus) {
+                         AgentChannels agentChannels, EventBus eventBus,
+                         McpToolsClient mcpToolsClient) {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
@@ -68,6 +71,7 @@ public class ToolsRegistry {
         this.agentTools = agentTools;
         this.agentChannels = agentChannels;
         this.eventBus = eventBus;
+        this.mcpToolsClient = mcpToolsClient;
         this.sessionTools = new SessionTools();
     }
 
@@ -80,7 +84,6 @@ public class ToolsRegistry {
     public void registerAgentWorkspace(String name, Path workspace) {
         agentBashInstances.put(name, new Bash(workspace));
         agentBashReadonlyInstances.put(name, new Bash(workspace, true));
-        scheduledTasksInstances.put(name, new ScheduledTasks(workspace));
         agentLogInstances.put(name, new AgentLog(workspace));
     }
 
@@ -113,29 +116,18 @@ public class ToolsRegistry {
                 yield bash != null ? bash.bash((String) input.get("command"))
                                    : Map.of("error", "No workspace registered for agent: " + target);
             }
-            case "schedule_task" -> {
-                var tasks = scheduledTasksInstances.get(agentName);
-                yield tasks != null
-                        ? tasks.schedule((String) input.get("name"), (String) input.get("description"),
-                                input.get("cadence_hours") != null ? ((Number) input.get("cadence_hours")).doubleValue() : null,
-                                (String) input.get("run_at"))
-                        : Map.of("error", "No workspace registered for agent: " + agentName);
-            }
-            case "get_scheduled_tasks" -> {
-                var tasks = scheduledTasksInstances.get(agentName);
-                yield tasks != null ? tasks.list()
-                        : Map.of("error", "No workspace registered for agent: " + agentName);
-            }
-            case "get_overdue_tasks" -> {
-                var tasks = scheduledTasksInstances.get(agentName);
-                yield tasks != null ? tasks.getOverdue()
-                        : Map.of("error", "No workspace registered for agent: " + agentName);
-            }
-            case "mark_task_complete" -> {
-                var tasks = scheduledTasksInstances.get(agentName);
-                yield tasks != null ? tasks.markComplete((String) input.get("id"))
-                        : Map.of("error", "No workspace registered for agent: " + agentName);
-            }
+            case "create_task" -> sharedTasks.upsert(
+                    agentName,
+                    (String) input.get("name"),
+                    (String) input.get("description"),
+                    input.get("cadence_hours") != null ? ((Number) input.get("cadence_hours")).doubleValue() : null,
+                    (String) input.get("due_at"),
+                    (String) input.get("assignee"));
+            case "get_my_tasks"  -> sharedTasks.list(agentName);
+            case "get_tasks"     -> sharedTasks.list((String) input.get("assignee"));
+            case "get_overdue_tasks" -> sharedTasks.getOverdue(agentName);
+            case "mark_task_complete" -> sharedTasks.markComplete((String) input.get("id"), agentName);
+            case "delete_task"   -> sharedTasks.delete((String) input.get("id"));
             case "log_entry" -> {
                 var log = agentLogInstances.get(agentName);
                 yield log != null
@@ -157,6 +149,7 @@ public class ToolsRegistry {
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
+                    (String) input.get("manager"),
                     (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
                     (String) input.get("post_session_instructions"),
@@ -166,19 +159,14 @@ public class ToolsRegistry {
                             ? rawList.stream().map(Object::toString).toList()
                             : null);
             case "list_agents" -> agentTools.listAgents(agentName);
-            case "list_tools" -> {
-                var all = new ArrayList<>(TOOLS);
-                all.addAll(SessionTools.DEFINITIONS);
-                var disabled = loadDisabledTools();
-                yield Map.of("tools", all.stream()
-                        .filter(t -> !disabled.contains(t.get("name")))
+            case "list_tools" -> Map.of("tools", getTools().stream()
                         .map(t -> Map.of("name", t.get("name"), "description", t.get("description")))
                         .toList());
-            }
             case "create_agent" -> agentTools.createAgent(
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
+                    (String) input.get("manager"),
                     (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
                     (String) input.get("post_session_instructions"),
@@ -205,7 +193,11 @@ public class ToolsRegistry {
                                         "url", url, "title", title, "path", path));
                 yield Map.<String, Object>of("url", url, "title", title, "path", path);
             }
-            default -> Map.of("error", "Unknown tool: " + toolName);
+            default -> {
+                if (toolName.startsWith("mcp_"))
+                    yield mcpToolsClient.callTool(toolName, input);
+                yield Map.of("error", "Unknown tool: " + toolName);
+            }
         };
     }
 
@@ -242,7 +234,7 @@ public class ToolsRegistry {
                     "url"),
             tool("get_current_datetime",
                     "Get the current date and time. " +
-                    "Call before set_reminder, schedule_task with run_at, or any time-relative calculation.",
+                    "Call before set_reminder, create_task with due_at, or any time-relative calculation.",
                     props(), new String[]{}),
             tool("set_reminder",
                     "Schedule a reminder that fires at a specific time. " +
@@ -258,28 +250,47 @@ public class ToolsRegistry {
             tool("delete_reminder", "Cancel a pending reminder by id.",
                     props(prop("id", "string", "Reminder id from list_reminders")), "id"),
 
-            tool("schedule_task",
-                    "Register a recurring or one-off task in your schedule. " +
+            tool("create_task",
+                    "Create or update a task on the shared task board. " +
                     "Internal only — no user notification is sent. For user-facing time-based alerts, use set_reminder instead. " +
-                    "Provide cadence_hours for a recurring task (e.g. 6 = every 6 hours), " +
-                    "or run_at (ISO-8601 datetime) for a one-off task that fires once. " +
-                    "Upserts by name — calling again with the same name updates the task.",
-                    props(prop("name", "string", "Short task name (used as the unique key)"),
-                          prop("description", "string", "What this task does when it runs"),
-                          prop("cadence_hours", "number", "How often to run, in hours (e.g. 6, 24, 168). Omit for one-off tasks."),
-                          prop("run_at", "string", "ISO-8601 datetime for a one-off task (e.g. 2026-03-20T09:00:00-05:00). Omit for recurring tasks.")),
-                    "name", "description"),
-            tool("get_scheduled_tasks",
-                    "List all scheduled tasks with their next due time.",
+                    "Upserts by name within your namespace (same name + you = update). " +
+                    "assignee: who owns the task — \"user\" (the client), an agent name, or omit for self. " +
+                    "User-assigned tasks should be surfaced to the client in heartbeat when overdue; " +
+                    "agent-assigned tasks should be messaged to that agent when overdue. " +
+                    "due_at is always required. Add cadence_hours to make it recurring — after each completion, " +
+                    "next due = last_run + cadence_hours. Omit cadence_hours for a one-off task.",
+                    props(prop("name", "string", "Short task name (unique per creator — upsert)"),
+                          prop("description", "string", "What needs to be done"),
+                          prop("assignee", "string", "Who is responsible: \"user\", an agent name, or omit for self"),
+                          prop("due_at", "string", "ISO-8601 due datetime (e.g. 2026-04-01T09:00:00-05:00). Required."),
+                          prop("cadence_hours", "number", "Recurring interval in hours (e.g. 24, 168). Omit for one-off.")),
+                    "name", "description", "due_at"),
+            tool("get_my_tasks",
+                    "List tasks assigned to you on the shared board. " +
+                    "Each task includes created_by — check with the creator agent via message_agent for richer context on any task.",
                     props(), new String[]{}),
+            tool("get_tasks",
+                    "List tasks on the shared board across all agents. " +
+                    "Optionally filter by assignee to see tasks for a specific person or agent " +
+                    "(e.g. assignee: \"user\" for client tasks, assignee: \"cos\" for cos tasks). " +
+                    "Each task includes created_by — check with the creator agent via message_agent for richer context on any task.",
+                    props(prop("assignee", "string", "Filter by assignee: \"user\", an agent name, or omit for all")),
+                    new String[]{}),
             tool("get_overdue_tasks",
-                    "List tasks that are currently due or overdue (recurring tasks past their interval, or one-off tasks whose run_at has passed).",
+                    "List overdue tasks assigned to you. " +
+                    "Recurring tasks are overdue past their interval; one-off tasks are overdue once due_at has passed. " +
+                    "Each task includes created_by — check with the creator agent via message_agent for richer context before acting.",
                     props(), new String[]{}),
             tool("mark_task_complete",
-                    "Mark a scheduled task as completed now. " +
+                    "Mark a task as completed now. " +
                     "For recurring tasks, this resets the clock — the task won't be overdue again until the next interval. " +
                     "For one-off tasks, this permanently marks them done.",
-                    props(prop("id", "string", "Task id from get_scheduled_tasks or get_overdue_tasks")),
+                    props(prop("id", "string", "Task id from get_my_tasks or get_overdue_tasks")),
+                    "id"),
+            tool("delete_task",
+                    "Permanently remove a task from the board. Use for cancelled or irrelevant tasks. " +
+                    "For completion, use mark_task_complete instead.",
+                    props(prop("id", "string", "Task id from get_my_tasks or get_tasks")),
                     "id"),
 
             tool("log_entry",
@@ -351,6 +362,7 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug to update"),
                           prop("title", "string", "New display name"),
                           prop("description", "string", "New one-sentence description"),
+                          prop("manager", "string", "Agent name of the manager (e.g. 'cos', 'advisor')"),
                           prop("identity", "string", "New identity prompt"),
                           prop("chat_instructions", "string", "New session-mode instructions"),
                           prop("post_session_instructions", "string", "New post-session update instructions"),
@@ -388,6 +400,7 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug: lowercase letters, digits, underscores (e.g. 'pm_coach')"),
                           prop("title", "string", "Display name shown in the UI (e.g. 'PM Coach')"),
                           prop("description", "string", "One-sentence description of what this agent does (shown in list_agents)."),
+                          prop("manager", "string", "Agent name of the manager who hired this agent (e.g. 'cos', 'advisor'). Omit if hired directly by the client."),
                           prop("identity", "string",
                                   "Durable identity prompt. Keep it lean — purpose, not operating procedures. Cover: " +
                                   "(1) Who the agent is — their role, domain, and what they own. Be specific about why they exist and what they're accountable for. " +
@@ -432,6 +445,7 @@ public class ToolsRegistry {
     public List<Map<String, Object>> getTools() {
         var all = new ArrayList<>(TOOLS);
         all.addAll(SessionTools.DEFINITIONS);
+        all.addAll(mcpToolsClient.getTools());
         var disabled = loadDisabledTools();
         if (disabled.isEmpty()) return List.copyOf(all);
         return all.stream().filter(t -> !disabled.contains(t.get("name"))).toList();

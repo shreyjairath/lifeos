@@ -31,3 +31,9 @@ lifeos:
       cron: "0 0 5 * * *"    # 5am daily
     - type: self_learning_trigger
       cron: "0 0 3 * * *"    # 3am daily
+  mcp-servers:
+    - name: gmail
+      command: npx
+      args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
+      env:
+        GMAIL_TOKEN_PATH: .user-data/system/gmail/token.json

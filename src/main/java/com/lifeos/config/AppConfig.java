@@ -2,6 +2,9 @@ package com.lifeos.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.List;
+import java.util.Map;
+
 @ConfigurationProperties(prefix = "lifeos")
 public record AppConfig(
     String model,
@@ -9,7 +12,8 @@ public record AppConfig(
     String apiKey,
     Session session,
     Reasoning reasoning,
-    java.util.List<ScheduledTrigger> scheduledTriggers
+    List<ScheduledTrigger> scheduledTriggers,
+    List<McpServer> mcpServers
 ) {
     public record Session(
         int tokenThreshold,
@@ -24,4 +28,16 @@ public record AppConfig(
 
     /** A cron-scheduled event published onto the agent event bus. Declared in application.yml. */
     public record ScheduledTrigger(String type, String cron) {}
+
+    /** An MCP server process to launch at startup. Tools are exposed with prefix mcp_<name>_<tool>. */
+    public record McpServer(
+        String name,
+        String command,
+        List<String> args,
+        Map<String, String> env
+    ) {}
+
+    public List<McpServer> mcpServers() {
+        return mcpServers != null ? mcpServers : List.of();
+    }
 }

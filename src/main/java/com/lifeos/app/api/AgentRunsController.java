@@ -31,6 +31,6 @@ public class AgentRunsController {
 
     @GetMapping("/{name}/tasks")
     public Map<String, Object> getTasks(@PathVariable String name) {
-        return new ScheduledTasks(Path.of(".user-data/agents", name, "workspace")).list();
+        return new ScheduledTasks(Path.of(System.getProperty("user.dir")).resolve(".user-data/tasks.json")).list(null);
     }
 }

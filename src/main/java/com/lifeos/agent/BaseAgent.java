@@ -51,12 +51,10 @@ public class BaseAgent implements Agent {
 
     // ── Standard scaffolding (loaded from src/main/resources/prompt-parts/) ──────
 
-    private static final String WORKSPACE_SETUP = PromptParts.load("workspace-setup.md");
-    private static final String TEAM            = PromptParts.load("team.md");
-    private static final String MODES           = PromptParts.load("modes.md");
-    private static final String CHAT            = PromptParts.load("chat.md");
-    private static final String POST_SESSION    = PromptParts.load("post-session.md");
-    private static final String INTER_AGENT     = PromptParts.load("inter-agent-message.md");
+    private static final String LIFEOS_PROMPT = PromptParts.load("lifeos-prompt.md");
+    private static final String CHAT          = PromptParts.load("chat.md");
+    private static final String POST_SESSION  = PromptParts.load("post-session.md");
+    private static final String INTER_AGENT   = PromptParts.load("inter-agent-message.md");
 
     private final AgentDefinition def;
     private final ToolInvoker toolInvoker;
@@ -171,12 +169,16 @@ public class BaseAgent implements Agent {
      * immediately. The reply will appear in the channel log once the run completes.
      */
     public void handleAgentMessageAsync(String fromAgent, String content) {
-        backgroundExecutor.submit(() -> handleAgentMessage(fromAgent, content));
+        backgroundExecutor.submit(() -> handleAgentMessage(fromAgent, content, true));
     }
 
     public String handleAgentMessage(String fromAgent, String content) {
+        return handleAgentMessage(fromAgent, content, false);
+    }
+
+    private String handleAgentMessage(String fromAgent, String content, boolean async) {
         var channelLog = agentChannels.loadFull(agentName(), fromAgent);
-        var prompt = buildSystemPrompt("inter-agent-message", PromptOptions.forChannel(fromAgent, channelLog));
+        var prompt = buildSystemPrompt("inter-agent-message", PromptOptions.forChannel(fromAgent, channelLog, async));
         var messages = new ArrayList<Map<String, Object>>(List.of(
                 Map.of("role", "user", "content", "[From: " + fromAgent + "]\n\n" + content)));
         Executor.prepareMessages(messages);
@@ -332,33 +334,42 @@ public class BaseAgent implements Agent {
         return (m != null && !m.isBlank()) ? m : DEFAULT_BACKGROUND_MODEL;
     }
 
-    private record PromptOptions(String sessionId, String fromAgent, String channelLog) {
-        static PromptOptions none()                              { return new PromptOptions(null, null, null); }
-        static PromptOptions forSession(String id)               { return new PromptOptions(id, null, null); }
-        static PromptOptions forChannel(String from, String log) { return new PromptOptions(null, from, log); }
+    private record PromptOptions(String sessionId, String fromAgent, String channelLog, boolean async) {
+        static PromptOptions none()                                              { return new PromptOptions(null, null, null, false); }
+        static PromptOptions forSession(String id)                               { return new PromptOptions(id, null, null, false); }
+        static PromptOptions forChannel(String from, String log, boolean async)  { return new PromptOptions(null, from, log, async); }
     }
 
     private String buildSystemPrompt(String mode, PromptOptions opts) {
-        var p = identityWithName();
-        var sb = new StringBuilder(p);
-        sb.append("\n\n").append(WORKSPACE_SETUP).append("\n\n").append(TEAM);
+        var sb = new StringBuilder(LIFEOS_PROMPT);
 
-        if ("chat".equals(mode) && opts.sessionId() != null) {
-            session.getParentSummary(opts.sessionId()).ifPresent(s ->
-                sb.append("\n\n# Session Context\n\n## Last Session — ")
-                  .append(s.dateStr()).append("\n\n").append(s.content()));
-        }
+        sb.append("\n\n# Your Identity\n\n").append(identityWithName());
 
-        sb.append("\n\n").append(modesSection(mode));
+        sb.append("\n\n# Current Mode: ").append(mode);
 
         if ("chat".equals(mode)) {
             sb.append("\n\n").append(CHAT);
+            if (opts.sessionId() != null)
+                session.getParentSummary(opts.sessionId()).ifPresent(s ->
+                    sb.append("\n\n## Last Session — ")
+                      .append(s.dateStr()).append("\n\n").append(s.content()));
         } else if ("inter-agent-message".equals(mode)) {
             var history = opts.channelLog() == null || opts.channelLog().isBlank()
                 ? "No prior exchanges." : truncateTail(opts.channelLog(), 8_000);
-            sb.append("\n\n").append(INTER_AGENT)
-              .append("\n\n## Prior Exchanges with ").append(opts.fromAgent())
+            sb.append("\n\n").append(INTER_AGENT);
+            if (opts.async()) {
+                sb.append("\n\n> **Async message** — the sender has moved on and will not receive your text directly. "
+                        + "Your response is stored in the channel history. "
+                        + "Call `message_agent_async` if you need to send them an explicit reply.");
+            } else {
+                sb.append("\n\n> **Sync message** — the sender is blocking and waiting. "
+                        + "Your text response will be returned to them directly. "
+                        + "Do NOT call `message_agent` (sync) to reply — deadlock.");
+            }
+            sb.append("\n\n## Prior Exchanges with ").append(opts.fromAgent())
               .append("\n\n").append(history);
+        } else {
+            sb.append("\n\n").append(modePrompt(mode));
         }
 
         var now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy h:mm a z"));
@@ -367,25 +378,19 @@ public class BaseAgent implements Agent {
         return sb.toString().strip();
     }
 
-    /** Returns the identity block prefixed with the agent's system name. */
+    /** Returns the identity block prefixed with the agent's system name and manager. */
     private String identityWithName() {
         var id = identity();
-        var header = "Your name is **" + agentName() + "**.";
-        return id.isBlank() ? header : header + "\n\n" + id;
+        var header = new StringBuilder("Your name is **").append(agentName()).append("**.");
+        var manager = def.manager();
+        if (manager != null && !manager.isBlank())
+            header.append(" Your manager is **").append(manager).append("**.");
+        return id.isBlank() ? header.toString() : header + "\n\n" + id;
     }
 
     private static boolean hasToolUse(Map<String, Object> msg) {
         var tc = msg.get("tool_calls");
         return tc instanceof List<?> list && !list.isEmpty();
-    }
-
-    private String modesSection(String currentMode) {
-        var sb = new StringBuilder(MODES);
-        for (var bg : def.backgroundModes()) {
-            sb.append("\n\n**").append(bg.trigger()).append("** — Scheduled background run.");
-        }
-        sb.append("\n\n**Current mode: ").append(currentMode).append("**");
-        return sb.toString();
     }
 
     private String modePrompt(String mode) {

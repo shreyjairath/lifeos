@@ -65,6 +65,8 @@ public class AgentTools {
                     entry.put("name", a.getName());
                     entry.put("title", a.getTitle());
                     entry.put("description", a.getDescription());
+                    var mgr = a.getDefinition().manager();
+                    if (mgr != null && !mgr.isBlank()) entry.put("manager", mgr);
                     if (a.getName().equals(callerName)) entry.put("self", true);
                     return entry;
                 })
@@ -76,8 +78,12 @@ public class AgentTools {
         if (!Files.isDirectory(agentDir))
             return Map.of("error", "Agent '" + name + "' is not a dynamic agent or does not exist.");
         try {
+            var agentYml = Files.readString(agentDir.resolve("agent.yml"));
+            var parsed = new Yaml().<Map<String, Object>>load(agentYml);
             var result = new LinkedHashMap<String, Object>();
-            result.put("agent_yml", Files.readString(agentDir.resolve("agent.yml")));
+            result.put("agent_yml", agentYml);
+            var manager = (String) parsed.get("manager");
+            if (manager != null && !manager.isBlank()) result.put("manager", manager);
             for (var file : new String[]{"identity.md", "chat.md", "post-session.md", "self-eval.md", "heartbeat.md"}) {
                 var path = agentDir.resolve(file);
                 if (Files.exists(path)) result.put(file, Files.readString(path));
@@ -89,7 +95,7 @@ public class AgentTools {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> updateAgent(String name, String title, String description, String whoYouAre,
+    public Map<String, Object> updateAgent(String name, String title, String description, String manager, String whoYouAre,
                                            String chatInstructions, String postSessionInstructions,
                                            String selfEvalInstructions, String heartbeatInstructions,
                                            List<String> tools) {
@@ -101,6 +107,7 @@ public class AgentTools {
 
             var newTitle          = title != null          ? title          : (String) currentYaml.getOrDefault("title", name);
             var newDesc           = description != null    ? description    : (String) currentYaml.getOrDefault("description", "");
+            var newManager        = manager != null        ? manager        : (String) currentYaml.get("manager");
             var newWhoYouAre      = whoYouAre != null      ? whoYouAre      : readIfExists(agentDir.resolve("identity.md"));
             var newChat           = chatInstructions != null       ? chatInstructions       : readIfExists(agentDir.resolve("chat.md"));
             var newPostSession    = postSessionInstructions != null ? postSessionInstructions : readIfExists(agentDir.resolve("post-session.md"));
@@ -124,7 +131,7 @@ public class AgentTools {
             if (newHeartbeat != null && !newHeartbeat.isBlank())
                 Files.writeString(agentDir.resolve("heartbeat.md"), newHeartbeat);
 
-            var yaml = buildAgentYaml(name, newTitle, newDesc, newSelfEval, newHeartbeat, newTools);
+            var yaml = buildAgentYaml(name, newTitle, newDesc, newManager, newSelfEval, newHeartbeat, newTools);
             Files.writeString(agentDir.resolve("agent.yml"), yaml);
 
             Map<String, Object> yamlMap = new Yaml().load(yaml);
@@ -141,7 +148,7 @@ public class AgentTools {
         return Files.exists(path) ? Files.readString(path) : null;
     }
 
-    public Map<String, Object> createAgent(String name, String title, String description, String whoYouAre,
+    public Map<String, Object> createAgent(String name, String title, String description, String manager, String whoYouAre,
                                            String chatInstructions, String postSessionInstructions,
                                            String selfEvalInstructions, String heartbeatInstructions,
                                            List<String> tools) {
@@ -167,7 +174,7 @@ public class AgentTools {
                 Files.writeString(agentDir.resolve("heartbeat.md"), heartbeatInstructions);
             }
 
-            var yaml = buildAgentYaml(name, title, description, selfEvalInstructions, heartbeatInstructions, tools);
+            var yaml = buildAgentYaml(name, title, description, manager, selfEvalInstructions, heartbeatInstructions, tools);
             Files.writeString(agentDir.resolve("agent.yml"), yaml);
 
             var yamlParser = new Yaml();
@@ -181,7 +188,7 @@ public class AgentTools {
         }
     }
 
-    private String buildAgentYaml(String name, String title, String description,
+    private String buildAgentYaml(String name, String title, String description, String manager,
                                    String selfEvalInstructions, String heartbeatInstructions, List<String> tools) {
         // agent_bash is always available — workspace is provisioned by AgentRegistry
         var allTools = new ArrayList<>(tools);
@@ -192,6 +199,8 @@ public class AgentTools {
         sb.append("title: ").append(title != null && !title.isBlank() ? title : name).append("\n");
         if (description != null && !description.isBlank())
             sb.append("description: ").append(description).append("\n");
+        if (manager != null && !manager.isBlank())
+            sb.append("manager: ").append(manager).append("\n");
         sb.append("identity:\n  - identity.md\n  - chat.md\n");
         if (selfEvalInstructions != null && !selfEvalInstructions.isBlank()) {
             sb.append("self-eval-prompt: self-eval.md\n");

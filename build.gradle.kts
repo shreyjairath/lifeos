@@ -30,6 +30,9 @@ dependencies {
     // HTML content extraction
     implementation("org.jsoup:jsoup:1.18.3")
 
+    // MCP (Model Context Protocol) client — stdio transport for tool servers
+    implementation("io.modelcontextprotocol.sdk:mcp:1.1.0")
+
     // Web Push (VAPID + RFC 8291 message encryption)
     implementation("nl.martijndwars:web-push:5.1.1")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")

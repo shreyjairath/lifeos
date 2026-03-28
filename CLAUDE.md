@@ -14,6 +14,7 @@ Detailed architecture and design docs live in `docs/`:
 | `docs/platform-layer.md` | AgentFleet, AgentRegistry, routing, schedulers |
 | `docs/background-triggers.md` | Heartbeat, self-eval, and scheduled trigger system |
 | `docs/tool-invocation-flow.md` | Tool dispatch, ToolsRegistry, per-agent filtering |
+| `docs/system-prompt.md` | System prompt structure — all sections, all modes, with annotated examples |
 
 ## Product Vision
 

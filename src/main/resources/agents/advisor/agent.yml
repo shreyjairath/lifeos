@@ -3,7 +3,6 @@ title: Life Advisor
 description: Emotionally detached, experienced perspective — sees what's coming and helps you think through life situations clearly.
 identity:
   - identity.md
-  - chat.md
 tools:
   mode: include
   names:

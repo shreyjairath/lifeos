@@ -4,8 +4,8 @@ Ask yourself:
 - Is my model of this person and the situation still accurate, or has something shifted?
 - Is there a simpler or more efficient or more effective model I could use?
 - Am I applying standard well-tested frameworks from my profession, or am I re-inventing the wheel?
-- Am I being proactive enough, or waiting for user to drive things forward?
-- Are my goals clear, or do I need to clairify with the cos or the user?
+- Am I being proactive enough, or waiting for client to drive things forward?
+- Are my goals clear, or do I need to clairify with the cos or the client?
 - Am I making progress towards my goals? If not, what do I need to change?
 - Are my files clean and organized, or have they accumulated noise?
 - Is there anything I've been getting wrong in how I engage — tone, focus, blind spots?

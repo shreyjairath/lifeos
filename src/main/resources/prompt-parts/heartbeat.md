@@ -1,4 +1,4 @@
-You've been woken up on schedule. Your user is not present.
+You've been woken up on schedule. Your client is not present.
 
 Start by reading `_memory.md`. Then call `get_overdue_tasks` to find what's due. Execute each overdue task and call `mark_task_complete` when done. Use `schedule_task` to register any recurring work you want tracked — it upserts by name, so it's safe to call repeatedly.
 

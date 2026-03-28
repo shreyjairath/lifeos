@@ -98,19 +98,33 @@ function makeAgentRow(btn, agentName, agentTitle) {
 
 async function loadAgents() {
   try {
-    // CoS is always hardcoded as the primary agent
-    const cosBtn = document.createElement("button");
-    cosBtn.className = "agent-btn" + (ACTIVE_AGENT === "cos" ? " active" : "");
-    cosBtn.dataset.agent = "cos";
-    cosBtn.textContent = "Chief of Staff";
-    cosBtn.addEventListener("click", () => setActiveAgent("cos", "Chief of Staff"));
-    agentToggle.innerHTML = "";
-    agentToggle.appendChild(makeAgentRow(cosBtn, "cos", "Chief of Staff"));
-    agentToggle.appendChild(makeAgentSessionList("cos"));
-
-    // Dynamic agents load beneath
     const agents = await fetch("/api/agents").then(r => r.json());
-    const subAgents = agents.filter(a => a.name !== "cos" && !a.disabledModes?.includes("chat"));
+
+    // Populate title + model maps first (needed for button rendering)
+    for (const { name, title, effectiveModel } of agents) {
+      AGENT_TITLES[name] = title;
+      if (effectiveModel) AGENT_MODELS[name] = effectiveModel;
+    }
+
+    // Primary agents: cos + advisor share the top section
+    const primaryNames = ["cos", "advisor"];
+    const primaryAgents = [
+      { name: "cos", title: "Chief of Staff" },
+      ...agents.filter(a => a.name === "advisor" && !a.disabledModes?.includes("chat")),
+    ];
+    agentToggle.innerHTML = "";
+    for (const { name, title } of primaryAgents) {
+      const btn = document.createElement("button");
+      btn.className = "agent-btn" + (ACTIVE_AGENT === name ? " active" : "");
+      btn.dataset.agent = name;
+      btn.textContent = title;
+      btn.addEventListener("click", () => setActiveAgent(name, title));
+      agentToggle.appendChild(makeAgentRow(btn, name, title));
+      agentToggle.appendChild(makeAgentSessionList(name));
+    }
+
+    // Specialist agents load beneath the separator
+    const subAgents = agents.filter(a => !primaryNames.includes(a.name) && !a.disabledModes?.includes("chat"));
     subAgentToggle.innerHTML = "";
     subAgentToggle.style.display = subAgents.length ? "" : "none";
     document.getElementById("agent-separator").style.display = subAgents.length ? "" : "none";
@@ -124,14 +138,8 @@ async function loadAgents() {
       subAgentToggle.appendChild(makeAgentSessionList(name));
     }
 
-    // Populate title + model maps
-    for (const { name, title, effectiveModel } of agents) {
-      AGENT_TITLES[name] = title;
-      if (effectiveModel) AGENT_MODELS[name] = effectiveModel;
-    }
-
     // Validate stored agent; fall back to cos if unknown
-    const allAgents = [{ name: "cos", title: "Chief of Staff" }, ...subAgents];
+    const allAgents = [...primaryAgents, ...subAgents];
     const current = allAgents.find(a => a.name === ACTIVE_AGENT);
     if (!current) setActiveAgent("cos", "Chief of Staff");
     else {

@@ -13,6 +13,7 @@ public record AgentDefinition(
         String title,
         String description,
         String promptBase,
+        String manager,                    // agent name of the manager who hired this agent; null = hired by client
         List<String> identity,             // used in all modes (chat, post-session, heartbeat, messaging)
         ToolsFilter tools,                 // used in all modes; null = all tools
         Set<String> disabledModes,         // modes to skip; empty = all enabled
@@ -43,6 +44,7 @@ public record AgentDefinition(
         var name              = (String) map.get("name");
         var title             = (String) map.getOrDefault("title", name);
         var description       = (String) map.getOrDefault("description", "");
+        var manager           = (String) map.get("manager");
         var identity          = (List<String>) map.getOrDefault("identity", List.of());
         var toolsMap          = (Map<String, Object>) map.get("tools");
         var disabledList      = (List<String>) map.getOrDefault("disabled-modes", List.of());
@@ -53,7 +55,7 @@ public record AgentDefinition(
         var model             = (String) map.get("model");
         var backgroundModel   = (String) map.get("background-model");
         var reasoningMap      = (Map<String, Object>) map.get("reasoning");
-        return new AgentDefinition(name, title, description, promptBase, identity,
+        return new AgentDefinition(name, title, description, promptBase, manager, identity,
                 parseFilter(toolsMap), Set.copyOf(disabledList), backgroundModes,
                 model, backgroundModel, parseReasoning(reasoningMap));
     }
