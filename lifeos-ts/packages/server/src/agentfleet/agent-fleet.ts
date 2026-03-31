@@ -7,8 +7,9 @@ import { loadPrompt } from '../agent/prompt-parts.js';
 import { resolve } from 'path';
 import { AGENTS_DIR } from './tools-registry.js';
 import type { AppConfig } from '../config.js';
+import { MONOREPO_ROOT } from '../root.js';
 
-const USER_DATA = resolve(process.cwd(), '.user-data');
+const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 
 /**
  * Public surface of the platform layer.

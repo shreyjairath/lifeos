@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import yaml from 'js-yaml';
+import { MONOREPO_ROOT } from './root.js';
 
 export interface McpServerConfig {
   name: string;
@@ -36,7 +37,7 @@ function envReplace(value: string): string {
 }
 
 export function loadConfig(configPath?: string): AppConfig {
-  const path = configPath ?? process.env.LIFEOS_CONFIG ?? resolve(process.cwd(), 'config.yml');
+  const path = configPath ?? process.env.LIFEOS_CONFIG ?? resolve(MONOREPO_ROOT, 'config.yml');
   let raw: Record<string, any> = {};
   try {
     raw = yaml.load(readFileSync(path, 'utf-8')) as Record<string, any>;

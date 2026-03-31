@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { resolve, normalize } from 'path';
 import { existsSync, readdirSync, statSync, readFileSync } from 'fs';
+import { MONOREPO_ROOT } from '../root.js';
 
-const USER_DATA = resolve(process.cwd(), '.user-data');
+const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 const AGENTS_DIR = resolve(USER_DATA, 'agents');
 
 // Simple MIME type lookup for common artifact types

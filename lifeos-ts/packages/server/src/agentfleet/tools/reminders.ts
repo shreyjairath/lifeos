@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { randomUUID } from 'crypto';
+import { MONOREPO_ROOT } from '../../root.js';
 
-const SYSTEM_DIR = resolve(process.cwd(), '.user-data', 'system');
+const SYSTEM_DIR = resolve(MONOREPO_ROOT, '.user-data', 'system');
 
 export class ReminderStore {
   private readonly file: string;

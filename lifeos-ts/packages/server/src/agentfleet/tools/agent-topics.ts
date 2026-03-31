@@ -1,10 +1,11 @@
+import { MONOREPO_ROOT } from '../../root.js';
 import {
   existsSync, mkdirSync, readdirSync,
   readFileSync, appendFileSync, writeFileSync,
 } from 'fs';
 import { resolve, dirname } from 'path';
 
-const TOPICS_DIR = resolve(process.cwd(), '.user-data', 'topics');
+const TOPICS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'topics');
 const CURSORS_DIR = resolve(TOPICS_DIR, '.cursors');
 const MAX_ENTRIES = 100;
 const DEFAULT_FIRST_READ = 20;

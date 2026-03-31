@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { randomUUID } from 'crypto';
+import { MONOREPO_ROOT } from '../root.js';
 
-const AGENTS_DIR = resolve(process.cwd(), '.user-data/agents');
+const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
 const MAX_PROMPT_LEN = 20_000;
 const MAX_TEXT_LEN = 5_000;

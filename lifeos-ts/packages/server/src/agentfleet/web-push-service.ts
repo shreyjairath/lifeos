@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import webpush from 'web-push';
 import type { PushNotifier } from '../agent/types.js';
+import { MONOREPO_ROOT } from '../root.js';
 
-const USER_DATA = resolve(process.cwd(), '.user-data');
+const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 const SYSTEM_DIR = resolve(USER_DATA, 'system');
 const KEYS_FILE = resolve(SYSTEM_DIR, 'vapid-keys.json');
 const SUBS_FILE = resolve(SYSTEM_DIR, 'push-subscriptions.json');

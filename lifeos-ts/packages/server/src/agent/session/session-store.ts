@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
+import { MONOREPO_ROOT } from '../../root.js';
 
-const AGENTS_DIR = resolve(process.cwd(), '.user-data/agents');
+const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
 /**
  * Raw file I/O for one agent's sessions subtree:

@@ -10,9 +10,10 @@ import type { EventBus } from './event-bus.js';
 import type { ToolsRegistry } from './tools-registry.js';
 import { AGENTS_DIR } from './tools-registry.js';
 import { loadPrompt } from '../agent/prompt-parts.js';
+import { MONOREPO_ROOT } from '../root.js';
 
 // Built-in agents directory (relative to this package — next to prompt-parts/)
-const BUILTIN_AGENTS_DIR = resolve(process.cwd(), 'agents');
+const BUILTIN_AGENTS_DIR = resolve(MONOREPO_ROOT, 'agents');
 
 /**
  * Loads agent definitions from:

@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import type { ChannelLog } from '../../agent/types.js';
+import { MONOREPO_ROOT } from '../../root.js';
 
-const CHANNELS_DIR = resolve(process.cwd(), '.user-data', 'inter-agent-channels');
+const CHANNELS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'inter-agent-channels');
 const MAX_ENTRIES = 100;
 
 export class AgentChannels implements ChannelLog {

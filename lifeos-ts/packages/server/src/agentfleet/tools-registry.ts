@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ToolDefinition, ToolInvoker, ChannelLog } from '../agent/types.js';
+import { MONOREPO_ROOT } from '../root.js';
 
 // Tool implementations — filled in Phase 5
 import { Bash } from './tools/bash.js';
@@ -18,7 +19,7 @@ type NotificationsImpl = import('./tools/notifications.js').Notifications;
 type RemindersStoreImpl = import('./tools/reminders.js').ReminderStore;
 type McpToolsClientImpl = import('./tools/mcp-tools-client.js').McpToolsClient;
 
-const USER_DATA = resolve(process.cwd(), '.user-data');
+const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 export const AGENTS_DIR = resolve(USER_DATA, 'agents');
 const DISABLED_FILE = resolve(USER_DATA, 'disabled-tools.json');
 

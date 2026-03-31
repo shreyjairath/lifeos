@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { resolve, join } from 'path';
+import { MONOREPO_ROOT } from '../root.js';
 
-const ROOT = process.cwd();
+const ROOT = MONOREPO_ROOT;
 const PROMPT_PARTS_DIR = resolve(ROOT, 'prompt-parts');
 const USER_DATA_DIR = resolve(ROOT, '.user-data');
 

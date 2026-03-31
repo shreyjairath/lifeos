@@ -4,9 +4,10 @@ import { resolve } from 'path';
 import type { AgentFleet } from '../agentfleet/agent-fleet.js';
 import { getRecentRuns } from '../agent/agent-run-logs.js';
 import { ScheduledTasks } from '../agentfleet/tools/scheduled-tasks.js';
+import { MONOREPO_ROOT } from '../root.js';
 
-const CHANNELS_DIR = resolve(process.cwd(), '.user-data', 'inter-agent-channels');
-const TASKS_FILE = resolve(process.cwd(), '.user-data', 'tasks.json');
+const CHANNELS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'inter-agent-channels');
+const TASKS_FILE = resolve(MONOREPO_ROOT, '.user-data', 'tasks.json');
 
 export function agentRoutes(fleet: AgentFleet) {
   const app = new Hono();
