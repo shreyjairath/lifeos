@@ -26,8 +26,15 @@ let _getAgent = () => "main";
 let _getAgentTitle = () => "Agent";
 let _getModel = () => "";
 
+let _pinnedToBottom = true;
+
+messagesEl.addEventListener("scroll", () => {
+  const distFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+  _pinnedToBottom = distFromBottom < 80;
+});
+
 function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (_pinnedToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 async function rewindTo(msgEl, fromIndex) {
@@ -260,6 +267,7 @@ async function sendMessage(getSessionId) {
   if (!text) return;
   inputEl.value = "";
   inputEl.style.height = "auto";
+  _pinnedToBottom = true;
   setAgentRunning(true);
 
   const userMsgIndex = historyIndex;

@@ -55,7 +55,7 @@ public class AgentLog {
         try {
             if (!Files.exists(file)) return Map.of("log", "");
             var content = Files.readString(file, StandardCharsets.UTF_8);
-            if (lastN == null) return Map.of("log", content);
+            if (lastN == null) lastN = 10;
             // Entries are separated by "\n---\n"; take the last N
             var entries = content.split("\n---\n");
             var from = Math.max(0, entries.length - lastN);

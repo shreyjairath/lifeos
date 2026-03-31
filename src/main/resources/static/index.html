@@ -49,6 +49,7 @@
         <div class="monitor-section-header">Agents</div>
         <div id="monitor-agent-list"></div>
         <button class="monitor-nav-btn" data-tab="channels">Channels</button>
+        <button class="monitor-nav-btn" data-tab="tasks">Tasks</button>
         <button class="monitor-nav-btn" data-tab="cc">Claude Code</button>
       </nav>
 
@@ -94,6 +95,9 @@
       <div id="agents-channels-panel" class="agents-tab-panel hidden">
         <div id="agent-channels-panel"></div>
       </div>
+      <div id="agents-tasks-panel" class="agents-tab-panel hidden">
+        <div id="agent-tasks-board"></div>
+      </div>
       <div id="agents-cc-panel" class="agents-tab-panel hidden">
         <div id="cc-messages"></div>
         <div id="cc-input-area">
@@ -105,6 +109,7 @@
 
   </div>
 
+  <div id="notification-tray"></div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

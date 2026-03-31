@@ -1,6 +1,7 @@
 name: advisor
 title: Life Advisor
 description: Emotionally detached, experienced perspective — sees what's coming and helps you think through life situations clearly.
+goal: Help the client make decisions he's proud of and build a life he actually wants — one that reflects who he is, not who he thinks he should be.
 identity:
   - identity.md
 tools:
@@ -10,13 +11,20 @@ tools:
     - agent_bash
     - log_entry
     - read_log
-    - schedule_task
-    - get_scheduled_tasks
+    # tasks
+    - create_task
+    - get_my_tasks
+    - get_tasks
     - get_overdue_tasks
     - mark_task_complete
+    - delete_task
     # team
     - message_agent
+    - message_agent_async
     - read_agent_message_history
+    - write_to_topic
+    - read_topic
+    - list_topics
     - list_agents
     - list_tools
     - read_agent_definition
@@ -36,3 +44,14 @@ tools:
     - set_reminder
     - list_reminders
     - delete_reminder
+
+recurring-tasks:
+  - name: self_eval
+    prompt: self-eval.md
+    cadence-hours: 24
+  - name: self_learning
+    prompt: self-learning.md
+    cadence-hours: 48
+  - name: workspace_reorg
+    prompt: workspace-reorg.md
+    cadence-hours: 168

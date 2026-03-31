@@ -19,6 +19,69 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
+// ── Agent notifications (toast) ───────────────────────────────────────────────
+function showAgentNotification(agentName, agentTitle, message, urgency, context) {
+  const tray = document.getElementById("notification-tray");
+  if (!tray) return;
+
+  const toast = document.createElement("div");
+  toast.className = `agent-toast urgency-${urgency || "medium"}`;
+
+  const header = document.createElement("div");
+  header.className = "agent-toast-header";
+
+  const badge = document.createElement("span");
+  badge.className = "agent-toast-badge";
+  badge.textContent = urgency === "high" ? "urgent" : urgency === "low" ? "info" : "attention";
+
+  const titleEl = document.createElement("span");
+  titleEl.className = "agent-toast-title";
+  titleEl.textContent = agentTitle || agentName;
+
+  const dismiss = document.createElement("button");
+  dismiss.className = "agent-toast-dismiss";
+  dismiss.textContent = "✕";
+  dismiss.addEventListener("click", () => toast.remove());
+
+  header.appendChild(badge);
+  header.appendChild(titleEl);
+  header.appendChild(dismiss);
+
+  const body = document.createElement("div");
+  body.className = "agent-toast-body";
+  body.textContent = message;
+
+  toast.appendChild(header);
+  toast.appendChild(body);
+
+  if (context) {
+    const details = document.createElement("details");
+    details.className = "agent-toast-context";
+    const summary = document.createElement("summary");
+    summary.textContent = "More detail";
+    details.appendChild(summary);
+    const p = document.createElement("p");
+    p.textContent = context;
+    details.appendChild(p);
+    toast.appendChild(details);
+  }
+
+  // Click to open that agent's chat
+  toast.addEventListener("click", (e) => {
+    if (e.target === dismiss) return;
+    const title = AGENT_TITLES[agentName] || agentTitle || agentName;
+    setActiveAgent(agentName, title);
+    toast.remove();
+  });
+
+  tray.appendChild(toast);
+
+  // Auto-dismiss after 8s for low/medium; high stays until dismissed
+  if (urgency !== "high") {
+    setTimeout(() => toast.remove(), 8000);
+  }
+}
+
 // ── Agent selection ───────────────────────────────────────────────────────────
 let ACTIVE_AGENT = localStorage.getItem("chief-agent") || "cos";
 const AGENT_TITLES = { cos: "Chief of Staff" };
@@ -301,6 +364,7 @@ let monitorInitialized = false;
 const agentTabPanels = {
   runs:     document.getElementById("agents-runs-panel"),
   channels: document.getElementById("agents-channels-panel"),
+  tasks:    document.getElementById("agents-tasks-panel"),
   cc:       document.getElementById("agents-cc-panel"),
 };
 
@@ -315,6 +379,7 @@ function switchMonitorTab(tab) {
     channelsInitialized = true;
     AgentChannels.load();
   }
+  if (tab === "tasks") AgentDebug.loadTaskBoard();
 }
 
 function showAgentMonitor() {
@@ -383,13 +448,15 @@ document.querySelector(".sidebar-header h1").addEventListener("click", () => {
     document.getElementById("artifact-browse")?.click();
   });
 
-  // In-tab reminder listener — shows bubble when tab is open
+  // In-tab event listener
   const reminderSource = new EventSource("/api/events");
   reminderSource.onmessage = (e) => {
     try {
       const event = JSON.parse(e.data);
       if (event.type === "reminder") {
         Chat.addMessage("agent", `⏰ ${event.message}`, null, Math.floor(Date.now() / 1000));
+      } else if (event.type === "notification") {
+        showAgentNotification(event.agent, event.agentTitle, event.message, event.urgency, event.context);
       } else if (event.type === "agents_updated") {
         loadAgents().then(() => loadSessions());
       } else if (event.type === "artifact_updated" && event.agent === ACTIVE_AGENT) {

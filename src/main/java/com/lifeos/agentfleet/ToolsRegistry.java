@@ -6,7 +6,9 @@ import com.lifeos.agentfleet.schedulers.ReminderScheduler;
 import com.lifeos.agentfleet.tools.AgentChannels;
 import com.lifeos.agentfleet.tools.AgentLog;
 import com.lifeos.agentfleet.tools.AgentTools;
+import com.lifeos.agentfleet.tools.AgentTopics;
 import com.lifeos.agentfleet.tools.Bash;
+import com.lifeos.agentfleet.tools.Notifications;
 import com.lifeos.agentfleet.tools.Browse;
 import com.lifeos.agentfleet.tools.McpToolsClient;
 import com.lifeos.agentfleet.tools.Media;
@@ -56,12 +58,15 @@ public class ToolsRegistry {
     private final AgentChannels agentChannels;
     private final EventBus eventBus;
     private final McpToolsClient mcpToolsClient;
+    private final Notifications notifications;
+    private final AgentTopics agentTopics;
 
     public ToolsRegistry(WebSearch webSearch, Browse browse, Media media,
                          Redfin redfin, PropertyReport propertyReport,
                          @Lazy ReminderScheduler reminderScheduler, AgentTools agentTools,
                          AgentChannels agentChannels, EventBus eventBus,
-                         McpToolsClient mcpToolsClient) {
+                         McpToolsClient mcpToolsClient, Notifications notifications,
+                         AgentTopics agentTopics) {
         this.webSearch = webSearch;
         this.browse = browse;
         this.media = media;
@@ -72,6 +77,8 @@ public class ToolsRegistry {
         this.agentChannels = agentChannels;
         this.eventBus = eventBus;
         this.mcpToolsClient = mcpToolsClient;
+        this.notifications = notifications;
+        this.agentTopics = agentTopics;
         this.sessionTools = new SessionTools();
     }
 
@@ -101,6 +108,11 @@ public class ToolsRegistry {
             case "set_reminder"    -> reminderScheduler.store().set((String) input.get("time"), (String) input.get("message"));
             case "list_reminders"  -> reminderScheduler.store().list();
             case "delete_reminder" -> reminderScheduler.store().delete((String) input.get("id"));
+            case "notify_user" -> notifications.notifyUser(
+                    agentName,
+                    (String) input.get("message"),
+                    (String) input.get("urgency"),
+                    (String) input.get("context"));
             case "web_search"     -> webSearch.search((String) input.get("query"));
             case "browse_page"    -> browse.fetch((String) input.get("url"));
             case "parse_redfin_listing" -> redfin.parseListing((String) input.get("url"));
@@ -144,17 +156,18 @@ public class ToolsRegistry {
             case "read_agent_message_history" -> agentChannels.readChannel(agentName, (String) input.get("agent"));
             case "message_agent" -> agentTools.messageAgent(agentName, (String) input.get("agent"), (String) input.get("message"));
             case "message_agent_async" -> agentTools.messageAgentAsync(agentName, (String) input.get("agent"), (String) input.get("message"));
+            case "write_to_topic" -> agentTopics.writeTopic(agentName, (String) input.get("topic"), (String) input.get("message"));
+            case "read_topic"     -> agentTopics.readTopic(agentName, (String) input.get("topic"));
+            case "list_topics"    -> agentTopics.listTopics(agentName);
             case "read_agent_definition" -> agentTools.readAgentDefinition((String) input.get("agent"));
             case "update_agent" -> agentTools.updateAgent(
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
+                    (String) input.get("goal"),
                     (String) input.get("manager"),
                     (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
-                    (String) input.get("post_session_instructions"),
-                    (String) input.get("self_eval_instructions"),
-                    (String) input.get("heartbeat_instructions"),
                     input.get("tools") instanceof List<?> rawList
                             ? rawList.stream().map(Object::toString).toList()
                             : null);
@@ -166,12 +179,10 @@ public class ToolsRegistry {
                     (String) input.get("name"),
                     (String) input.get("title"),
                     (String) input.get("description"),
+                    (String) input.get("goal"),
                     (String) input.get("manager"),
                     (String) input.get("identity"),
                     (String) input.get("chat_instructions"),
-                    (String) input.get("post_session_instructions"),
-                    (String) input.get("self_eval_instructions"),
-                    (String) input.get("heartbeat_instructions"),
                     input.get("tools") instanceof List<?> rawList
                             ? rawList.stream().map(Object::toString).toList()
                             : List.of());
@@ -236,10 +247,21 @@ public class ToolsRegistry {
                     "Get the current date and time. " +
                     "Call before set_reminder, create_task with due_at, or any time-relative calculation.",
                     props(), new String[]{}),
+            tool("notify_user",
+                    "Send an immediate notification to the user. " +
+                    "Use this when you find something genuinely important — a risk, a time-sensitive finding, or something requiring their attention. " +
+                    "Available in background modes only (heartbeat, post-session). Do NOT use for routine updates or progress reports. " +
+                    "Fires a push notification (works even when browser is closed) and an in-app toast when browser is open.",
+                    props(prop("message", "string", "Short, direct message — treat it like a text. No preamble, no pleasantries. 1–3 sentences max."),
+                          Map.entry("urgency", Map.of("type", "string",
+                                  "enum", List.of("low", "medium", "high"),
+                                  "description", "low=informational, medium=action needed soon, high=time-sensitive/urgent")),
+                          prop("context", "string", "Optional additional detail shown in-app (not in the OS push notification)")),
+                    "message"),
             tool("set_reminder",
-                    "Schedule a reminder that fires at a specific time. " +
-                    "User-facing only — sends a chat message and push notification to the user (even if the browser is backgrounded or closed). " +
-                    "For internal agent task tracking (no user notification), use schedule_task instead. " +
+                    "Schedule a reminder that fires at a specific future time. " +
+                    "Use for time-based alerts (e.g. 'remind user to book flights tomorrow at 9am'). " +
+                    "For immediate notifications, use notify_user instead. " +
                     "Always call get_current_datetime first to know the current time before computing the target time. " +
                     "time must be a full ISO-8601 datetime with timezone offset (e.g. 2026-03-15T15:00:00-05:00).",
                     props(prop("time", "string", "ISO-8601 datetime with timezone offset when the reminder should fire (e.g. 2026-03-15T15:00:00-05:00)"),
@@ -296,7 +318,7 @@ public class ToolsRegistry {
             tool("log_entry",
                     "Append a structured log entry to _log.md. " +
                     "Call at the end of every background run: post-session, heartbeat, self-eval, and inter-agent-message. " +
-                    "Call even if nothing changed — log \"no updates needed\" so the audit trail stays continuous. " +
+                    "Call even if nothing changed — but if nothing happened, use a single-line summary (e.g. \"nothing to action\") rather than a full structured entry. " +
                     "The timestamp is set automatically — do not include it in summary or notes.",
                     props(prop("mode", "string", "Run mode: chat, post-session, heartbeat, self-eval, or inter-agent-message"),
                           prop("summary", "string", "1–3 sentence summary of what happened"),
@@ -307,8 +329,8 @@ public class ToolsRegistry {
             tool("read_log",
                     "Read your own _log.md — past activity recorded by log_entry. " +
                     "Call at the start of heartbeat and self-eval runs to understand your recent activity before deciding what to do next. " +
-                    "Returns recent entries newest-last. Use entries to limit how many to return.",
-                    props(prop("entries", "number", "Number of recent entries to return (omit for all)")),
+                    "Returns recent entries newest-last. Defaults to last 10 entries — increase only if you need to look further back.",
+                    props(prop("entries", "number", "Number of recent entries to return (default: 10)")),
                     new String[]{}),
 
             tool("read_agent_message_history",
@@ -342,6 +364,30 @@ public class ToolsRegistry {
                           prop("message", "string", "Message to send to the agent.")),
                     "agent", "message"),
 
+            tool("write_to_topic",
+                    "Post a message to the shared team knowledge board. " +
+                    "Use topic 'knowledge' for all team-wide sharing — every agent reads this at heartbeat. " +
+                    "Post here whenever you have something other agents should know: a clinical development, " +
+                    "a strategic shift, a context change, a finding that affects the team's work. " +
+                    "Topics are persistent and append-only. topic must be lowercase letters, digits, underscores, or hyphens.",
+                    props(prop("topic", "string", "Topic name — use 'knowledge' for standard team-wide sharing"),
+                          prop("message", "string", "Message to post — be specific. State what changed, what it means, and what (if anything) others should do with it.")),
+                    "topic", "message"),
+
+            tool("read_topic",
+                    "Read new messages on a topic since your last check. " +
+                    "On first read: returns up to the last 20 entries. " +
+                    "On subsequent reads: returns only messages published after your previous read. " +
+                    "Cursor is advanced automatically — calling twice returns different results. " +
+                    "Use topic 'knowledge' to read the shared team knowledge board.",
+                    props(prop("topic", "string", "Topic name — use 'knowledge' for the shared team board")),
+                    "topic"),
+
+            tool("list_topics",
+                    "List all topics on the knowledge board with their subscriber lists. " +
+                    "Use this to discover what topics exist and which agents are subscribed.",
+                    props(), new String[]{}),
+
             tool("read_agent_workspace",
                     "Read-only access to another agent's workspace. " +
                     "Use this to inspect what a specialist agent has stored — its notes, files, and knowledge base. " +
@@ -362,12 +408,10 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug to update"),
                           prop("title", "string", "New display name"),
                           prop("description", "string", "New one-sentence description"),
+                          prop("goal", "string", "Durable, concrete purpose statement — what this agent is trying to achieve for the client. The agent will be evaluated against this goal in self-eval and post-session. Make it specific enough to measure against."),
                           prop("manager", "string", "Agent name of the manager (e.g. 'cos', 'advisor')"),
                           prop("identity", "string", "New identity prompt"),
                           prop("chat_instructions", "string", "New session-mode instructions"),
-                          prop("post_session_instructions", "string", "New post-session update instructions"),
-                          prop("self_eval_instructions", "string", "New self-evaluation instructions"),
-                          prop("heartbeat_instructions", "string", "New heartbeat instructions"),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
                                   "description", "New tool list (replaces current list)"))),
                     "name"),
@@ -400,6 +444,7 @@ public class ToolsRegistry {
                     props(prop("name", "string", "Agent slug: lowercase letters, digits, underscores (e.g. 'pm_coach')"),
                           prop("title", "string", "Display name shown in the UI (e.g. 'PM Coach')"),
                           prop("description", "string", "One-sentence description of what this agent does (shown in list_agents)."),
+                          prop("goal", "string", "Durable, concrete purpose statement — what this agent is trying to achieve for the client. The agent will be evaluated against this goal in self-eval and post-session. Make it specific enough to measure against."),
                           prop("manager", "string", "Agent name of the manager who hired this agent (e.g. 'cos', 'advisor'). Omit if hired directly by the client."),
                           prop("identity", "string",
                                   "Durable identity prompt. Keep it lean — purpose, not operating procedures. Cover: " +
@@ -414,23 +459,6 @@ public class ToolsRegistry {
                                   "Start with reading _memory.md. " +
                                   "Focus on interactive posture: how the agent engages, what it surfaces, how it drives things forward in its domain. " +
                                   "Keep it short — this is not a re-statement of identity."),
-                          prop("post_session_instructions", "string",
-                                  "Post-session workspace update. Omit if the agent has no persistent state. " +
-                                  "Should instruct the agent to: read _memory.md first, update workspace to reflect current state " +
-                                  "(not a log — an accurate picture of where things stand), then call log_entry with mode post-session " +
-                                  "summarizing which files were changed and what was updated in each. Log even if nothing changed."),
-                          prop("self_eval_instructions", "string",
-                                  "Scheduled self-evaluation — runs independently on a 24h schedule. Omit if not needed. " +
-                                  "Should instruct the agent to: read _memory.md, assess how well it's doing the job " +
-                                  "(is its picture complete? are the right things moving? what would a great specialist do differently?), " +
-                                  "fix what's off by updating the workspace, then call log_entry with mode self-eval " +
-                                  "summarizing what was assessed and what was changed. Log even if nothing changed. " +
-                                  "This is the feedback loop — how the agent course-corrects over time without being told to."),
-                          prop("heartbeat_instructions", "string",
-                                  "Proactive wake-up prompt — runs on a schedule even without user input. Omit if not needed. " +
-                                  "Should instruct the agent to: read _memory.md, call get_overdue_tasks and execute any due tasks via mark_task_complete, " +
-                                  "then scan the workspace for anything genuinely urgent, then call log_entry with mode heartbeat summarizing what tasks ran and what changed. " +
-                                  "Only surface something to the user if it's actionable right now — otherwise stay silent."),
                           Map.entry("tools", Map.of("type", "array", "items", Map.of("type", "string"),
                                   "description", "Tool names to expose to this agent in addition to agent_bash (always included automatically). " +
                                           "Examples: get_current_datetime, web_search, browse_page, set_reminder, list_sessions, read_session_transcript. " +

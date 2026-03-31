@@ -3,7 +3,6 @@ package com.lifeos.agent;
 import com.lifeos.config.AppConfig;
 import com.lifeos.agentfleet.EventBus;
 import com.lifeos.agent.PromptParts;
-import com.lifeos.agent.PushNotifier;
 import com.lifeos.agent.ChannelLog;
 import com.lifeos.agent.AgentRunLogs;
 import com.lifeos.agent.session.SessionHandler;
@@ -26,6 +25,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Common base for all agents.
@@ -54,6 +55,7 @@ public class BaseAgent implements Agent {
     private static final String LIFEOS_PROMPT = PromptParts.load("lifeos-prompt.md");
     private static final String CHAT          = PromptParts.load("chat.md");
     private static final String POST_SESSION  = PromptParts.load("post-session.md");
+    private static final String HEARTBEAT     = PromptParts.load("heartbeat.md");
     private static final String INTER_AGENT   = PromptParts.load("inter-agent-message.md");
 
     private final AgentDefinition def;
@@ -62,10 +64,10 @@ public class BaseAgent implements Agent {
     protected final SessionHandler session;
     protected final EventBus eventBus;
     protected final AppConfig config;
-    protected final PushNotifier webPush;
     protected final AgentRunLogs agentRunStore;
 
     private final Confirmations confirmations;
+    private final Supplier<List<String>> hiresProvider;
     private final ConcurrentHashMap<String, Executor> activeRuns = new ConcurrentHashMap<>();
 
     public BaseAgent(AgentDefinition def,
@@ -74,16 +76,16 @@ public class BaseAgent implements Agent {
                      EventBus eventBus,
                      Confirmations confirmations,
                      AppConfig config,
-                     PushNotifier webPush,
-                     AgentRunLogs agentRunStore) {
+                     AgentRunLogs agentRunStore,
+                     Supplier<List<String>> hiresProvider) {
         this.def = def;
         this.toolInvoker = toolInvoker;
         this.agentChannels = agentChannels;
         this.eventBus = eventBus;
         this.confirmations = confirmations;
         this.config = config;
-        this.webPush = webPush;
         this.agentRunStore = agentRunStore;
+        this.hiresProvider = hiresProvider;
         this.session = new SessionHandler(config, def.name(),
                 sessionId -> backgroundExecutor.submit(() -> handleSystemMessage("post-session", sessionId)));
         initListeners();
@@ -101,16 +103,16 @@ public class BaseAgent implements Agent {
     }
 
     private void initListeners() {
-        for (var bg : def.backgroundModes()) {
-            eventBus.subscribe()
-                    .filter(e -> bg.trigger().equals(e.get("type")))
-                    .publishOn(Schedulers.boundedElastic())
-                    .subscribe(
-                            e -> backgroundExecutor.submit(() ->
-                                    handleSystemMessage(bg.trigger(), null)),
-                            err -> log.warn("{} {} stream error: {}",
-                                    agentName(), bg.trigger(), err.getMessage()));
-        }
+        if (def.disabledModes().contains("heartbeat_trigger")) return;
+        eventBus.subscribe()
+                .filter(e -> "heartbeat_trigger".equals(e.get("type")) &&
+                        (e.get("agent") == null || def.name().equals(e.get("agent"))))
+                .publishOn(Schedulers.boundedElastic())
+                .subscribe(
+                        e -> backgroundExecutor.submit(() ->
+                                handleSystemMessage("heartbeat_trigger", null)),
+                        err -> log.warn("{} heartbeat stream error: {}",
+                                agentName(), err.getMessage()));
     }
 
     public Flux<ExecutorEvent> handleUserMessage(String sessionId, String userMessage, String modelOverride) {
@@ -187,9 +189,13 @@ public class BaseAgent implements Agent {
         eventBus.publish(Map.of("type", "agent_run_start", "agent", agentName(), "mode", "inter-agent-message", "from", fromAgent));
 
         try {
-            var result = extractText(withLogging(
-                    newExecutor().runLoop(messages, prompt, chatModel(), tools(), agentName(), reasoningConfig(), toolInvoker),
-                    runRecord)).block(java.time.Duration.ofSeconds(90));
+            var result = async
+                    ? extractText(withLogging(
+                            newExecutor().runLoop(messages, prompt, chatModel(), tools(), agentName(), reasoningConfig(), toolInvoker),
+                            runRecord)).block()
+                    : extractText(withLogging(
+                            newExecutor().runLoop(messages, prompt, chatModel(), tools(), agentName(), reasoningConfig(), toolInvoker),
+                            runRecord)).block(java.time.Duration.ofSeconds(90));
             if (result == null) result = "";
             agentChannels.append(fromAgent, agentName(), content, result);
             runRecord.finish(result);
@@ -234,11 +240,6 @@ public class BaseAgent implements Agent {
             eventBus.publish(Map.of("type", "agent_run_end", "agent", agentName(), "mode", mode,
                     "duration_ms", runRecord.durationMs, "result_preview", resultPreview(result)));
 
-            var pushMessage = parsePushToUser(result);
-            if (pushMessage != null && !pushMessage.isBlank()) {
-                eventBus.publish(Map.of("type", "heartbeat", "agent", agentName(), "text", pushMessage));
-                webPush.sendToAll("lifeos", pushMessage);
-            }
         } catch (Exception e) {
             log.warn("{} {} failed: {}", agentName(), mode, e.getMessage());
             runRecord.finish("ERROR: " + e.getMessage());
@@ -345,10 +346,15 @@ public class BaseAgent implements Agent {
 
         sb.append("\n\n# Your Identity\n\n").append(identityWithName());
 
+        if (def.goal() != null && !def.goal().isBlank())
+            sb.append("\n\n# Your Goal\n\n").append(def.goal());
+
         sb.append("\n\n# Current Mode: ").append(mode);
 
         if ("chat".equals(mode)) {
             sb.append("\n\n").append(CHAT);
+            var agentChat = def.chatPrompt() != null ? PromptParts.load(def.promptBase(), def.chatPrompt()) : "";
+            if (!agentChat.isBlank()) sb.append("\n\n").append(agentChat);
             if (opts.sessionId() != null)
                 session.getParentSummary(opts.sessionId()).ifPresent(s ->
                     sb.append("\n\n## Last Session — ")
@@ -378,13 +384,18 @@ public class BaseAgent implements Agent {
         return sb.toString().strip();
     }
 
-    /** Returns the identity block prefixed with the agent's system name and manager. */
+    /** Returns the identity block prefixed with the agent's system name, manager, and hires. */
     private String identityWithName() {
         var id = identity();
         var header = new StringBuilder("Your name is **").append(agentName()).append("**.");
         var manager = def.manager();
         if (manager != null && !manager.isBlank())
             header.append(" Your manager is **").append(manager).append("**.");
+        var hires = hiresProvider.get();
+        if (!hires.isEmpty())
+            header.append("\n\nYour hires: ")
+                  .append(hires.stream().map(h -> "**" + h + "**").collect(Collectors.joining(", ")));
+        header.append("\n\nUse `read_agent_definition` with your own name to review your full definition — identity, goal, and instructions — and make sure your work is aligned with it.");
         return id.isBlank() ? header.toString() : header + "\n\n" + id;
     }
 
@@ -395,11 +406,8 @@ public class BaseAgent implements Agent {
 
     private String modePrompt(String mode) {
         if ("post-session".equals(mode)) return POST_SESSION;
-        return def.backgroundModes().stream()
-                .filter(bg -> bg.trigger().equals(mode))
-                .findFirst()
-                .map(bg -> PromptParts.load(def.promptBase(), bg.promptFile()))
-                .orElseThrow(() -> new IllegalArgumentException("Unknown system mode: " + mode));
+        if ("heartbeat_trigger".equals(mode)) return HEARTBEAT;
+        throw new IllegalArgumentException("Unknown system mode: " + mode);
     }
 
     /** Returns the last {@code maxChars} characters of {@code s}, trimmed to a line boundary. */
@@ -416,20 +424,4 @@ public class BaseAgent implements Agent {
         return s.length() > 120 ? s.substring(0, 120) + "…" : s;
     }
 
-    /** Extracts the quoted string from a trailing push_to_user:"..." line. Returns null if not found. */
-    private static String parsePushToUser(String result) {
-        if (result == null) return null;
-        var lines = result.strip().lines().toList();
-        for (int i = lines.size() - 1; i >= 0; i--) {
-            var line = lines.get(i).strip();
-            if (line.startsWith("push_to_user:")) {
-                var rest = line.substring("push_to_user:".length()).strip();
-                if (rest.startsWith("\"") && rest.endsWith("\"") && rest.length() >= 2) {
-                    return rest.substring(1, rest.length() - 1).strip();
-                }
-                return null;
-            }
-        }
-        return null;
-    }
 }

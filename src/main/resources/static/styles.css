@@ -706,44 +706,63 @@ figure.inline-image figcaption {
   padding: 8px;
 }
 
-/* ── Agent Tasks Section ───────────────────── */
-.obs-tasks-section {
-  border-bottom: 1px solid var(--border);
-  padding: 6px 12px 8px;
-}
-
-.obs-tasks-toggle {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+/* ── Agent Tasks Board ─────────────────────── */
+.obs-task-summary {
+  font-size: 11px;
   color: var(--muted);
-  text-transform: uppercase;
-  cursor: pointer;
-  user-select: none;
-  margin-bottom: 6px;
+  padding: 10px 14px 6px;
+  flex-shrink: 0;
 }
 
 .obs-tasks-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+  padding: 0 14px 14px;
 }
-.obs-tasks-body.hidden { display: none; }
 
 .obs-task-row {
   display: grid;
-  grid-template-columns: 1fr 80px 80px 80px 60px;
-  gap: 6px;
+  grid-template-columns: 1fr 70px 70px 110px 70px 64px;
+  gap: 8px;
   font-size: 11px;
+  align-items: start;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.obs-task-row:last-child { border-bottom: none; }
+
+.obs-task-row.obs-task-header {
+  padding: 3px 0 5px;
+  border-bottom: 1px solid var(--border);
   align-items: center;
-  padding: 2px 0;
 }
 
-.obs-task-name { color: var(--text); }
-.obs-task-meta { color: var(--muted); }
-.obs-task-platform { color: var(--muted); font-style: italic; }
-.obs-task-overdue { color: #c85a4a; font-weight: 600; }
-.obs-task-ok { color: #4caf74; }
+.obs-task-name-cell { min-width: 0; overflow: hidden; }
+.obs-task-name-main { display: block; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.obs-task-name-sub  {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.obs-task-meta { color: var(--muted); padding-top: 2px; }
+
+.obs-task-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+.obs-task-badge.overdue { background: rgba(200, 90, 74, 0.15); color: #c85a4a; }
+.obs-task-badge.ok      { color: var(--muted); }
+.obs-task-badge.done    { color: #4caf74; }
 
 /* ── Agent Definition (in-header) ──────── */
 .obs-def-inheader {
@@ -1548,4 +1567,98 @@ figure.inline-image figcaption {
   }
 
   #app.artifact-open #main { display: none; }
+}
+
+/* ── Agent notification toasts ────────────────── */
+#notification-tray {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+.agent-toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  cursor: pointer;
+  pointer-events: all;
+  animation: toast-in 0.2s ease;
+  border-left: 3px solid var(--accent);
+}
+
+.agent-toast.urgency-high  { border-left-color: #c0392b; }
+.agent-toast.urgency-medium { border-left-color: #e67e22; }
+.agent-toast.urgency-low   { border-left-color: var(--accent); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.agent-toast-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.agent-toast-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.agent-toast.urgency-high  .agent-toast-badge { background: #fde8e6; color: #c0392b; }
+.agent-toast.urgency-medium .agent-toast-badge { background: #fef0e0; color: #e67e22; }
+
+.agent-toast-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.agent-toast-dismiss {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.agent-toast-dismiss:hover { color: var(--text); }
+
+.agent-toast-body {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.agent-toast-context {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-toast-context summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 11px;
+}
+.agent-toast-context p {
+  margin-top: 4px;
+  line-height: 1.4;
 }

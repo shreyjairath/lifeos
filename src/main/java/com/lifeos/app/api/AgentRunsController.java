@@ -29,6 +29,11 @@ public class AgentRunsController {
         return agentRunStore.getRecentRuns(name, Math.min(limit, 100));
     }
 
+    @GetMapping("/tasks")
+    public Map<String, Object> getAllTasks() {
+        return new ScheduledTasks(Path.of(System.getProperty("user.dir")).resolve(".user-data/tasks.json")).list(null);
+    }
+
     @GetMapping("/{name}/tasks")
     public Map<String, Object> getTasks(@PathVariable String name) {
         return new ScheduledTasks(Path.of(System.getProperty("user.dir")).resolve(".user-data/tasks.json")).list(null);

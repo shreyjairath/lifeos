@@ -315,16 +315,8 @@ let agentsData = [];      // [{name, title}]
 let agentStatsCache = {}; // name → runs[] fetched at STATS_LIMIT, used only for stats
 
 // Shell DOM refs (set once in buildShell)
-const CRON_LABELS = {
-  session_closed:        "on session close",
-  heartbeat_trigger:     "every 6h",
-  self_eval_trigger:     "daily 5am",
-  self_learning_trigger: "daily 3am",
-};
-
 let agentListEl = null;
 let runPanelHeaderEl = null;
-let tasksSectionEl = null;
 let filterBarEl = null;
 let runPanelBodyEl = null;
 
@@ -362,13 +354,9 @@ function buildShell() {
   runPanelBodyEl = document.createElement("div");
   runPanelBodyEl.className = "obs-run-panel-body";
 
-  tasksSectionEl = document.createElement("div");
-  tasksSectionEl.className = "obs-tasks-section";
-
   const runPanel = document.createElement("div");
   runPanel.className = "obs-run-panel";
   runPanel.appendChild(runPanelHeaderEl);
-  runPanel.appendChild(tasksSectionEl);
   runPanel.appendChild(filterBarEl);
   runPanel.appendChild(runPanelBodyEl);
 
@@ -420,122 +408,11 @@ function renderAgentListItems() {
 }
 
 function isTaskOverdue(task, nowSec) {
-  if (task.cadence_hours != null) {
-    if (task.last_run == null) return true;
-    return task.last_run + task.cadence_hours * 3600 <= nowSec;
-  }
-  if (task.run_at != null) return task.last_run == null && task.run_at <= nowSec;
-  return false;
-}
-
-function renderTasksSection(agent, tasks) {
-  tasksSectionEl.innerHTML = "";
-  const bgs = agent.backgroundModes || [];
-  // post-session always runs for every agent (hardcoded in BaseAgent)
-  const total = 1 + bgs.length + tasks.length;
-  if (total === 0) return;
-
-  let expanded = true;
-
-  const header = document.createElement("div");
-  header.className = "obs-tasks-toggle";
-  header.textContent = `▾ SCHEDULED TASKS (${total})`;
-
-  const body = document.createElement("div");
-  body.className = "obs-tasks-body";
-
-  // Post-session — always runs for every agent on session close
-  {
-    const row = document.createElement("div");
-    row.className = "obs-task-row";
-    const nameEl = document.createElement("span");
-    nameEl.className = "obs-task-name";
-    nameEl.textContent = "session_closed";
-    const cadenceEl = document.createElement("span");
-    cadenceEl.className = "obs-task-meta";
-    cadenceEl.textContent = "on session close";
-    const emptyA = document.createElement("span");
-    const emptyB = document.createElement("span");
-    const typeEl = document.createElement("span");
-    typeEl.className = "obs-task-platform";
-    typeEl.textContent = "(platform)";
-    row.appendChild(nameEl);
-    row.appendChild(cadenceEl);
-    row.appendChild(emptyA);
-    row.appendChild(emptyB);
-    row.appendChild(typeEl);
-    body.appendChild(row);
-  }
-
-  // Platform trigger rows (from agent.backgroundModes)
-  for (const bg of bgs) {
-    const row = document.createElement("div");
-    row.className = "obs-task-row";
-    const nameEl = document.createElement("span");
-    nameEl.className = "obs-task-name";
-    nameEl.textContent = bg.trigger;
-    const cadenceEl = document.createElement("span");
-    cadenceEl.className = "obs-task-meta";
-    cadenceEl.textContent = CRON_LABELS[bg.trigger] || "—";
-    const emptyA = document.createElement("span");
-    const emptyB = document.createElement("span");
-    const typeEl = document.createElement("span");
-    typeEl.className = "obs-task-platform";
-    typeEl.textContent = "(platform)";
-    row.appendChild(nameEl);
-    row.appendChild(cadenceEl);
-    row.appendChild(emptyA);
-    row.appendChild(emptyB);
-    row.appendChild(typeEl);
-    body.appendChild(row);
-  }
-
-  // Workspace task rows
-  const nowSec = Date.now() / 1000;
-  for (const t of tasks) {
-    const overdue = isTaskOverdue(t, nowSec);
-    const cadence = t.cadence_hours != null
-      ? `every ${t.cadence_hours}h`
-      : t.run_at != null
-        ? `once ${new Date(t.run_at * 1000).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}`
-        : "—";
-    const lastRunStr = t.last_run ? relativeTime(t.last_run * 1000) : "never";
-    const nextDueStr = t.next_due ? relativeTime(new Date(t.next_due).getTime()) : "—";
-
-    const row = document.createElement("div");
-    row.className = "obs-task-row";
-    const nameEl = document.createElement("span");
-    nameEl.className = "obs-task-name";
-    nameEl.textContent = t.name;
-    nameEl.title = t.description || "";
-    const cadenceEl = document.createElement("span");
-    cadenceEl.className = "obs-task-meta";
-    cadenceEl.textContent = cadence;
-    const lastEl = document.createElement("span");
-    lastEl.className = "obs-task-meta";
-    lastEl.textContent = lastRunStr;
-    const nextEl = document.createElement("span");
-    nextEl.className = "obs-task-meta";
-    nextEl.textContent = nextDueStr;
-    const statusEl = document.createElement("span");
-    statusEl.className = overdue ? "obs-task-overdue" : "obs-task-ok";
-    statusEl.textContent = overdue ? "OVERDUE" : "✓";
-    row.appendChild(nameEl);
-    row.appendChild(cadenceEl);
-    row.appendChild(lastEl);
-    row.appendChild(nextEl);
-    row.appendChild(statusEl);
-    body.appendChild(row);
-  }
-
-  header.addEventListener("click", () => {
-    expanded = !expanded;
-    body.classList.toggle("hidden", !expanded);
-    header.textContent = (expanded ? "▾" : "▸") + ` SCHEDULED TASKS (${total})`;
-  });
-
-  tasksSectionEl.appendChild(header);
-  tasksSectionEl.appendChild(body);
+  const dueAt = task.due_at;
+  if (dueAt == null) return false;
+  if (task.last_run == null) return dueAt <= nowSec;
+  if (task.cadence_hours == null) return false; // one-off, completed
+  return task.last_run + task.cadence_hours * 3600 <= nowSec;
 }
 
 function renderDefinitionSection(agent, defData) {
@@ -617,17 +494,16 @@ async function selectAgent(agent, silent = false) {
   Object.values(agentItemEls).forEach(el => el.classList.remove("selected"));
   if (agentItemEls[agent.name]) agentItemEls[agent.name].classList.add("selected");
 
-  // Fetch panel display runs, stats runs, tasks, and definition in parallel
-  let runs, statsRuns, agentTasks, agentDef;
+  // Fetch panel display runs, stats runs, and definition in parallel
+  let runs, statsRuns, agentDef;
   try {
-    [runs, statsRuns, agentTasks, agentDef] = await Promise.all([
+    [runs, statsRuns, agentDef] = await Promise.all([
       fetch(`/api/agents/${agent.name}/runs?limit=${selectedLimit}`).then(r => r.json()),
       fetch(`/api/agents/${agent.name}/runs?limit=${STATS_LIMIT}`).then(r => r.json()),
-      fetch(`/api/agents/${agent.name}/tasks`).then(r => r.json()).then(d => d.tasks || []),
       fetch(`/api/agents/${agent.name}/definition`).then(r => r.json()).catch(() => null),
     ]);
   } catch {
-    runs = []; statsRuns = []; agentTasks = []; agentDef = null;
+    runs = []; statsRuns = []; agentDef = null;
   }
 
   // Update stats cache and sidebar
@@ -683,9 +559,6 @@ async function selectAgent(agent, silent = false) {
 
   // Render definition (description + config + prompt toggles) into the header
   renderDefinitionSection(agent, agentDef);
-
-  // Render tasks section
-  renderTasksSection(agent, agentTasks);
 
   // Render filter bar
   renderFilterBar(runs);
@@ -776,6 +649,123 @@ async function refreshAgentList() {
     )
   );
   renderAgentListItems();
+}
+
+
+// ── Task board tab ─────────────────────────────────────────────────────────────
+
+export async function loadTaskBoard() {
+  const boardEl = document.getElementById("agent-tasks-board");
+  boardEl.innerHTML = `<div class="debug-loading">Loading tasks…</div>`;
+
+  let tasks;
+  try {
+    ({ tasks } = await fetch("/api/agents/tasks").then(r => r.json()));
+  } catch {
+    boardEl.innerHTML = `<div class="debug-empty">Failed to load tasks.</div>`;
+    return;
+  }
+
+  boardEl.innerHTML = "";
+
+  if (!tasks?.length) {
+    boardEl.innerHTML = `<div class="debug-empty">No tasks on the board.</div>`;
+    return;
+  }
+
+  const nowSec = Date.now() / 1000;
+
+  // Sort: overdue → active → done
+  tasks.sort((a, b) => {
+    const aOver = isTaskOverdue(a, nowSec), bOver = isTaskOverdue(b, nowSec);
+    const aDone = a.last_run != null && a.cadence_hours == null;
+    const bDone = b.last_run != null && b.cadence_hours == null;
+    if (aOver !== bOver) return aOver ? -1 : 1;
+    if (aDone !== bDone) return aDone ? 1 : -1;
+    return 0;
+  });
+
+  // Summary header
+  const overdueCount = tasks.filter(t => isTaskOverdue(t, nowSec)).length;
+  const summaryEl = document.createElement("div");
+  summaryEl.className = "obs-task-summary";
+  summaryEl.textContent = overdueCount > 0
+    ? `${tasks.length} tasks · ${overdueCount} overdue`
+    : `${tasks.length} tasks`;
+  boardEl.appendChild(summaryEl);
+
+  const table = document.createElement("div");
+  table.className = "obs-tasks-body";
+
+  // Header row
+  const headerRow = document.createElement("div");
+  headerRow.className = "obs-task-row obs-task-header";
+  for (const label of ["task", "assignee", "by", "schedule", "last run", ""]) {
+    const cell = document.createElement("span");
+    cell.className = "obs-task-meta";
+    cell.textContent = label;
+    headerRow.appendChild(cell);
+  }
+  table.appendChild(headerRow);
+
+  for (const t of tasks) {
+    const overdue = isTaskOverdue(t, nowSec);
+    const oneOffDone = t.last_run != null && t.cadence_hours == null;
+
+    // Compute next due for recurring tasks
+    const nextDueSec = t.last_run != null && t.cadence_hours != null
+      ? t.last_run + t.cadence_hours * 3600
+      : null;
+
+    const schedule = t.cadence_hours != null
+      ? `every ${t.cadence_hours}h`
+      : t.due_at != null
+        ? `due ${new Date(t.due_at * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}`
+        : "—";
+
+    const lastRunStr = t.last_run ? relativeTime(t.last_run * 1000) : "never";
+
+    const row = document.createElement("div");
+    row.className = "obs-task-row";
+
+    // Name cell: two lines
+    const nameEl = document.createElement("span");
+    nameEl.className = "obs-task-name-cell";
+    nameEl.title = t.description || "";
+    nameEl.innerHTML =
+      `<span class="obs-task-name-main">${t.name}</span>` +
+      (t.description ? `<span class="obs-task-name-sub">${t.description}</span>` : "");
+
+    const assigneeEl = document.createElement("span");
+    assigneeEl.className = "obs-task-meta";
+    assigneeEl.textContent = t.assignee || "—";
+
+    const createdByEl = document.createElement("span");
+    createdByEl.className = "obs-task-meta";
+    createdByEl.textContent = t.created_by || "—";
+
+    const scheduleEl = document.createElement("span");
+    scheduleEl.className = "obs-task-meta";
+    scheduleEl.textContent = schedule;
+
+    const lastEl = document.createElement("span");
+    lastEl.className = "obs-task-meta";
+    lastEl.textContent = lastRunStr;
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "obs-task-badge" + (overdue ? " overdue" : oneOffDone ? " done" : " ok");
+    statusEl.textContent = overdue ? "overdue" : oneOffDone ? "done" : "✓";
+
+    row.appendChild(nameEl);
+    row.appendChild(assigneeEl);
+    row.appendChild(createdByEl);
+    row.appendChild(scheduleEl);
+    row.appendChild(lastEl);
+    row.appendChild(statusEl);
+    table.appendChild(row);
+  }
+
+  boardEl.appendChild(table);
 }
 
 

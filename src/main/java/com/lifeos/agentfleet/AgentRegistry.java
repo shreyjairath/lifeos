@@ -2,7 +2,6 @@ package com.lifeos.agentfleet;
 
 import com.lifeos.config.AppConfig;
 import com.lifeos.agentfleet.EventBus;
-import com.lifeos.agentfleet.WebPushService;
 import com.lifeos.agent.executor.Confirmations;
 import com.lifeos.agent.AgentRunLogs;
 import com.lifeos.agentfleet.ToolsRegistry;
@@ -44,20 +43,17 @@ public class AgentRegistry {
     private final EventBus eventBus;
     private final Confirmations confirmations;
     private final AppConfig config;
-    private final WebPushService webPush;
     private final AgentRunLogs agentRunStore;
 
     public AgentRegistry(ToolsRegistry toolsRegistry,
                          EventBus eventBus,
-                         Confirmations confirmations, 
-                         AppConfig config, 
-                         WebPushService webPush,
+                         Confirmations confirmations,
+                         AppConfig config,
                          AgentRunLogs agentRunStore) {
         this.toolsRegistry = toolsRegistry;
         this.eventBus = eventBus;
         this.confirmations = confirmations;
         this.config = config;
-        this.webPush = webPush;
         this.agentRunStore = agentRunStore;
     }
 
@@ -133,7 +129,11 @@ public class AgentRegistry {
             }
         };
         var agent = new BaseAgent(def, invoker, toolsRegistry.agentChannels(),
-                eventBus, confirmations, config, webPush, agentRunStore);
+                eventBus, confirmations, config, agentRunStore,
+                () -> agents.values().stream()
+                        .filter(a -> def.name().equals(a.getDefinition().manager()))
+                        .map(Agent::getName)
+                        .toList());
         agents.put(def.name(), agent);
         log.info("AgentRegistry: loaded agent '{}' from {}", def.name(), promptBase);
         return agent;

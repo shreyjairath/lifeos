@@ -2,11 +2,14 @@ package com.lifeos.agentfleet;
 
 import com.lifeos.agent.Agent;
 import com.lifeos.agent.PromptParts;
+import com.lifeos.agentfleet.tools.ScheduledTasks;
 import com.lifeos.config.AppConfig;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,7 +51,6 @@ public class AgentFleet {
     public Map<String, Object> agentInfo(Agent a) {
         var def   = a.getDefinition();
         var tools = def.tools();
-        var bgs   = def.backgroundModes();
         var m = new LinkedHashMap<String, Object>();
         m.put("name",            def.name());
         m.put("title",           def.title());
@@ -63,13 +65,10 @@ public class AgentFleet {
                 ? Map.of("mode", tools.mode(), "names", tools.names())
                 : null);
         m.put("disabledModes",   def.disabledModes());
-        m.put("backgroundModes", bgs.stream()
-                .map(bg -> Map.of("trigger", bg.trigger(), "promptFile", bg.promptFile()))
-                .toList());
         return m;
     }
 
-    /** Resolved identity + background-mode prompt texts for GET /api/agents/{name}/definition. */
+    /** Resolved identity text for GET /api/agents/{name}/definition. */
     public Map<String, Object> agentDefinitionText(String name) {
         var a   = registry.get(name);
         var def = a.getDefinition();
@@ -78,12 +77,7 @@ public class AgentFleet {
                 .map(f -> PromptParts.load(def.promptBase(), f))
                 .collect(java.util.stream.Collectors.joining("\n\n"));
 
-        var bgPrompts = new LinkedHashMap<String, String>();
-        for (var bg : def.backgroundModes()) {
-            bgPrompts.put(bg.trigger(), PromptParts.load(def.promptBase(), bg.promptFile()));
-        }
-
-        return Map.of("identityText", identityText, "backgroundModePrompts", bgPrompts);
+        return Map.of("identityText", identityText);
     }
 
     // ── Session management ─────────────────────────────────────────────────────
@@ -139,5 +133,41 @@ public class AgentFleet {
         if (extra != null) event.putAll(extra);
         event.put("type", eventType);
         eventBus.publish(event);
+    }
+
+    // ── Background task board ───────────────────────────────────────────────────
+
+    /**
+     * Called on startup — upserts recurring tasks (self_eval, self_learning) in tasks.json.
+     * Agents pick these up during heartbeat via get_overdue_tasks.
+     */
+    public void initBackgroundTasks() {
+        var tasks = scheduledTasks();
+        for (var agent : registry.all()) {
+            var def = agent.getDefinition();
+            for (var rt : def.recurringTasks()) {
+                var description = com.lifeos.agent.PromptParts.load(def.promptBase(), rt.promptFile());
+                tasks.upsert("platform",
+                        def.name() + "." + rt.name(),
+                        description,
+                        rt.cadenceHours(),
+                        Instant.now().toString(),
+                        def.name());
+            }
+        }
+    }
+
+    /** Fires heartbeat_trigger for every agent (unless they have it in disabled-modes). */
+    public void triggerHeartbeat() {
+        for (var agent : registry.all()) {
+            var def = agent.getDefinition();
+            if (!def.disabledModes().contains("heartbeat_trigger")) {
+                trigger("heartbeat_trigger", Map.of("agent", def.name()));
+            }
+        }
+    }
+
+    private static ScheduledTasks scheduledTasks() {
+        return new ScheduledTasks(Path.of(System.getProperty("user.dir")).resolve(".user-data/tasks.json"));
     }
 }

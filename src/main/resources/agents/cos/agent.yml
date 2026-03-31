@@ -1,6 +1,7 @@
 name: cos
 title: Chief of Staff
 description: Your chief of staff — owns the big picture, manages the team of specialist agents, and drives things forward on your behalf.
+goal: Keep the client's most important goals moving — no dropped balls, no blind spots, no drift between what matters and what's getting attention.
 identity:
   - identity.md
 tools:
@@ -10,13 +11,20 @@ tools:
     - agent_bash
     - log_entry
     - read_log
-    - schedule_task
-    - get_scheduled_tasks
+    # tasks
+    - create_task
+    - get_my_tasks
+    - get_tasks
     - get_overdue_tasks
     - mark_task_complete
+    - delete_task
     # team
     - message_agent
+    - message_agent_async
     - read_agent_message_history
+    - write_to_topic
+    - read_topic
+    - list_topics
     - list_agents
     - list_tools
     - read_agent_definition
@@ -37,10 +45,13 @@ tools:
     - list_reminders
     - delete_reminder
 
-background-modes:
-  - trigger: heartbeat_trigger
-    prompt: heartbeat.md
-  - trigger: self_eval_trigger
+recurring-tasks:
+  - name: self_eval
     prompt: self-eval.md
-  - trigger: self_learning_trigger
+    cadence-hours: 24
+  - name: self_learning
     prompt: self-learning.md
+    cadence-hours: 48
+  - name: workspace_reorg
+    prompt: workspace-reorg.md
+    cadence-hours: 168
