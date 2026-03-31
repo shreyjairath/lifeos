@@ -1,0 +1,180 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { resolve } from 'path';
+import yaml from 'js-yaml';
+import { AGENTS_DIR } from '../tools-registry.js';
+import type { AgentRegistry } from '../agent-registry.js';
+import type { EventBus } from '../event-bus.js';
+
+export class AgentTools {
+  constructor(
+    private readonly getRegistry: () => AgentRegistry,
+    private readonly eventBus: EventBus,
+  ) {}
+
+  async messageAgent(fromAgent: string, targetAgent: string, message: string): Promise<Record<string, any>> {
+    if (fromAgent === targetAgent) {
+      return { error: 'Cannot message yourself. Use your workspace files to record notes and track state.' };
+    }
+    const registry = this.getRegistry();
+    const agent = registry.get(targetAgent);
+    if (!agent) return { error: `Agent '${targetAgent}' not found. Use list_agents to see available agents.` };
+    try {
+      const response = await agent.handleAgentMessage(fromAgent, message);
+      return { agent: targetAgent, response };
+    } catch (err: any) {
+      return { error: `Failed to message agent '${targetAgent}': ${err?.message ?? 'unknown'}` };
+    }
+  }
+
+  messageAgentAsync(fromAgent: string, targetAgent: string, message: string): Record<string, any> {
+    if (fromAgent === targetAgent) return { error: 'Cannot message yourself.' };
+    const registry = this.getRegistry();
+    const agent = registry.get(targetAgent);
+    if (!agent) return { error: `Agent '${targetAgent}' not found. Use list_agents to see available agents.` };
+    agent.handleAgentMessageAsync(fromAgent, message);
+    const pair = fromAgent < targetAgent ? `${fromAgent}-${targetAgent}` : `${targetAgent}-${fromAgent}`;
+    return { status: 'queued', channel: pair };
+  }
+
+  listAgents(callerName: string): Record<string, any> {
+    const registry = this.getRegistry();
+    const all = registry.all();
+    return {
+      agents: all.map((a) => {
+        const entry: Record<string, any> = {
+          name: a.getName(),
+          title: a.getTitle(),
+          description: a.getDescription(),
+        };
+        const def = a.getDefinition();
+        if (def.goal) entry.goal = def.goal;
+        if (def.manager) entry.manager = def.manager;
+        const hires = all
+          .filter((h) => h.getDefinition().manager === a.getName())
+          .map((h) => h.getName());
+        if (hires.length) entry.hires = hires;
+        if (a.getName() === callerName) entry.self = true;
+        return entry;
+      }),
+    };
+  }
+
+  readAgentDefinition(name: string): Record<string, any> {
+    const agentDir = resolve(AGENTS_DIR, name);
+    if (!existsSync(agentDir)) {
+      return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
+    }
+    try {
+      const agentYml = readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8');
+      const parsed = yaml.load(agentYml) as Record<string, any>;
+      const result: Record<string, any> = { ...parsed };
+      for (const file of ['identity.md', 'chat.md', 'post-session.md', 'self-eval.md', 'heartbeat.md']) {
+        const path = resolve(agentDir, file);
+        if (existsSync(path)) result[file] = readFileSync(path, 'utf-8');
+      }
+      return result;
+    } catch (err: any) {
+      return { error: `Failed to read agent '${name}': ${err?.message}` };
+    }
+  }
+
+  updateAgent(
+    name: string,
+    title: string | null,
+    description: string | null,
+    goal: string | null,
+    manager: string | null,
+    identity: string | null,
+    chatInstructions: string | null,
+    tools: string[] | null,
+  ): Record<string, any> {
+    const agentDir = resolve(AGENTS_DIR, name);
+    if (!existsSync(agentDir)) {
+      return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
+    }
+    try {
+      const currentYaml = yaml.load(readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8')) as Record<string, any>;
+
+      const newTitle = title ?? (currentYaml.title as string) ?? name;
+      const newDesc = description ?? (currentYaml.description as string) ?? '';
+      const newGoal = goal ?? (currentYaml.goal as string) ?? null;
+      const newManager = manager ?? (currentYaml.manager as string) ?? null;
+
+      const identityPath = resolve(agentDir, 'identity.md');
+      const newIdentity = identity ?? (existsSync(identityPath) ? readFileSync(identityPath, 'utf-8') : '');
+      const chatPath = resolve(agentDir, 'chat.md');
+      const newChat = chatInstructions ?? (existsSync(chatPath) ? readFileSync(chatPath, 'utf-8') : '');
+
+      let newTools: string[];
+      if (tools != null) {
+        newTools = tools;
+      } else {
+        const toolsMap = currentYaml.tools as Record<string, any> | undefined;
+        newTools = toolsMap ? ((toolsMap.names ?? []) as string[]) : [];
+      }
+
+      writeFileSync(identityPath, newIdentity ?? '', 'utf-8');
+      writeFileSync(chatPath, newChat ?? '', 'utf-8');
+
+      const yamlContent = buildAgentYaml(name, newTitle, newDesc, newGoal, newManager, newTools);
+      writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
+
+      this.getRegistry().register(yamlContent, agentDir);
+      this.eventBus.publish({ type: 'agents_updated' });
+      return { success: `Agent '${name}' updated and re-registered.` };
+    } catch (err: any) {
+      return { error: `Failed to update agent '${name}': ${err?.message}` };
+    }
+  }
+
+  createAgent(
+    name: string,
+    title: string | null,
+    description: string | null,
+    goal: string | null,
+    manager: string | null,
+    identity: string,
+    chatInstructions: string,
+    tools: string[],
+  ): Record<string, any> {
+    if (!name || !/^[a-z][a-z0-9_]*$/.test(name)) {
+      return { error: 'Agent name must be lowercase alphanumeric + underscore, starting with a letter (e.g. "pm_coach")' };
+    }
+    const agentDir = resolve(AGENTS_DIR, name);
+    try {
+      mkdirSync(agentDir, { recursive: true });
+      writeFileSync(resolve(agentDir, 'identity.md'), identity, 'utf-8');
+      writeFileSync(resolve(agentDir, 'chat.md'), chatInstructions, 'utf-8');
+
+      const yamlContent = buildAgentYaml(name, title, description, goal, manager, tools);
+      writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
+
+      this.getRegistry().register(yamlContent, agentDir);
+      this.eventBus.publish({ type: 'agents_updated' });
+      return { success: `Agent '${name}' created and registered. Switch to it with agent: "${name}"` };
+    } catch (err: any) {
+      return { error: `Failed to create agent '${name}': ${err?.message}` };
+    }
+  }
+}
+
+function buildAgentYaml(
+  name: string,
+  title: string | null,
+  description: string | null,
+  goal: string | null,
+  manager: string | null,
+  tools: string[],
+): string {
+  const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
+  let s = `name: ${name}\n`;
+  s += `title: ${title?.trim() || name}\n`;
+  if (description?.trim()) s += `description: ${description.trim()}\n`;
+  if (goal?.trim()) s += `goal: ${goal.trim()}\n`;
+  if (manager?.trim()) s += `manager: ${manager.trim()}\n`;
+  s += `identity:\n  - identity.md\n`;
+  s += `chat-prompt: chat.md\n`;
+  s += `tools:\n  mode: include\n  names:\n`;
+  for (const tool of allTools) s += `    - ${tool}\n`;
+  return s;
+}

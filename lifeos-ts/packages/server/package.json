@@ -1,0 +1,26 @@
+{
+  "name": "@lifeos/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "js-yaml": "^4.1.0",
+    "cheerio": "^1.0.0",
+    "web-push": "^3.6.0",
+    "@modelcontextprotocol/sdk": "^1.1.0",
+    "node-cron": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/web-push": "^3.6.4",
+    "@types/node-cron": "^3.0.11",
+    "bun-types": "latest",
+    "typescript": "^5.7.0"
+  }
+}
