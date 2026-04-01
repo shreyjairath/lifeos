@@ -582,7 +582,8 @@ input, textarea, select {
 
 /* Within-turn spacing */
 .msg.label + .msg.thinking,
-.msg.label + .msg.agent { margin-top: 4px; }
+.msg.label + .msg.agent,
+.msg.label + .msg.tool { margin-top: 4px; }
 
 .msg-label {
   display: flex;
@@ -722,7 +723,7 @@ input, textarea, select {
 
 /* Reasoning block */
 .reasoning-block {
-  margin: 0 0 6px;
+  margin: 0;
   border-left: 2px solid var(--border);
   padding-left: 8px;
 }
