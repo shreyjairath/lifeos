@@ -255,9 +255,10 @@ export default function ChatPanel({
             case 'llm_text': {
               agentText += event.text;
               const currentId = streamingMsgId.current;
+              const textSnapshot = agentText;
               setMessages(prev =>
                 prev.map(m => {
-                  if (m.id === currentId) return { ...m, text: agentText, isStreaming: true };
+                  if (m.id === currentId) return { ...m, text: textSnapshot, isStreaming: true };
                   if (m.role === 'thinking' && m.isStreaming) return { ...m, isStreaming: false };
                   return m;
                 })
