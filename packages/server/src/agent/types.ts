@@ -81,6 +81,7 @@ export interface LlmReasoningEvent {
 
 export interface LlmToolCallEvent {
   type: 'llm_tool_call';
+  id: string;
   name: string;
   input: Record<string, any>;
 }
@@ -112,6 +113,7 @@ export interface ToolConfirmDeniedEvent {
 
 export interface ToolResultEvent {
   type: 'tool_result';
+  id: string;
   name: string;
   result: Record<string, any>;
 }

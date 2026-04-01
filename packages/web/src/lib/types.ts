@@ -22,6 +22,7 @@ export interface Message {
   text: string;
   timestamp: number;
   toolName?: string;
+  toolCallId?: string;
   toolInput?: Record<string, unknown>;
   toolResult?: unknown;
   isStreaming?: boolean;
@@ -79,8 +80,8 @@ export interface Task {
 export type SseEvent =
   | { type: 'llm_text'; text: string }
   | { type: 'llm_reasoning'; text: string }
-  | { type: 'llm_tool_call'; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; result: unknown }
+  | { type: 'llm_tool_call'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; id: string; name: string; result: unknown }
   | { type: 'tool_confirm_request'; requestId: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_confirm_denied'; name: string }
   | { type: 'tool_cancelled' }

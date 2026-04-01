@@ -82,17 +82,7 @@ function toSse(event: ExecutorEvent): SseFrame | null {
 
   switch (event.type) {
     case 'llm_request':
-      payload = {
-        type: 'request_json',
-        payload: {
-          model: event.model,
-          max_tokens: event.maxTokens,
-          system: event.system,
-          messages: event.messages,
-          tools: event.tools,
-        },
-      };
-      break;
+      return null;
     case 'llm_text':
       payload = { type: 'llm_text', text: event.text };
       break;
@@ -103,15 +93,7 @@ function toSse(event: ExecutorEvent): SseFrame | null {
       payload = { type: 'llm_tool_call', name: event.name, input: event.input };
       break;
     case 'llm_response':
-      payload = {
-        type: 'response_json',
-        payload: {
-          stop_reason: event.stopReason,
-          usage: event.usage,
-          content: event.content,
-        },
-      };
-      break;
+      return null;
     case 'tool_confirm_request':
       payload = { type: 'tool_confirm_request', requestId: event.requestId, name: event.name, input: event.input };
       break;
@@ -119,7 +101,7 @@ function toSse(event: ExecutorEvent): SseFrame | null {
       payload = { type: 'tool_confirm_denied', name: event.name };
       break;
     case 'tool_result':
-      payload = { type: 'tool_result', name: event.name, result: event.result };
+      payload = { type: 'tool_result', id: event.id, name: event.name, result: event.result };
       break;
     case 'agent_append':
     case 'tool_cancelled':

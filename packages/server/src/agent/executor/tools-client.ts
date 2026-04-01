@@ -66,7 +66,7 @@ async function* invokeOne(
   }
 
   appendResult(id, toolResult, result);
-  yield { type: 'tool_result', name, result: toolResult };
+  yield { type: 'tool_result', id, name, result: toolResult };
 }
 
 function appendResult(

@@ -69,7 +69,6 @@ export class LlmClient {
     const decoder = new TextDecoder();
     let buffer = '';
     const toolAccumulators: ToolUseAccumulator[] = [];
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -93,7 +92,7 @@ export class LlmClient {
       }
     }
 
-    // Finalize tool uses
+    // Finalize tool uses and emit tool call events (once, after full stream)
     for (const acc of toolAccumulators) {
       if (acc.id && acc.name) {
         if (!acc.parsedInput) {
@@ -104,6 +103,7 @@ export class LlmClient {
           }
         }
         result.parsedToolUses.push({ id: acc.id!, name: acc.name!, input: acc.parsedInput ?? {} });
+        yield { type: 'llm_tool_call', id: acc.id!, name: acc.name!, input: acc.parsedInput ?? {} };
       }
     }
 
@@ -194,17 +194,6 @@ export class LlmClient {
     const finishReason = choice.finish_reason;
     if (finishReason === 'tool_calls') {
       result.stopReason = 'tool_use';
-      // Parse completed tool calls and emit events
-      for (const acc of toolAccumulators) {
-        if (acc.name) {
-          try {
-            acc.parsedInput = acc.argumentsJson ? JSON.parse(acc.argumentsJson) : {};
-          } catch {
-            acc.parsedInput = {};
-          }
-          yield { type: 'llm_tool_call', name: acc.name!, input: acc.parsedInput ?? {} };
-        }
-      }
     } else if (finishReason === 'stop') {
       result.stopReason = 'end_turn';
     } else if (finishReason && finishReason !== 'null') {

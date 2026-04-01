@@ -191,9 +191,6 @@ export default function ChatPanel({
       let buffer = '';
       let agentText = '';
 
-      // Track pending tool calls by id
-      const pendingTools: Record<string, { name: string; input: Record<string, unknown>; msgId: string }> = {};
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -225,15 +222,23 @@ export default function ChatPanel({
               break;
             }
             case 'llm_reasoning': {
-              // Add/update thinking block
               const thinkId = nanoid();
+              const currentStreamId = streamingMsgId.current;
               setMessages(prev => {
-                // Check if last message is already a thinking block being built
-                const last = prev[prev.length - 1];
-                if (last?.role === 'thinking' && last?.isStreaming) {
-                  return prev.map(m => m.id === last.id ? { ...m, text: m.text + event.text } : m);
+                // If there's already a streaming thinking block, append to it
+                const existingThink = prev.find(m => m.role === 'thinking' && m.isStreaming);
+                if (existingThink) {
+                  return prev.map(m => m.id === existingThink.id ? { ...m, text: m.text + event.text } : m);
                 }
-                return [...prev, { id: thinkId, role: 'thinking', text: event.text, timestamp: Date.now(), isStreaming: true }];
+                // Insert new thinking block before the streaming agent placeholder
+                const idx = prev.findIndex(m => m.id === currentStreamId);
+                const newThink = { id: thinkId, role: 'thinking' as const, text: event.text, timestamp: Date.now(), isStreaming: true };
+                if (idx >= 0) {
+                  const next = [...prev];
+                  next.splice(idx, 0, newThink);
+                  return next;
+                }
+                return [...prev, newThink];
               });
               break;
             }
@@ -256,19 +261,14 @@ export default function ChatPanel({
               break;
             }
             case 'llm_tool_call': {
-              // Discard pre-tool placeholder — the model echoes the same text in the
-              // post-tool response, producing duplicate bubbles if we keep it.
               const oldPlaceholderId = streamingMsgId.current;
               agentText = '';
-              setMessages(prev => prev.filter(m => m.id !== oldPlaceholderId));
+              // Finalize pre-tool text bubble (keep it, just stop streaming)
+              setMessages(prev =>
+                prev.map(m => m.id === oldPlaceholderId ? { ...m, isStreaming: false } : m)
+              );
               // Add tool call message
               const toolMsgId = nanoid();
-              const toolData = {
-                name: event.name,
-                input: event.input,
-                msgId: toolMsgId,
-              };
-              pendingTools[event.name + '_' + Date.now()] = toolData;
               setMessages(prev => [
                 ...prev,
                 {
@@ -276,25 +276,25 @@ export default function ChatPanel({
                   role: 'tool',
                   text: '',
                   toolName: event.name,
+                  toolCallId: event.id,
                   toolInput: event.input,
                   timestamp: Date.now(),
                 },
               ]);
               // Start new agent text message
-              streamingMsgId.current = nanoid();
+              const newMsgId = nanoid();
+              streamingMsgId.current = newMsgId;
               setMessages(prev => [
                 ...prev,
-                { id: streamingMsgId.current!, role: 'agent', text: '', timestamp: Date.now(), isStreaming: true },
+                { id: newMsgId, role: 'agent', text: '', timestamp: Date.now(), isStreaming: true },
               ]);
               break;
             }
             case 'tool_result': {
-              // Find the last pending tool message with matching name and attach result
               setMessages(prev => {
                 const updated = [...prev];
-                // find last tool msg with this name that has no result yet
                 for (let i = updated.length - 1; i >= 0; i--) {
-                  if (updated[i].role === 'tool' && updated[i].toolName === event.name && !updated[i].toolResult) {
+                  if (updated[i].role === 'tool' && updated[i].toolCallId === event.id) {
                     updated[i] = { ...updated[i], toolResult: event.result };
                     break;
                   }
@@ -320,7 +320,8 @@ export default function ChatPanel({
               setConfirmRequest(null);
               break;
             }
-            case 'done': {
+            case 'done':
+            case 'stopped': {
               setMessages(prev =>
                 prev
                   .map(m => m.isStreaming ? { ...m, isStreaming: false } : m)

@@ -387,15 +387,25 @@ input, textarea, select {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 2px;
 }
 
 /* Messages */
 .msg {
   display: flex;
   align-items: flex-start;
-  padding: 6px 20px;
+  padding: 2px 20px;
   gap: 10px;
+}
+
+.msg.user {
+  padding-top: 10px;
+  padding-bottom: 4px;
+}
+
+.msg.agent {
+  padding-top: 4px;
+  padding-bottom: 10px;
 }
 
 .msg.user {
@@ -519,54 +529,44 @@ input, textarea, select {
 
 /* Reasoning block */
 .reasoning-block {
-  border-left: 3px solid var(--accent-dim);
-  padding-left: 10px;
-  margin: 2px 0;
-  max-width: 85%;
-  font-size: 12px;
-  color: var(--text-muted);
+  margin: 0 0 6px;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
 }
 
-.reasoning-block > summary {
+.reasoning-block summary {
+  font-size: 12px;
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
-  font-style: italic;
-  padding: 2px 0;
   list-style: none;
 }
 
-.reasoning-block > summary::before {
-  content: '▶ ';
-  font-size: 10px;
-}
-
-.reasoning-block[open] > summary::before {
-  content: '▼ ';
-}
+.reasoning-block summary::-webkit-details-marker { display: none; }
+.reasoning-block summary::before { content: "▶ "; font-size: 10px; }
+.reasoning-block[open] summary::before { content: "▼ "; }
 
 .reasoning-content {
-  padding: 6px 0 2px;
+  font-size: 12px;
+  color: var(--text-muted);
   white-space: pre-wrap;
-  font-style: italic;
+  padding-top: 4px;
   max-height: 300px;
   overflow-y: auto;
-  line-height: 1.5;
 }
 
 /* Tool block */
 .tool-block {
-  background: var(--tool-bg);
-  border: 1px solid var(--tool-border);
-  border-radius: var(--radius-sm);
-  padding: 5px 10px;
-  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
-  font-size: 12px;
-  color: var(--text);
-  max-width: 85%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin: 8px 0;
+  padding: 2px 0;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  text-align: left;
 }
+
+.tool-block + .bubble { margin-top: 8px; }
 
 /* Chat input */
 .chat-input-area {

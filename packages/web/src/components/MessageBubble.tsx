@@ -45,8 +45,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
     );
   }
 
-  // agent — don't render if no text
-  if (!message.text) return null;
+  // agent — don't render if no text and not streaming
+  if (!message.text && !message.isStreaming) return null;
 
   return (
     <div className="msg agent">
