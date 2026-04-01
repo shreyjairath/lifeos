@@ -1,14 +1,9 @@
-# Java / Gradle
-build/
-.gradle/
-*.class
-
-# Environment
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
 .env
-.env.*
-
-# Data / runtime
+.env.local
+.env*.local
 .user-data/
-
-# macOS
-.DS_Store
