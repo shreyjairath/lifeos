@@ -49,6 +49,8 @@ export default function ChatPanel({
 
   // Track current active streaming message id
   const streamingMsgId = useRef<string | null>(null);
+  // Track whether label has been inserted for the current agent turn
+  const labelInsertedRef = useRef(false);
 
   useEffect(() => {
     currentSessionRef.current = sessionId;
@@ -80,6 +82,7 @@ export default function ChatPanel({
           } else if (m.role === 'assistant') {
             const content = m.content;
             if (Array.isArray(content)) {
+              msgs.push({ id: nanoid(), role: 'label', text: '', agentName: agent?.title ?? agent?.name, timestamp: Date.now() + i });
               let agentText = '';
               content.forEach((block: unknown) => {
                 const b = block as Record<string, unknown>;
@@ -111,6 +114,7 @@ export default function ChatPanel({
                 msgs.push({ id: nanoid(), role: 'agent', text: agentText, timestamp: Date.now() + i });
               }
             } else if (typeof content === 'string' && content) {
+              msgs.push({ id: nanoid(), role: 'label', text: '', agentName: agent?.title ?? agent?.name, timestamp: Date.now() + i });
               msgs.push({ id: nanoid(), role: 'agent', text: content, timestamp: Date.now() + i });
             }
           } else if (m.role === 'tool') {
@@ -160,6 +164,7 @@ export default function ChatPanel({
     setStreaming(true);
 
     setDebugEvents([]);
+    labelInsertedRef.current = false;
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -232,6 +237,18 @@ export default function ChatPanel({
               break;
             }
             case 'llm_reasoning': {
+              if (!labelInsertedRef.current) {
+                labelInsertedRef.current = true;
+                const labelId = nanoid();
+                const sid = streamingMsgId.current;
+                setMessages(prev => {
+                  const idx = prev.findIndex(m => m.id === sid);
+                  const lbl = { id: labelId, role: 'label' as const, text: '', agentName: agent.title ?? agent.name, timestamp: Date.now() };
+                  const next = [...prev];
+                  idx >= 0 ? next.splice(idx, 0, lbl) : next.push(lbl);
+                  return next;
+                });
+              }
               const thinkId = nanoid();
               const currentStreamId = streamingMsgId.current;
               setMessages(prev => {
@@ -253,6 +270,18 @@ export default function ChatPanel({
               break;
             }
             case 'llm_text': {
+              if (!labelInsertedRef.current) {
+                labelInsertedRef.current = true;
+                const labelId = nanoid();
+                const sid = streamingMsgId.current;
+                setMessages(prev => {
+                  const idx = prev.findIndex(m => m.id === sid);
+                  const lbl = { id: labelId, role: 'label' as const, text: '', agentName: agent.title ?? agent.name, timestamp: Date.now() };
+                  const next = [...prev];
+                  idx >= 0 ? next.splice(idx, 0, lbl) : next.push(lbl);
+                  return next;
+                });
+              }
               agentText += event.text;
               const currentId = streamingMsgId.current;
               const textSnapshot = agentText;
@@ -455,18 +484,9 @@ export default function ChatPanel({
             </div>
           )}
 
-          {messages.map((msg, i) => {
-            const name = (msg.role === 'agent' || msg.role === 'thinking') ? (agent?.title ?? agent?.name) : undefined;
-            let showLabel = true;
-            if (msg.role === 'agent' || msg.role === 'thinking') {
-              for (let j = i - 1; j >= 0; j--) {
-                const prev = messages[j];
-                if (prev.role === 'user') break;
-                if (prev.role === 'thinking') { showLabel = false; break; }
-              }
-            }
-            return <MessageBubble key={msg.id} message={msg} agentName={name} showLabel={showLabel} />;
-          })}
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
+          ))}
 
           <div ref={bottomRef} />
         </div>

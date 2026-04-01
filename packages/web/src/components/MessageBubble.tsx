@@ -12,20 +12,23 @@ function formatTime(ts: number): string {
 
 interface MessageBubbleProps {
   message: Message;
-  agentName?: string;
-  showLabel?: boolean;
 }
 
-export default function MessageBubble({ message, agentName, showLabel = true }: MessageBubbleProps) {
+export default function MessageBubble({ message }: MessageBubbleProps) {
+  if (message.role === 'label') {
+    return (
+      <div className="msg label">
+        <div className="msg-label">
+          {message.agentName && <span>{message.agentName}</span>}
+          <span>{formatTime(message.timestamp)}</span>
+        </div>
+      </div>
+    );
+  }
+
   if (message.role === 'thinking') {
     return (
       <div className="msg thinking">
-        {agentName && showLabel && (
-          <div className="msg-label">
-            <span>{agentName}</span>
-            <span>{formatTime(message.timestamp)}</span>
-          </div>
-        )}
         <details className="reasoning-block">
           <summary>
             Reasoning{message.isStreaming && <span className="reasoning-streaming-dot" />}
@@ -68,12 +71,6 @@ export default function MessageBubble({ message, agentName, showLabel = true }: 
 
   return (
     <div className="msg agent">
-      {showLabel && (
-        <div className="msg-label">
-          {agentName && <span>{agentName}</span>}
-          <span>{formatTime(message.timestamp)}</span>
-        </div>
-      )}
       <div className={`bubble${message.isStreaming ? ' streaming-cursor' : ''}`}>
         <div className="markdown-content">
           <ReactMarkdown

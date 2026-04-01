@@ -18,9 +18,10 @@ export interface Session {
 
 export interface Message {
   id: string;
-  role: 'user' | 'agent' | 'tool' | 'thinking';
+  role: 'user' | 'agent' | 'tool' | 'thinking' | 'label';
   text: string;
   timestamp: number;
+  agentName?: string;
   toolName?: string;
   toolCallId?: string;
   toolInput?: Record<string, unknown>;

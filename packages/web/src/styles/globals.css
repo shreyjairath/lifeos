@@ -575,15 +575,14 @@ input, textarea, select {
 
 /* Turn-starting messages get larger top margin */
 .msg.user  { align-items: flex-end;   margin-top: 20px; }
-.msg.agent { align-items: flex-start; margin-top: 20px; }
-.msg.thinking { align-items: flex-start; margin-top: 20px; }
+.msg.label { align-items: flex-start; margin-top: 20px; margin-bottom: 4px; }
+.msg.agent { align-items: flex-start; margin-top: 6px; }
+.msg.thinking { align-items: flex-start; margin-top: 6px; }
 .msg.tool  { margin-top: 6px; }
 
-/* Within-turn: collapse top margin so gap = label→reasoning gap (~6px) */
-.msg.thinking + .msg.tool,
-.msg.tool    + .msg.tool,
-.msg.tool    + .msg.agent,
-.msg.thinking + .msg.agent { margin-top: 6px; }
+/* Within-turn spacing */
+.msg.label + .msg.thinking,
+.msg.label + .msg.agent { margin-top: 4px; }
 
 .msg-label {
   display: flex;
