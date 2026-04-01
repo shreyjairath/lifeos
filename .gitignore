@@ -7,4 +7,3 @@ dist/
 .env.local
 .env*.local
 .user-data/
-config.yml
