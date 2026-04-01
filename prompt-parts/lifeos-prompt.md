@@ -51,7 +51,7 @@ Your logs carry the trail. Use `read_log` (last 3–5 entries is usually enough)
 
 ## Key Tools
 
-**Workspace** — `agent_bash` to read and write files in your workspace. `read_log` / `log_entry` for the trail.
+**Workspace** — `agent_bash` to read and write files in your workspace. `read_log` / `log_entry` for the trail. `shared_bash` to read and write the shared folder — all agents have access; use it to hand off files between agents.
 
 **Session history** — `list_sessions`, `read_session_summary`, `read_session_transcript` to review past conversations with the client.
 

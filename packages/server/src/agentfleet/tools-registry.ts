@@ -21,6 +21,7 @@ type McpToolsClientImpl = import('./tools/mcp-tools-client.js').McpToolsClient;
 
 const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 export const AGENTS_DIR = resolve(USER_DATA, 'agents');
+const SHARED_DIR = resolve(USER_DATA, 'shared');
 const DISABLED_FILE = resolve(USER_DATA, 'disabled-tools.json');
 
 // ── ToolsRegistry ─────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ export class ToolsRegistry {
   private readonly sessionTools = new SessionToolsImpl();
   readonly channels: AgentChannels = new AgentChannels();
   readonly topics: AgentTopics = new AgentTopics();
+  private readonly sharedBash = new Bash(SHARED_DIR, false);
 
   // Injected by createApp() after construction
   agentTools!: AgentToolsImpl;
@@ -45,6 +47,7 @@ export class ToolsRegistry {
 
   init(): void {
     mkdirSync(resolve(USER_DATA, 'system'), { recursive: true });
+    mkdirSync(SHARED_DIR, { recursive: true });
   }
 
   registerAgentWorkspace(name: string, workspacePath: string): void {
@@ -107,6 +110,8 @@ export class ToolsRegistry {
           ? bash.run(input.command as string)
           : { error: `No workspace registered for agent: ${input.agent}` };
       }
+      case 'shared_bash':
+        return this.sharedBash.run(input.command as string);
       case 'get_current_datetime': {
         const now = new Date();
         return {
@@ -266,6 +271,13 @@ const TOOLS: ToolDefinition[] = [
     'Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. ' +
     'Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.',
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
+
+  tool('shared_bash',
+    'Shared folder readable and writable by all agents. Use for cross-agent file handoffs: ' +
+    'reports, notes, or any file one agent produces for another to read. ' +
+    'The shell starts in the shared folder — use relative paths. ' +
+    'Same restrictions as agent_bash: no path traversal, no network tools, no absolute paths.',
+    props(prop('command', 'string', 'Bash command to run in the shared folder.')), ['command']),
 
   tool('browse_page',
     'Fetch and read the content of a web page. ' +
