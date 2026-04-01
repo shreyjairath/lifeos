@@ -51,6 +51,8 @@ export default function ChatPanel({
   const streamingMsgId = useRef<string | null>(null);
   // Track whether label has been inserted for the current agent turn
   const labelInsertedRef = useRef(false);
+  // Mirror streaming state in a ref so history effect can check it without being a dependency
+  const streamingRef = useRef(false);
 
   useEffect(() => {
     currentSessionRef.current = sessionId;
@@ -62,6 +64,8 @@ export default function ChatPanel({
       setMessages([]);
       return;
     }
+    // Don't reload history if we're mid-stream (e.g. session just created during streaming)
+    if (streamingRef.current) return;
     setLoadingHistory(true);
     fetchChatHistory(agent?.name ?? '', sessionId)
       .then(hist => {
@@ -162,6 +166,7 @@ export default function ChatPanel({
     };
     setMessages(prev => [...prev, userMsg]);
     setStreaming(true);
+    streamingRef.current = true;
 
     setDebugEvents([]);
     labelInsertedRef.current = false;
@@ -392,6 +397,7 @@ export default function ChatPanel({
       }
     } finally {
       setStreaming(false);
+      streamingRef.current = false;
       streamingMsgId.current = null;
       abortRef.current = null;
       // Final cleanup: stop streaming, remove empty agent placeholders and orphaned labels
@@ -415,6 +421,7 @@ export default function ChatPanel({
       await stopChat(agent?.name ?? '', currentSessionRef.current).catch(() => {});
     }
     setStreaming(false);
+    streamingRef.current = false;
     setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
   };
 
