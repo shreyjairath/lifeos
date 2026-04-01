@@ -169,11 +169,14 @@ export default function ChatPanel({
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    // Agent response message (we'll build it up)
+    // Insert label + agent placeholder together so label is always first
+    const labelId = nanoid();
     const agentMsgId = nanoid();
     streamingMsgId.current = agentMsgId;
+    labelInsertedRef.current = true;
     setMessages(prev => [
       ...prev,
+      { id: labelId, role: 'label', text: '', agentName: agent.title ?? agent.name, timestamp: Date.now() },
       { id: agentMsgId, role: 'agent', text: '', timestamp: Date.now(), isStreaming: true },
     ]);
 
@@ -363,6 +366,7 @@ export default function ChatPanel({
               );
               break;
             }
+
             case 'error': {
               setMessages(prev =>
                 prev.map(m =>
@@ -390,12 +394,18 @@ export default function ChatPanel({
       setStreaming(false);
       streamingMsgId.current = null;
       abortRef.current = null;
-      // Final cleanup: stop all streaming flags + remove all empty agent placeholders
-      setMessages(prev =>
-        prev
+      // Final cleanup: stop streaming, remove empty agent placeholders and orphaned labels
+      setMessages(prev => {
+        const cleaned = prev
           .map(m => m.isStreaming ? { ...m, isStreaming: false } : m)
-          .filter(m => !(m.role === 'agent' && !m.text))
-      );
+          .filter(m => !(m.role === 'agent' && !m.text));
+        // Remove label messages that have no following content in the same turn
+        return cleaned.filter((m, i) => {
+          if (m.role !== 'label') return true;
+          const next = cleaned[i + 1];
+          return next && next.role !== 'user' && next.role !== 'label';
+        });
+      });
     }
   }, [input, streaming, agent, modelOverride, onSessionCreated, onSessionRotated]);
 
