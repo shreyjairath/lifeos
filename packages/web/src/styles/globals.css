@@ -596,7 +596,7 @@ input, textarea, select {
   letter-spacing: 0.05em;
   color: var(--text-muted);
   margin-bottom: 6px;
-  padding: 0 2px;
+  padding: 0;
 }
 
 .msg-label span:last-child {
