@@ -63,7 +63,8 @@ export default function ArtifactPanel({ open, url, title, agent, onClose }: Arti
   const isHtmlUrl = (u: string | null) => {
     if (!u) return false;
     const lower = u.toLowerCase();
-    return lower.endsWith('.html') || lower.endsWith('.htm') || lower.includes('text/html');
+    return lower.startsWith('http://') || lower.startsWith('https://')
+      || lower.endsWith('.html') || lower.endsWith('.htm') || lower.includes('text/html');
   };
 
   return (
