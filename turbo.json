@@ -3,7 +3,8 @@
   "tasks": {
     "dev": {
       "persistent": true,
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "PORT"]
     },
     "build": {
       "dependsOn": ["^build"],
