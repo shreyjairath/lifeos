@@ -725,8 +725,6 @@ input, textarea, select {
 /* Reasoning block */
 .reasoning-block {
   margin: 0;
-  border-left: 2px solid var(--border);
-  padding-left: 8px;
 }
 
 .reasoning-block summary {
