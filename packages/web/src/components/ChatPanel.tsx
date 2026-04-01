@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
 import ConfirmDialog from './ConfirmDialog';
+import StreamDebugOverlay, { type DebugEvent } from './StreamDebugOverlay';
 import { fetchChatHistory, stopChat, confirmTool } from '@/lib/api';
 import type { Message, SseEvent, ConfirmRequest, AgentInfo } from '@/lib/types';
 
@@ -36,6 +37,11 @@ export default function ChatPanel({
   const [streaming, setStreaming] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('chief-debug') === 'true';
+  });
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -153,6 +159,8 @@ export default function ChatPanel({
     setMessages(prev => [...prev, userMsg]);
     setStreaming(true);
 
+    setDebugEvents([]);
+
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
@@ -207,6 +215,8 @@ export default function ChatPanel({
           try {
             event = JSON.parse(data);
           } catch { continue; }
+
+          setDebugEvents(prev => [...prev, { ts: Date.now(), type: event.type, data: event }]);
 
           switch (event.type) {
             case 'session_id': {
@@ -404,6 +414,17 @@ export default function ChatPanel({
         )}
         <div className="chat-header-actions">
           <button
+            className={`icon-btn${debugOpen ? ' active' : ''}`}
+            title="Toggle stream debug"
+            onClick={() => {
+              const v = !debugOpen;
+              setDebugOpen(v);
+              localStorage.setItem('chief-debug', String(v));
+            }}
+          >
+            ⚡
+          </button>
+          <button
             className={`icon-btn${artifactOpen ? ' active' : ''}`}
             title="Toggle artifacts panel"
             onClick={onToggleArtifacts}
@@ -494,6 +515,17 @@ export default function ChatPanel({
           request={confirmRequest}
           onApprove={handleConfirmApprove}
           onDeny={handleConfirmDeny}
+        />
+      )}
+
+      {/* Stream debug overlay */}
+      {debugOpen && (
+        <StreamDebugOverlay
+          events={debugEvents}
+          onClose={() => {
+            setDebugOpen(false);
+            localStorage.setItem('chief-debug', 'false');
+          }}
         />
       )}
     </div>
