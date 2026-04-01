@@ -579,7 +579,7 @@ input, textarea, select {
 .msg.label .msg-label { margin-bottom: 0; }
 .msg.agent { align-items: flex-start; margin-top: 6px; }
 .msg.thinking { align-items: flex-start; margin-top: 6px; }
-.msg.tool  { margin-top: 6px; }
+.msg.tool  { margin-top: 4px; }
 
 /* Within-turn spacing */
 .msg.label + .msg.thinking,
