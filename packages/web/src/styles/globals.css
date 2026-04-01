@@ -578,8 +578,8 @@ input, textarea, select {
 .msg.label { align-items: flex-start; margin-top: 20px; }
 .msg.label .msg-label { margin-bottom: 0; }
 .msg.agent { align-items: flex-start; margin-top: 6px; }
-.msg.thinking { align-items: flex-start; margin-top: 6px; }
-.msg.tool  { margin-top: 4px; }
+.msg.thinking { align-items: flex-start; margin-top: 2px; }
+.msg.tool  { margin-top: 2px; }
 
 /* Within-turn spacing */
 .msg.label + .msg.thinking,
