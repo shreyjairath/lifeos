@@ -273,8 +273,8 @@ const TOOLS: ToolDefinition[] = [
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
 
   tool('shared_bash',
-    'Shared folder readable and writable by all agents. Use for cross-agent file handoffs: ' +
-    'reports, notes, or any file one agent produces for another to read. ' +
+    'Shared folder for passing files between agents — NOT for your own notes (use agent_bash for that). ' +
+    'Use this when you need another agent to read something you produced, or to read what another agent left for you. ' +
     'The shell starts in the shared folder — use relative paths. ' +
     'Same restrictions as agent_bash: no path traversal, no network tools, no absolute paths.',
     props(prop('command', 'string', 'Bash command to run in the shared folder.')), ['command']),
