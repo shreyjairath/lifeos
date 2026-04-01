@@ -51,11 +51,14 @@ export function loadConfig(configPath?: string): AppConfig {
   const heartbeat = lifeos.heartbeat ?? {};
   const expiryCheck = lifeos['session-expiry-check'] ?? {};
 
+  if (!lifeos.model) throw new Error('[config] lifeos.model is required in config.yml');
+  if (!lifeos['background-model']) throw new Error('[config] lifeos.background-model is required in config.yml');
+
   return {
     port: process.env.PORT ? parseInt(process.env.PORT) : (raw?.server?.port ?? 8000),
     apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-    model: lifeos.model ?? 'anthropic/claude-haiku-4-5-20251001',
-    backgroundModel: lifeos['background-model'] ?? 'anthropic/claude-haiku-4-5-20251001',
+    model: lifeos.model,
+    backgroundModel: lifeos['background-model'],
     reasoning: reasoning
       ? {
           effort: reasoning.effort ?? undefined,

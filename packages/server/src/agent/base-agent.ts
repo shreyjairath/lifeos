@@ -15,7 +15,6 @@ import type { AgentDefinition } from './agent-definition.js';
 import type { Agent, ToolInvoker, ExecutorEvent } from './types.js';
 import type { AppConfig } from '../config.js';
 
-const DEFAULT_BACKGROUND_MODEL = 'anthropic/claude-haiku-4-5-20251001';
 
 // Shared prompt scaffolding — loaded once at module init
 const LIFEOS_PROMPT = loadGenericPrompt('lifeos-prompt.md');
@@ -392,7 +391,7 @@ export class BaseAgent implements Agent {
 
   private backgroundModel(): string {
     if (this.def.backgroundModel?.trim()) return this.def.backgroundModel;
-    return this.config.backgroundModel ?? DEFAULT_BACKGROUND_MODEL;
+    return this.config.backgroundModel;
   }
 
   private reasoningConfig(): Record<string, any> | null {
