@@ -93,7 +93,10 @@ function RunCard({ run }: { run: AgentRun }) {
           {run.result && (
             <div className="run-section">
               <div className="run-section-label">Result</div>
-              <div className="run-section-content">{run.result.slice(0, 600)}{run.result.length > 600 ? '...' : ''}</div>
+              <div className="run-section-content">{(() => {
+                const s = typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2);
+                return s.length > 600 ? s.slice(0, 600) + '...' : s;
+              })()}</div>
             </div>
           )}
         </div>
