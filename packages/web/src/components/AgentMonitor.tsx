@@ -64,9 +64,10 @@ function RunCard({ run }: { run: AgentRun }) {
           {run.durationMs != null && (
             <span>{formatDuration(run.durationMs)}</span>
           )}
-          {run.turns != null && (
-            <span>{run.turns} turn{run.turns !== 1 ? 's' : ''}</span>
-          )}
+          {run.turns != null && (() => {
+            const count = Array.isArray(run.turns) ? run.turns.length : run.turns;
+            return <span>{count} turn{count !== 1 ? 's' : ''}</span>;
+          })()}
         </div>
         <span className="run-card-time">{formatRelativeTime(run.startedAt ?? run.completedAt)}</span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>

@@ -50,7 +50,7 @@ export interface AgentRun {
   mode: string;
   prompt?: string;
   model?: string;
-  turns?: number;
+  turns?: number | Record<string, unknown>[];
   inputTokens?: number;
   outputTokens?: number;
   result?: string;
