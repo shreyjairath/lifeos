@@ -2,7 +2,7 @@ server:
   port: 8000
 
 lifeos:
-model: minimax/minimax-m2.7
+  model: minimax/minimax-m2.7
   background-model: minimax/minimax-m2.7
   reasoning:
     effort: medium
