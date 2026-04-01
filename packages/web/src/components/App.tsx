@@ -126,7 +126,6 @@ export default function App() {
     } else if (event.type === 'artifact_updated') {
       setArtifactUrl(event.url);
       setArtifactTitle(event.title);
-      setArtifactOpen(true);
     }
   };
 
