@@ -174,7 +174,8 @@ export default function ChatPanel({
       if (activeSessionId) body.session_id = activeSessionId;
       if (modelOverride.trim()) body.model = modelOverride.trim();
 
-      const res = await fetch('/api/chat', {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
+      const res = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -238,9 +239,10 @@ export default function ChatPanel({
             }
             case 'llm_text': {
               agentText += event.text;
+              const currentId = streamingMsgId.current;
               setMessages(prev =>
                 prev.map(m =>
-                  m.id === agentMsgId
+                  m.id === currentId
                     ? { ...m, text: agentText, isStreaming: true }
                     : m
                 )
@@ -254,14 +256,11 @@ export default function ChatPanel({
               break;
             }
             case 'llm_tool_call': {
-              // Flush current text if any
-              if (agentText) {
-                const flushedId = agentMsgId;
-                setMessages(prev =>
-                  prev.map(m => m.id === flushedId ? { ...m, text: agentText, isStreaming: false } : m)
-                );
-                agentText = '';
-              }
+              // Discard pre-tool placeholder — the model echoes the same text in the
+              // post-tool response, producing duplicate bubbles if we keep it.
+              const oldPlaceholderId = streamingMsgId.current;
+              agentText = '';
+              setMessages(prev => prev.filter(m => m.id !== oldPlaceholderId));
               // Add tool call message
               const toolMsgId = nanoid();
               const toolData = {
@@ -321,19 +320,12 @@ export default function ChatPanel({
               setConfirmRequest(null);
               break;
             }
-            case 'agent_run_complete': {
-              // Finalize streaming messages
+            case 'done': {
               setMessages(prev =>
-                prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m)
+                prev
+                  .map(m => m.isStreaming ? { ...m, isStreaming: false } : m)
+                  .filter(m => !(m.role === 'agent' && !m.text))
               );
-              // Remove empty trailing agent message
-              setMessages(prev => {
-                const last = prev[prev.length - 1];
-                if (last?.role === 'agent' && !last.text) {
-                  return prev.slice(0, -1);
-                }
-                return prev;
-              });
               break;
             }
             case 'error': {
@@ -363,10 +355,12 @@ export default function ChatPanel({
       setStreaming(false);
       streamingMsgId.current = null;
       abortRef.current = null;
-      // Final cleanup of streaming flags
-      setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
-      // Remove any empty agent messages
-      setMessages(prev => prev.filter((m, i) => !(m.role === 'agent' && !m.text && i === prev.length - 1)));
+      // Final cleanup: stop all streaming flags + remove all empty agent placeholders
+      setMessages(prev =>
+        prev
+          .map(m => m.isStreaming ? { ...m, isStreaming: false } : m)
+          .filter(m => !(m.role === 'agent' && !m.text))
+      );
     }
   }, [input, streaming, agent, modelOverride, onSessionCreated, onSessionRotated]);
 

@@ -74,7 +74,8 @@ export default function App() {
 
   // Global event bus SSE
   useEffect(() => {
-    const es = new EventSource('/api/events');
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
+    const es = new EventSource(`${apiBase}/api/events`);
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {

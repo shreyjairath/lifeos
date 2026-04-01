@@ -87,6 +87,8 @@ export type SseEvent =
   | { type: 'session_id'; session_id: string }
   | { type: 'session_rotated'; old_session_id: string; new_session_id: string }
   | { type: 'agent_run_complete'; usage: { input_tokens: number; output_tokens: number } }
+  | { type: 'done' }
+  | { type: 'stopped' }
   | { type: 'error'; text: string };
 
 export type GlobalEvent =
