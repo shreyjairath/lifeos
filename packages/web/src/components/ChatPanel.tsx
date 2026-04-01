@@ -458,7 +458,7 @@ export default function ChatPanel({
           {messages.map((msg, i) => {
             const name = (msg.role === 'agent' || msg.role === 'thinking') ? (agent?.title ?? agent?.name) : undefined;
             let showLabel = true;
-            if (msg.role === 'agent') {
+            if (msg.role === 'agent' || msg.role === 'thinking') {
               for (let j = i - 1; j >= 0; j--) {
                 const prev = messages[j];
                 if (prev.role === 'user') break;
