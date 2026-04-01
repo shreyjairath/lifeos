@@ -7,6 +7,19 @@ A personal life-OS agent platform. Bun/Hono server + Next.js frontend, wrapping 
 - **Bun** — https://bun.sh
 - **OpenRouter API key** — https://openrouter.ai
 
+### Installing Bun
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+**Windows** (PowerShell, run as Administrator):
+```powershell
+powershell -c "irm bun.sh/install.ps1 | iex"
+```
+Then restart your terminal. Bun on Windows requires Windows 10 version 1809 or later.
+
 ## Setup
 
 ### 1. Clone the repo
@@ -27,15 +40,17 @@ bun install
 
 Set your API key as an environment variable:
 
+**macOS / Linux:**
 ```bash
 export OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
-Copy `config.example.yml` to `config.yml` to customize model, port, and other settings:
-
-```bash
-cp config.example.yml config.yml
+**Windows (PowerShell):**
+```powershell
+$env:OPENROUTER_API_KEY="your_openrouter_api_key_here"
 ```
+
+Edit `config.yml` to customize the model, port, MCP servers, and other settings.
 
 ### 4. Run
 
