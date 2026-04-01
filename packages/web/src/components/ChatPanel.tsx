@@ -246,17 +246,11 @@ export default function ChatPanel({
               agentText += event.text;
               const currentId = streamingMsgId.current;
               setMessages(prev =>
-                prev.map(m =>
-                  m.id === currentId
-                    ? { ...m, text: agentText, isStreaming: true }
-                    : m
-                )
-              );
-              // Stop streaming indicator on thinking blocks
-              setMessages(prev =>
-                prev.map(m =>
-                  m.role === 'thinking' && m.isStreaming ? { ...m, isStreaming: false } : m
-                )
+                prev.map(m => {
+                  if (m.id === currentId) return { ...m, text: agentText, isStreaming: true };
+                  if (m.role === 'thinking' && m.isStreaming) return { ...m, isStreaming: false };
+                  return m;
+                })
               );
               break;
             }
@@ -421,28 +415,39 @@ export default function ChatPanel({
 
       {/* Messages */}
       <div className="messages-container">
-        {loadingHistory && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', justifyContent: 'center' }}>
-            <span className="loading-spinner" /> Loading history...
-          </div>
-        )}
-
-        {!loadingHistory && messages.length === 0 && (
-          <div className="empty-chat">
-            <div className="empty-chat-title">
-              {agent?.title ?? 'chief'}
+        <div className="messages-inner">
+          {loadingHistory && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', justifyContent: 'center' }}>
+              <span className="loading-spinner" /> Loading history...
             </div>
-            <div className="empty-chat-subtitle">
-              {agent?.description ?? 'Your personal AI agent team. Start a conversation.'}
+          )}
+
+          {!loadingHistory && messages.length === 0 && (
+            <div className="empty-chat">
+              <div className="empty-chat-title">
+                {agent?.title ?? 'chief'}
+              </div>
+              <div className="empty-chat-subtitle">
+                {agent?.description ?? 'Your personal AI agent team. Start a conversation.'}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
+          {messages.map((msg, i) => {
+            const name = (msg.role === 'agent' || msg.role === 'thinking') ? (agent?.title ?? agent?.name) : undefined;
+            let showLabel = true;
+            if (msg.role === 'agent') {
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = messages[j];
+                if (prev.role === 'user') break;
+                if (prev.role === 'thinking') { showLabel = false; break; }
+              }
+            }
+            return <MessageBubble key={msg.id} message={msg} agentName={name} showLabel={showLabel} />;
+          })}
 
-        <div ref={bottomRef} />
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Input */}

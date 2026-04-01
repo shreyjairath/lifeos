@@ -2,6 +2,15 @@
 
 import type { AgentInfo, Session } from '@/lib/types';
 
+const THEMES = [
+  { id: 'forest', color: '#34c759', label: 'Forest' },
+  { id: 'sand',   color: '#c8a882', label: 'Sand' },
+  { id: 'slate',  color: '#4a7fa5', label: 'Slate' },
+  { id: 'linen',  color: '#f0700a', label: 'Linen' },
+  { id: 'sage',   color: '#3a8c52', label: 'Sage' },
+  { id: 'sky',    color: '#4a7fa5', label: 'Sky' },
+];
+
 interface SidebarProps {
   agents: AgentInfo[];
   sessions: Session[];
@@ -9,6 +18,7 @@ interface SidebarProps {
   activeSessionId: string | null;
   monitorOpen: boolean;
   modelOverride: string;
+  theme: string;
   onSelectAgent: (name: string) => void;
   onSelectSession: (id: string, agent: string) => void;
   onDeleteSession: (agent: string, id: string) => void;
@@ -16,6 +26,7 @@ interface SidebarProps {
   onToggleMonitor: () => void;
   onModelChange: (model: string) => void;
   onHeaderClick: () => void;
+  onThemeChange: (theme: string) => void;
 }
 
 const PRIMARY_AGENTS = ['cos', 'advisor'];
@@ -28,11 +39,11 @@ const MODEL_SUGGESTIONS = [
 ];
 
 function formatRelativeTime(ms: number): string {
-  const diff = Date.now() - ms;
+  const diff = Date.now() - ms * 1000;
   if (diff < 60_000) return 'now';
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-  const d = new Date(ms);
+  const d = new Date(ms * 1000);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -63,11 +74,11 @@ function SessionList({ agent, sessions, activeSessionId, onSelect, onDelete, onN
           className={`session-item${activeSessionId === s.id ? ' active' : ''}`}
           onClick={() => onSelect(s.id, agent.name)}
         >
-          <span className="session-item-title">
-            {s.title || s.id.slice(0, 12)}
-          </span>
           <span className="session-item-time">
             {formatRelativeTime(s.last_message_at || s.created_at)}
+          </span>
+          <span className="session-item-title">
+            {s.title || s.id.slice(0, 12)}
           </span>
           {s.last_input_tokens > 0 && (
             <span
@@ -103,6 +114,7 @@ export default function Sidebar({
   activeSessionId,
   monitorOpen,
   modelOverride,
+  theme,
   onSelectAgent,
   onSelectSession,
   onDeleteSession,
@@ -110,6 +122,7 @@ export default function Sidebar({
   onToggleMonitor,
   onModelChange,
   onHeaderClick,
+  onThemeChange,
 }: SidebarProps) {
   const primaryAgents = agents.filter(a => PRIMARY_AGENTS.includes(a.name));
   const specialistAgents = agents.filter(a => !PRIMARY_AGENTS.includes(a.name));
@@ -166,9 +179,6 @@ export default function Sidebar({
                       >
                         <span className="agent-indicator" style={{ background: 'var(--text-light)' }} />
                         <span className="agent-btn-name">{agent.title ?? agent.name}</span>
-                        {agent.manager && (
-                          <span className="agent-btn-model">{agent.manager}</span>
-                        )}
                       </button>
                       {activeAgent === agent.name && (
                         <SessionList
@@ -216,6 +226,17 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-footer">
+        <div className="theme-switcher">
+          {THEMES.map(t => (
+            <button
+              key={t.id}
+              className={`theme-dot${theme === t.id ? ' active' : ''}`}
+              style={{ background: t.color }}
+              title={t.label}
+              onClick={() => onThemeChange(t.id)}
+            />
+          ))}
+        </div>
         {!monitorOpen && (
           <div className="model-input-wrap">
             <label className="model-input-label" htmlFor="model-input">Model override</label>

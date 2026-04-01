@@ -18,6 +18,7 @@ import type { AgentInfo, Session, Toast, GlobalEvent } from '@/lib/types';
 
 const AGENT_KEY = 'chief-agent';
 const MODEL_KEY = 'chief-model';
+const THEME_KEY = 'chief-theme';
 
 function sessionKey(agent: string) {
   return `chief-session-${agent}`;
@@ -38,6 +39,7 @@ export default function App() {
   const [artifactUrl, setArtifactUrl] = useState<string | null>(null);
   const [artifactTitle, setArtifactTitle] = useState('');
   const [modelOverride, setModelOverride] = useState('');
+  const [theme, setThemeState] = useState<string>('forest');
   const [notifications, setNotifications] = useState<Toast[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
   const toastTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -48,6 +50,8 @@ export default function App() {
     if (savedAgent) setActiveAgent(savedAgent);
     const savedModel = localStorage.getItem(MODEL_KEY);
     if (savedModel) setModelOverride(savedModel);
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme) setThemeState(savedTheme);
   }, []);
 
   // Fetch agents
@@ -226,6 +230,11 @@ export default function App() {
     localStorage.setItem(MODEL_KEY, m);
   };
 
+  const handleThemeChange = (t: string) => {
+    setThemeState(t);
+    localStorage.setItem(THEME_KEY, t);
+  };
+
   const handleToggleMonitor = () => {
     setMonitorOpen(v => !v);
   };
@@ -238,13 +247,12 @@ export default function App() {
   const activeAgentInfo = agents.find(a => a.name === activeAgent);
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" data-theme={theme}>
       {/* Mobile header */}
       <div className="mobile-header">
-        <button className="hamburger-btn" onClick={() => setSidebarOpen(true)}>
-          ☰
-        </button>
-        <h1>chief</h1>
+        <button className="hamburger-btn" onClick={() => setSidebarOpen(true)}>☰</button>
+        <h1>{activeAgentInfo?.title ?? activeAgentInfo?.name ?? 'chief'}</h1>
+        <button className="mobile-new-btn" onClick={() => setArtifactOpen(v => !v)}>📄</button>
       </div>
 
       {/* Mobile sidebar overlay */}
@@ -267,6 +275,8 @@ export default function App() {
             onToggleMonitor={handleToggleMonitor}
             onModelChange={handleModelChange}
             onHeaderClick={handleHeaderClick}
+            theme={theme}
+            onThemeChange={handleThemeChange}
           />
         </div>
       )}
@@ -289,6 +299,8 @@ export default function App() {
         onToggleMonitor={handleToggleMonitor}
         onModelChange={handleModelChange}
         onHeaderClick={handleHeaderClick}
+        theme={theme}
+        onThemeChange={handleThemeChange}
       />
 
       {/* Main content area */}
