@@ -2,8 +2,7 @@ server:
   port: 8000
 
 lifeos:
-  api-key: your_openrouter_api_key_here
-  model: anthropic/claude-sonnet-4-5
+model: anthropic/claude-sonnet-4-5
   background-model: anthropic/claude-haiku-4-5-20251001
   reasoning:
     effort: medium

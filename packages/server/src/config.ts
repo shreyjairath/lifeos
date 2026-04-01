@@ -53,7 +53,7 @@ export function loadConfig(configPath?: string): AppConfig {
 
   return {
     port: process.env.PORT ? parseInt(process.env.PORT) : (raw?.server?.port ?? 8000),
-    apiKey: envReplace(lifeos['api-key'] ?? '') || process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+    apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     model: lifeos.model ?? 'anthropic/claude-haiku-4-5-20251001',
     backgroundModel: lifeos['background-model'] ?? 'anthropic/claude-haiku-4-5-20251001',
     reasoning: reasoning

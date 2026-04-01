@@ -25,19 +25,17 @@ bun install
 
 ### 3. Configure
 
-Edit `config.yml` in the project root:
+Set your API key as an environment variable:
 
-```yaml
-server:
-  port: 8000
-
-lifeos:
-  api-key: your_openrouter_api_key_here
-  model: anthropic/claude-sonnet-4-5
-  background-model: anthropic/claude-haiku-4-5-20251001
+```bash
+export OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
-Alternatively, set `OPENROUTER_API_KEY` as an environment variable.
+Copy `config.example.yml` to `config.yml` to customize model, port, and other settings:
+
+```bash
+cp config.example.yml config.yml
+```
 
 ### 4. Run
 
