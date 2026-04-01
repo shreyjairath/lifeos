@@ -35,6 +35,7 @@ import { ccRoutes } from './routes/cc.js';
 
 async function createApp() {
   const config = loadConfig();
+  console.log(`[config] apiKey: ${config.apiKey ? config.apiKey.slice(0, 8) + '...' : '(empty)'}`);
 
   // ── Core dependencies ──────────────────────────────────────────────────────
 
