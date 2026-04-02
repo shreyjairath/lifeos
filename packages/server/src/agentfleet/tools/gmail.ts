@@ -44,6 +44,15 @@ export class GmailClient {
     return google.gmail({ version: 'v1', auth: this.buildAuth() });
   }
 
+  private withTimeout<T>(promise: Promise<T>, ms = 15_000): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`Gmail API timed out after ${ms}ms`)), ms),
+      ),
+    ]);
+  }
+
   async send(to: string, subject: string, body?: string, threadId?: string, html?: string): Promise<void> {
     let mime: string;
     if (html) {
@@ -56,22 +65,22 @@ export class GmailClient {
     const params: any = { userId: 'me', requestBody: { raw } };
     if (threadId) params.requestBody.threadId = threadId;
 
-    await this.gmail().users.messages.send(params);
+    await this.withTimeout(this.gmail().users.messages.send(params));
   }
 
   async fetchRecent(query: string = 'in:inbox', maxResults: number = 10): Promise<EmailMessage[]> {
     const gm = this.gmail();
-    const listRes = await gm.users.messages.list({
+    const listRes = await this.withTimeout(gm.users.messages.list({
       userId: 'me',
       q: query,
       maxResults,
-    });
+    }));
 
     const messages = listRes.data.messages ?? [];
     const results: EmailMessage[] = [];
     for (const m of messages) {
       if (!m.id) continue;
-      const msg = await gm.users.messages.get({ userId: 'me', id: m.id, format: 'full' });
+      const msg = await this.withTimeout(gm.users.messages.get({ userId: 'me', id: m.id, format: 'full' }));
       const parsed = parseMessage(msg.data);
       if (parsed) results.push(parsed);
     }
