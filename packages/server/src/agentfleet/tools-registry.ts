@@ -125,6 +125,7 @@ export class ToolsRegistry {
           input.subject as string,
           input.body as string,
           input.thread_id as string | undefined,
+          input.html_body as string | undefined,
         );
         return { sent: true };
       }
@@ -307,11 +308,13 @@ const TOOLS: ToolDefinition[] = [
 
   tool('send_email',
     'Send an email on behalf of the user. Use to reply to or compose new emails. ' +
-    'Provide thread_id when replying so the message stays in the same thread.',
+    'Provide thread_id when replying so the message stays in the same thread. ' +
+    'Provide html_body to send an HTML email (plain text body is used as fallback for clients that do not support HTML).',
     props(
       prop('to', 'string', 'Recipient email address'),
       prop('subject', 'string', 'Email subject'),
       prop('body', 'string', 'Plain text email body'),
+      prop('html_body', 'string', 'Optional HTML email body. If provided, sends a multipart email with both HTML and plain text.'),
       prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
     ),
     ['to', 'subject', 'body']),
