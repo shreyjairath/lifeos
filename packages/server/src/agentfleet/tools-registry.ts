@@ -123,7 +123,7 @@ export class ToolsRegistry {
         await this.gmailClient.send(
           input.to as string,
           input.subject as string,
-          input.body as string,
+          input.body as string | undefined,
           input.thread_id as string | undefined,
           input.html_body as string | undefined,
         );
@@ -309,15 +309,15 @@ const TOOLS: ToolDefinition[] = [
   tool('send_email',
     'Send an email on behalf of the user. Use to reply to or compose new emails. ' +
     'Provide thread_id when replying so the message stays in the same thread. ' +
-    'Provide html_body to send an HTML email (plain text body is used as fallback for clients that do not support HTML).',
+    'Provide html_body to send an HTML email instead of plain text.',
     props(
       prop('to', 'string', 'Recipient email address'),
       prop('subject', 'string', 'Email subject'),
-      prop('body', 'string', 'Plain text email body'),
-      prop('html_body', 'string', 'Optional HTML email body. If provided, sends a multipart email with both HTML and plain text.'),
+      prop('body', 'string', 'Plain text email body. Used when html_body is not provided.'),
+      prop('html_body', 'string', 'HTML email body. If provided, sends as HTML instead of plain text.'),
       prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
     ),
-    ['to', 'subject', 'body']),
+    ['to', 'subject']),
 
   tool('shared_bash',
     'Shared folder for passing files between agents — NOT for your own notes (use agent_bash for that). ' +

@@ -44,28 +44,12 @@ export class GmailClient {
     return google.gmail({ version: 'v1', auth: this.buildAuth() });
   }
 
-  async send(to: string, subject: string, body: string, threadId?: string, html?: string): Promise<void> {
+  async send(to: string, subject: string, body?: string, threadId?: string, html?: string): Promise<void> {
     let mime: string;
     if (html) {
-      const boundary = 'boundary_' + Date.now();
-      mime = [
-        `To: ${to}`,
-        `Subject: ${subject}`,
-        `MIME-Version: 1.0`,
-        `Content-Type: multipart/alternative; boundary="${boundary}"`,
-        '',
-        `--${boundary}`,
-        `Content-Type: text/plain; charset=utf-8`,
-        '',
-        body,
-        `--${boundary}`,
-        `Content-Type: text/html; charset=utf-8`,
-        '',
-        html,
-        `--${boundary}--`,
-      ].join('\r\n');
+      mime = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
     } else {
-      mime = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
+      mime = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body ?? ''}`;
     }
 
     const raw = Buffer.from(mime).toString('base64url');
