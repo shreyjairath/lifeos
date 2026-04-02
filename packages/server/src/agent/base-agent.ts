@@ -22,6 +22,7 @@ const CHAT_SCAFFOLD = loadGenericPrompt('chat.md');
 const POST_SESSION = loadGenericPrompt('post-session.md');
 const HEARTBEAT = loadGenericPrompt('heartbeat.md');
 const INTER_AGENT = loadGenericPrompt('inter-agent-message.md');
+const NEW_EMAIL = loadGenericPrompt('new-email.md');
 
 // ── EventBus minimal interface (circular dep avoided by duck-typing) ──────────
 
@@ -73,7 +74,9 @@ export class BaseAgent implements Agent {
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
     this.session = new SessionHandler(config, def.name, (sessionId) => {
-      this.backgroundQueue.enqueue(() => this.handleSystemMessage('post-session', sessionId));
+      this.backgroundQueue.enqueue(() =>
+        this.handleSystemMessage('post-session', `\n\n# Closed Session ID\n\n${sessionId}`),
+      );
     });
     this.initListeners();
   }
@@ -228,12 +231,12 @@ export class BaseAgent implements Agent {
     return result;
   }
 
-  private async handleSystemMessage(mode: string, closedSessionId?: string): Promise<void> {
+  private async handleSystemMessage(mode: string, userMsgAppend?: string): Promise<void> {
     if (this.def.disabledModes.has(mode)) return;
 
     const system = this.buildSystemPrompt(mode, {});
     let userMsg = this.modePrompt(mode);
-    if (closedSessionId) userMsg += `\n\n# Closed Session ID\n\n${closedSessionId}`;
+    if (userMsgAppend) userMsg += userMsgAppend;
 
     const messages: Record<string, any>[] = [{ role: 'user', content: userMsg }];
     const bgModel = this.backgroundModel();
@@ -274,21 +277,29 @@ export class BaseAgent implements Agent {
   }
 
   private initListeners(): void {
-    if (this.def.disabledModes.has('heartbeat_trigger')) return;
-    // Subscribe to eventBus heartbeat events asynchronously
-    // We don't await this — it runs in the background
     void (async () => {
       try {
         for await (const event of this.eventBus.subscribe()) {
           if (
+            !this.def.disabledModes.has('heartbeat_trigger') &&
             event.type === 'heartbeat_trigger' &&
             (event.agent == null || event.agent === this.def.name)
           ) {
             this.backgroundQueue.enqueue(() => this.handleSystemMessage('heartbeat_trigger'));
           }
+
+          if (
+            event.type === 'new_email' &&
+            this.def.name === 'cos' &&
+            !this.def.disabledModes.has('new_email')
+          ) {
+            const append =
+              `\n\n# Incoming Email\n\nFrom: ${event.from}\nSubject: ${event.subject}\n\n${event.body}`;
+            this.backgroundQueue.enqueue(() => this.handleSystemMessage('new_email', append));
+          }
         }
       } catch (err) {
-        console.warn(`[${this.def.name}] heartbeat stream error:`, err);
+        console.warn(`[${this.def.name}] event stream error:`, err);
       }
     })();
   }
@@ -375,6 +386,7 @@ export class BaseAgent implements Agent {
   private modePrompt(mode: string): string {
     if (mode === 'post-session') return POST_SESSION;
     if (mode === 'heartbeat_trigger') return HEARTBEAT;
+    if (mode === 'new_email') return NEW_EMAIL;
     throw new Error(`Unknown system mode: ${mode}`);
   }
 

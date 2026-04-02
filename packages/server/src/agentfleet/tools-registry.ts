@@ -6,6 +6,7 @@ import { MONOREPO_ROOT } from '../root.js';
 // Tool implementations — filled in Phase 5
 import { Bash } from './tools/bash.js';
 import { AgentLog } from './tools/agent-log.js';
+import type { GmailClient } from './tools/gmail.js';
 import { ScheduledTasks } from './tools/scheduled-tasks.js';
 import { SessionToolsImpl } from './tools/session-tools.js';
 import { AgentChannels } from './tools/agent-channels.js';
@@ -35,6 +36,11 @@ export class ToolsRegistry {
   readonly channels: AgentChannels = new AgentChannels();
   readonly topics: AgentTopics = new AgentTopics();
   private readonly sharedBash = new Bash(SHARED_DIR, false);
+  private gmailClient: GmailClient | null = null;
+
+  setGmailClient(client: GmailClient): void {
+    this.gmailClient = client;
+  }
 
   // Injected by createApp() after construction
   agentTools!: AgentToolsImpl;
@@ -112,6 +118,16 @@ export class ToolsRegistry {
       }
       case 'shared_bash':
         return this.sharedBash.run(input.command as string);
+      case 'send_email': {
+        if (!this.gmailClient) return { error: 'Gmail not configured' };
+        await this.gmailClient.send(
+          input.to as string,
+          input.subject as string,
+          input.body as string,
+          input.thread_id as string | undefined,
+        );
+        return { sent: true };
+      }
       case 'get_current_datetime': {
         const now = new Date();
         return {
@@ -271,6 +287,17 @@ const TOOLS: ToolDefinition[] = [
     'Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. ' +
     'Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.',
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
+
+  tool('send_email',
+    'Send an email on behalf of the user. Use to reply to an incoming email or compose a new one. ' +
+    'Provide thread_id when replying so the message stays in the same thread.',
+    props(
+      prop('to', 'string', 'Recipient email address'),
+      prop('subject', 'string', 'Email subject'),
+      prop('body', 'string', 'Plain text email body'),
+      prop('thread_id', 'string', 'Thread ID to reply within (from incoming email context). Omit for a new email.'),
+    ),
+    ['to', 'subject', 'body']),
 
   tool('shared_bash',
     'Shared folder for passing files between agents — NOT for your own notes (use agent_bash for that). ' +
