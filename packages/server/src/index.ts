@@ -32,7 +32,6 @@ import { pushRoutes } from './routes/push.js';
 import { toolsRoutes } from './routes/tools.js';
 import { artifactsRoutes } from './routes/artifacts.js';
 import { ccRoutes } from './routes/cc.js';
-import { gmailWebhookRoutes } from './routes/gmail-webhook.js';
 
 // Gmail
 import { GmailClient, GMAIL_CREDENTIALS_PATH } from './agentfleet/tools/gmail.js';
@@ -126,12 +125,11 @@ async function createApp() {
   app.route('/api', artifactsRoutes());
   app.route('/api', ccRoutes(config));
 
-  // Gmail webhook (only if configured)
-  if (config.gmail) {
-    const gmail = new GmailClient(GMAIL_CREDENTIALS_PATH);
+  // Wire Gmail tools if credentials exist
+  const gmail = new GmailClient(GMAIL_CREDENTIALS_PATH);
+  if (gmail.isConfigured()) {
     toolsRegistry.setGmailClient(gmail);
-    app.route('/api', gmailWebhookRoutes(fleet, gmail, config.gmail.webhookSecret, config.gmail.pubsubTopic));
-    console.log('[gmail] webhook routes registered');
+    console.log('[gmail] tools enabled');
   }
 
   console.log(`lifeos-ts server starting on port ${config.port}`);

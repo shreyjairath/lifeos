@@ -24,7 +24,6 @@ interface GmailCredentials {
 
 export class GmailClient {
   private readonly credentialsPath: string;
-  private lastHistoryId: string | null = null;
 
   constructor(credentialsPath: string = GMAIL_CREDENTIALS_PATH) {
     this.credentialsPath = credentialsPath;
@@ -56,47 +55,23 @@ export class GmailClient {
     await this.gmail().users.messages.send(params);
   }
 
-  async fetchNewMessages(historyId: string): Promise<EmailMessage[]> {
+  async fetchRecent(query: string = 'in:inbox', maxResults: number = 10): Promise<EmailMessage[]> {
     const gm = this.gmail();
-
-    if (!this.lastHistoryId) {
-      // First call — just store the historyId, no messages to return
-      this.lastHistoryId = historyId;
-      return [];
-    }
-
-    const histRes = await gm.users.history.list({
+    const listRes = await gm.users.messages.list({
       userId: 'me',
-      startHistoryId: this.lastHistoryId,
-      historyTypes: ['messageAdded'],
-      labelId: 'INBOX',
+      q: query,
+      maxResults,
     });
 
-    this.lastHistoryId = historyId;
-
-    const history = histRes.data.history ?? [];
-    const messageIds = new Set<string>();
-    for (const h of history) {
-      for (const m of h.messagesAdded ?? []) {
-        if (m.message?.id) messageIds.add(m.message.id);
-      }
-    }
-
+    const messages = listRes.data.messages ?? [];
     const results: EmailMessage[] = [];
-    for (const id of messageIds) {
-      const msg = await gm.users.messages.get({ userId: 'me', id, format: 'full' });
+    for (const m of messages) {
+      if (!m.id) continue;
+      const msg = await gm.users.messages.get({ userId: 'me', id: m.id, format: 'full' });
       const parsed = parseMessage(msg.data);
       if (parsed) results.push(parsed);
     }
     return results;
-  }
-
-  async watch(topicName: string): Promise<void> {
-    await this.gmail().users.watch({
-      userId: 'me',
-      requestBody: { topicName, labelIds: ['INBOX'] },
-    });
-    console.log('[GmailClient] watch registered for topic:', topicName);
   }
 }
 

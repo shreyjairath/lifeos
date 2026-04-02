@@ -13,9 +13,6 @@ lifeos:
     cron: "0 0 */4 * * *"
   session-expiry-check:
     cron: "0 0 * * * *"
-  gmail:
-    webhook-secret: ${GMAIL_WEBHOOK_SECRET}
-    pubsub-topic: projects/YOUR_PROJECT/topics/lifeos-email
   mcp-servers:
     - name: gmail
       command: npx

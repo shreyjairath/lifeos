@@ -20,11 +20,6 @@ export interface SessionConfig {
   timeThresholdHours: number;
 }
 
-export interface GmailConfig {
-  webhookSecret: string;
-  pubsubTopic: string;
-}
-
 export interface AppConfig {
   port: number;
   apiKey: string;
@@ -35,7 +30,6 @@ export interface AppConfig {
   heartbeatCron: string;
   sessionExpiryCheckCron: string;
   mcpServers: McpServerConfig[];
-  gmail: GmailConfig | null;
 }
 
 function envReplace(value: string): string {
@@ -83,11 +77,5 @@ export function loadConfig(configPath?: string): AppConfig {
       args: s.args ?? [],
       env: s.env ?? {},
     })),
-    gmail: lifeos.gmail
-      ? {
-          webhookSecret: envReplace(lifeos.gmail['webhook-secret'] ?? ''),
-          pubsubTopic: lifeos.gmail['pubsub-topic'] ?? '',
-        }
-      : null,
   };
 }

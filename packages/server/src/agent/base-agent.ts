@@ -22,7 +22,6 @@ const CHAT_SCAFFOLD = loadGenericPrompt('chat.md');
 const POST_SESSION = loadGenericPrompt('post-session.md');
 const HEARTBEAT = loadGenericPrompt('heartbeat.md');
 const INTER_AGENT = loadGenericPrompt('inter-agent-message.md');
-const NEW_EMAIL = loadGenericPrompt('new-email.md');
 
 // ── EventBus minimal interface (circular dep avoided by duck-typing) ──────────
 
@@ -277,29 +276,19 @@ export class BaseAgent implements Agent {
   }
 
   private initListeners(): void {
+    if (this.def.disabledModes.has('heartbeat_trigger')) return;
     void (async () => {
       try {
         for await (const event of this.eventBus.subscribe()) {
           if (
-            !this.def.disabledModes.has('heartbeat_trigger') &&
             event.type === 'heartbeat_trigger' &&
             (event.agent == null || event.agent === this.def.name)
           ) {
             this.backgroundQueue.enqueue(() => this.handleSystemMessage('heartbeat_trigger'));
           }
-
-          if (
-            event.type === 'new_email' &&
-            this.def.name === 'cos' &&
-            !this.def.disabledModes.has('new_email')
-          ) {
-            const append =
-              `\n\n# Incoming Email\n\nFrom: ${event.from}\nSubject: ${event.subject}\n\n${event.body}`;
-            this.backgroundQueue.enqueue(() => this.handleSystemMessage('new_email', append));
-          }
         }
       } catch (err) {
-        console.warn(`[${this.def.name}] event stream error:`, err);
+        console.warn(`[${this.def.name}] heartbeat stream error:`, err);
       }
     })();
   }
@@ -386,7 +375,6 @@ export class BaseAgent implements Agent {
   private modePrompt(mode: string): string {
     if (mode === 'post-session') return POST_SESSION;
     if (mode === 'heartbeat_trigger') return HEARTBEAT;
-    if (mode === 'new_email') return NEW_EMAIL;
     throw new Error(`Unknown system mode: ${mode}`);
   }
 

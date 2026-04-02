@@ -119,7 +119,7 @@ export class ToolsRegistry {
       case 'shared_bash':
         return this.sharedBash.run(input.command as string);
       case 'send_email': {
-        if (!this.gmailClient) return { error: 'Gmail not configured' };
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
         await this.gmailClient.send(
           input.to as string,
           input.subject as string,
@@ -127,6 +127,14 @@ export class ToolsRegistry {
           input.thread_id as string | undefined,
         );
         return { sent: true };
+      }
+      case 'read_emails': {
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const emails = await this.gmailClient.fetchRecent(
+          input.query as string | undefined,
+          input.max_results != null ? Number(input.max_results) : undefined,
+        );
+        return { emails };
       }
       case 'get_current_datetime': {
         const now = new Date();
@@ -288,14 +296,23 @@ const TOOLS: ToolDefinition[] = [
     'Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.',
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
 
+  tool('read_emails',
+    'Read emails from the inbox. Use during heartbeat to check for new messages. ' +
+    'Returns sender, subject, body, messageId, and threadId for each email.',
+    props(
+      prop('query', 'string', 'Gmail search query (default: "in:inbox is:unread"). Examples: "in:inbox is:unread", "from:someone@example.com", "subject:urgent".'),
+      prop('max_results', 'number', 'Max number of emails to return (default: 10)'),
+    ),
+    []),
+
   tool('send_email',
-    'Send an email on behalf of the user. Use to reply to an incoming email or compose a new one. ' +
+    'Send an email on behalf of the user. Use to reply to or compose new emails. ' +
     'Provide thread_id when replying so the message stays in the same thread.',
     props(
       prop('to', 'string', 'Recipient email address'),
       prop('subject', 'string', 'Email subject'),
       prop('body', 'string', 'Plain text email body'),
-      prop('thread_id', 'string', 'Thread ID to reply within (from incoming email context). Omit for a new email.'),
+      prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
     ),
     ['to', 'subject', 'body']),
 
