@@ -307,14 +307,12 @@ const TOOLS: ToolDefinition[] = [
     []),
 
   tool('send_email',
-    'Send an email on behalf of the user. Use to reply to or compose new emails. ' +
-    'Provide thread_id when replying so the message stays in the same thread. ' +
-    'Provide html_body to send an HTML email instead of plain text.',
+    'Send an email on behalf of the user. Use html_body for rich emails, body for plain text. Do not provide both.',
     props(
       prop('to', 'string', 'Recipient email address'),
       prop('subject', 'string', 'Email subject'),
-      prop('body', 'string', 'Plain text email body. Used when html_body is not provided.'),
-      prop('html_body', 'string', 'HTML email body. If provided, sends as HTML instead of plain text.'),
+      prop('html_body', 'string', 'HTML email body. Use this for rich formatting. Do not include body when using this.'),
+      prop('body', 'string', 'Plain text email body. Only use when not sending HTML.'),
       prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
     ),
     ['to', 'subject']),
