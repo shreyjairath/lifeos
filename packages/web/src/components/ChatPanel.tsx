@@ -43,6 +43,8 @@ export default function ChatPanel({
   });
   const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const currentSessionRef = useRef<string | null>(sessionId);
@@ -135,10 +137,19 @@ export default function ChatPanel({
       .catch(() => setLoadingHistory(false));
   }, [sessionId]);
 
-  // Auto-scroll
+  // Auto-scroll — suppressed while user has scrolled up
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!userScrolledRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
+
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    userScrolledRef.current = !atBottom;
+  };
 
   // Auto-resize textarea
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -170,6 +181,7 @@ export default function ChatPanel({
 
     setDebugEvents([]);
     labelInsertedRef.current = false;
+    userScrolledRef.current = false;
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -482,7 +494,7 @@ export default function ChatPanel({
       </div>
 
       {/* Messages */}
-      <div className="messages-container">
+      <div className="messages-container" ref={messagesContainerRef} onScroll={handleMessagesScroll}>
         <div className="messages-inner">
           {loadingHistory && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', justifyContent: 'center' }}>
