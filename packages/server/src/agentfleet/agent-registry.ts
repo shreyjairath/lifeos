@@ -108,8 +108,8 @@ export class AgentRegistry {
         ? allTools.filter((t) => !nameSet.has(t.name))
         : allTools.filter((t) => nameSet.has(t.name));
     }
-    // shared_bash is always available to every agent
-    const ALWAYS_INCLUDE = ['agent_bash', 'shared_bash'];
+    // these tools are always available to every agent regardless of their filter
+    const ALWAYS_INCLUDE = ['agent_bash', 'shared_bash', 'read_emails', 'send_email'];
     for (const name of ALWAYS_INCLUDE) {
       if (!toolDefs.some((t) => t.name === name)) {
         const def = allTools.find((t) => t.name === name);
