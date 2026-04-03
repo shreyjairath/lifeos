@@ -118,6 +118,20 @@ export class ToolsRegistry {
       }
       case 'shared_bash':
         return this.sharedBash.run(input.command as string);
+      case 'send_file_email': {
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const workspace = resolve(AGENTS_DIR, agentName, 'workspace');
+        const filePath = resolve(workspace, input.file_path as string);
+        if (!filePath.startsWith(workspace)) return { error: 'Path outside workspace' };
+        if (!existsSync(filePath)) return { error: `File not found: ${input.file_path}` };
+        await this.gmailClient.sendFile(
+          input.to as string,
+          input.subject as string,
+          filePath,
+          input.thread_id as string | undefined,
+        );
+        return { sent: true };
+      }
       case 'send_email': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
         await this.gmailClient.send(
@@ -305,6 +319,17 @@ const TOOLS: ToolDefinition[] = [
       prop('max_results', 'number', 'Max number of emails to return (default: 10)'),
     ),
     []),
+
+  tool('send_file_email',
+    'Send an HTML file from your workspace as an email. Use this instead of send_email when the content is a file (e.g. a report in _artifacts/). ' +
+    'Pass the file path relative to your workspace root (e.g. "_artifacts/report.html"). The server reads the file directly.',
+    props(
+      prop('to', 'string', 'Recipient email address'),
+      prop('subject', 'string', 'Email subject'),
+      prop('file_path', 'string', 'Path to HTML file relative to your workspace root (e.g. "_artifacts/report.html")'),
+      prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
+    ),
+    ['to', 'subject', 'file_path']),
 
   tool('send_email',
     'Send an email on behalf of the user. Use html_body for rich emails, body for plain text. Do not provide both.',

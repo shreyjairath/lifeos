@@ -1,4 +1,5 @@
 import { Executor, prepareMessages } from './executor/executor.js';
+import { LlmClient } from './executor/llm-client.js';
 import { Confirmations } from './executor/confirmations.js';
 import { SessionHandler } from './session/session-handler.js';
 import {
@@ -77,6 +78,7 @@ export class BaseAgent implements Agent {
         this.handleSystemMessage('post-session', `\n\n# Closed Session ID\n\n${sessionId}`),
       );
     });
+    this.session.setLlmClientFactory(() => new LlmClient(config.apiKey));
     this.initListeners();
   }
 

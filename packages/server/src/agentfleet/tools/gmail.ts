@@ -68,6 +68,11 @@ export class GmailClient {
     await this.withTimeout(this.gmail().users.messages.send(params));
   }
 
+  async sendFile(to: string, subject: string, filePath: string, threadId?: string): Promise<void> {
+    const html = readFileSync(filePath, 'utf-8');
+    await this.send(to, subject, undefined, threadId, html);
+  }
+
   async fetchRecent(query: string = 'in:inbox', maxResults: number = 10): Promise<EmailMessage[]> {
     const gm = this.gmail();
     const listRes = await this.withTimeout(gm.users.messages.list({
