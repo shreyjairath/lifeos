@@ -27,6 +27,7 @@ export interface AgentDefinition {
   disabledModes: Set<string>;
   recurringTasks: RecurringTask[];
   subscribedTopics: string[];
+  emailCheck: boolean;
   model: string | null;
   backgroundModel: string | null;
   reasoning: AgentReasoning | null;
@@ -59,6 +60,7 @@ export function parseAgentDefinition(
   }));
 
   const subscribedTopics = (map['subscribed-topics'] ?? []) as string[];
+  const emailCheck = (map['email-check'] ?? false) as boolean;
   const model = (map.model ?? null) as string | null;
   const backgroundModel = (map['background-model'] ?? null) as string | null;
 
@@ -83,6 +85,7 @@ export function parseAgentDefinition(
     disabledModes: new Set(disabledList),
     recurringTasks,
     subscribedTopics,
+    emailCheck,
     model,
     backgroundModel,
     reasoning,

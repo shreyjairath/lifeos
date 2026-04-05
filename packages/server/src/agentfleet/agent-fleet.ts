@@ -138,6 +138,210 @@ export class AgentFleet {
     }
   }
 
+  async triggerEmailCheck(): Promise<void> {
+    const gmail = this.toolsRegistry.getGmailClient();
+    if (!gmail) return;
+
+    console.log('[EmailCheck] starting poll');
+
+    let rawThreads: import('../agentfleet/tools/gmail.js').RawThread[];
+    try {
+      rawThreads = await gmail.fetchInboxThreads();
+    } catch (err: any) {
+      console.warn('[EmailCheck] fetch failed:', err?.message);
+      return;
+    }
+    console.log(`[EmailCheck] fetched ${rawThreads.length} inbox thread(s)`);
+    if (!rawThreads.length) return;
+
+    const allAgents = this.registry.all();
+    const cosAgent = this.registry.get('cos');
+    const agentNames = new Set(allAgents.map((a) => a.getName()));
+    const checkStartTime = Date.now();
+
+    // bucket: agentName → { agent, emails[], rawThread[] (parallel array) }
+    type Bucket = { agent: import('../agent/types.js').Agent; emails: import('../agentfleet/tools/gmail.js').EmailMessage[]; thread: import('../agentfleet/tools/gmail.js').RawThread };
+    const buckets = new Map<string, Bucket[]>();
+
+    for (const rawThread of rawThreads) {
+      const allMsgs = rawThread.messages;
+      const latestMsg = allMsgs[allMsgs.length - 1]!;
+
+      // Determine the "sender" of the latest inbox message for contact lookup
+      const latestInbox = [...allMsgs].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
+      const senderEmail = latestInbox ? extractEmail(latestInbox.from) : extractEmail(latestMsg.from);
+      const contact = this.config.contacts.find((c) => c.email === senderEmail);
+
+      // Collect all @mentions across the entire thread to find involved agents
+      const fullThreadText = allMsgs.map((m) => m.mentionText).join('\n');
+
+      const findInvolved = (allowed: import('../agent/types.js').Agent[]): import('../agent/types.js').Agent[] => {
+        const involved = allowed.filter((a) => fullThreadText.includes(`@${a.getName()}`));
+        return involved;
+      };
+
+      let involved: import('../agent/types.js').Agent[];
+      if (contact) {
+        const allowed = allAgents.filter((a) => contact.agents.includes(a.getName()));
+        involved = findInvolved(allowed);
+        if (involved.length === 0) involved = [this.registry.get(contact.fallback)];
+      } else {
+        involved = findInvolved(allAgents);
+        if (involved.length === 0) involved = [cosAgent];
+      }
+
+      // For each involved agent, check what messages are new to them
+      for (const agent of involved) {
+        const lastSeen = agent.emailThreadStore.getLastSeen(rawThread.threadId);
+        const lastSeenIdx = lastSeen ? allMsgs.findIndex((m) => m.id === lastSeen) : -1;
+        const newMsgs = allMsgs.slice(lastSeenIdx + 1);
+        if (newMsgs.length === 0) continue; // agent is up to date
+
+        // Build EmailMessage[] from newMsgs with prior context
+        const priorMsgs = allMsgs.slice(0, lastSeenIdx + 1);
+        const prior: import('../agentfleet/tools/gmail.js').ThreadMessage[] = priorMsgs.map((m) => ({
+          from: m.from,
+          date: new Date(m.internalDate).toUTCString(),
+          body: m.body,
+        }));
+        const emailMsgs: import('../agentfleet/tools/gmail.js').EmailMessage[] = newMsgs.map((m) => ({
+          messageId: m.id,
+          rfcMessageId: m.rfcMessageId,
+          threadId: rawThread.threadId,
+          from: m.from,
+          to: m.to,
+          cc: m.cc,
+          subject: m.subject,
+          body: m.body,
+          thread: prior,
+        }));
+
+        console.log(`[EmailCheck] routing "${latestMsg.subject}" → ${agent.getName()} (${newMsgs.length} new message(s))`);
+        if (!buckets.has(agent.getName())) buckets.set(agent.getName(), []);
+        buckets.get(agent.getName())!.push({ agent, emails: emailMsgs, thread: rawThread });
+      }
+    }
+
+    // Per-thread metadata for mark-as-read coordination across agents
+    const threadMeta = new Map<string, {
+      involvedAgents: import('../agent/types.js').Agent[];
+      latestInboxMsgId: string;
+      latestMsgId: string;
+    }>();
+    for (const rawThread of rawThreads) {
+      const latestInboxMsg = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
+      if (!latestInboxMsg) continue;
+      // Recompute involved for this thread (same logic as above)
+      const fullThreadText = rawThread.messages.map((m) => m.mentionText).join('\n');
+      const latestInboxSender = extractEmail(latestInboxMsg.from);
+      const contact = this.config.contacts.find((c) => c.email === latestInboxSender);
+      let involved: import('../agent/types.js').Agent[];
+      if (contact) {
+        const allowed = allAgents.filter((a) => contact.agents.includes(a.getName()));
+        involved = allowed.filter((a) => fullThreadText.includes(`@${a.getName()}`));
+        if (involved.length === 0) involved = [this.registry.get(contact.fallback)];
+      } else {
+        involved = allAgents.filter((a) => fullThreadText.includes(`@${a.getName()}`));
+        if (involved.length === 0) involved = [cosAgent];
+      }
+      threadMeta.set(rawThread.threadId, {
+        involvedAgents: involved,
+        latestInboxMsgId: latestInboxMsg.id,
+        latestMsgId: rawThread.messages[rawThread.messages.length - 1]!.id,
+      });
+    }
+
+    console.log(`[EmailCheck] dispatching to ${buckets.size} agent(s): ${[...buckets.keys()].join(', ')}`);
+
+    for (const agentBuckets of buckets.values()) {
+      const agent = agentBuckets[0]!.agent;
+      const allEmails = agentBuckets.flatMap((b) => b.emails);
+
+      agent.handleEmailCheck(allEmails, async () => {
+        for (const { emails: agentEmails, thread } of agentBuckets) {
+          const latestNewMsg = agentEmails[agentEmails.length - 1]!;
+
+          // Check if agent sent a reply tagging another agent
+          const sent = await gmail.getLatestSentMessage(thread.threadId, checkStartTime);
+          if (sent) {
+            const tagged = allAgents.find((a) => a !== agent && sent.body.includes(`@${a.getName()}`));
+            if (tagged) {
+              const sentIdx = thread.messages.findIndex((m) => m.id === sent.id);
+              const prevMsgId = sentIdx > 0 ? thread.messages[sentIdx - 1]!.id : null;
+              if (prevMsgId) tagged.emailThreadStore.markSeen(thread.threadId, prevMsgId);
+              agent.emailThreadStore.markSeen(thread.threadId, sent.id);
+              console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — ${tagged.getName()} cursor set to ${prevMsgId ?? 'start'}`);
+              continue;
+            }
+          }
+
+          // No tagging — advance cursor
+          agent.emailThreadStore.markSeen(thread.threadId, latestNewMsg.messageId);
+          console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestNewMsg.messageId} on thread ${thread.threadId}`);
+
+          // Mark as read in Gmail if all involved agents are now caught up
+          const meta = threadMeta.get(thread.threadId);
+          if (meta) {
+            const allCaughtUp = meta.involvedAgents.every((a) => {
+              const seen = a.emailThreadStore.getLastSeen(thread.threadId);
+              return seen === meta.latestMsgId;
+            });
+            if (allCaughtUp) {
+              try {
+                await gmail.markAsRead([meta.latestInboxMsgId]);
+                console.log(`[EmailCheck] all agents caught up on thread ${thread.threadId} — marked as read`);
+              } catch (err: any) {
+                console.warn('[EmailCheck] failed to mark as read:', err?.message);
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Check all agents for threads that have gone dormant
+    for (const agent of allAgents) {
+      agent.checkDormantThreads();
+    }
+  }
+
+  async triggerTaskCheck(): Promise<void> {
+    const tasks = this.toolsRegistry.getScheduledTasks();
+    const overdue = tasks.getAllOverdue();
+
+    if (!overdue.length) {
+      console.log('[TaskCheck] no overdue tasks');
+      return;
+    }
+
+    console.log(`[TaskCheck] found ${overdue.length} overdue task(s)`);
+
+    const buckets = new Map<string, { agent: import('../agent/types.js').Agent; tasks: Record<string, any>[] }>();
+    for (const task of overdue) {
+      const assigneeName = task.assignee as string | null;
+      if (!assigneeName) continue;
+      let agent: import('../agent/types.js').Agent;
+      try {
+        agent = this.registry.get(assigneeName);
+      } catch {
+        console.warn(`[TaskCheck] assignee "${assigneeName}" not found for task "${task.name as string}" — skipping`);
+        continue;
+      }
+      if (!buckets.has(assigneeName)) buckets.set(assigneeName, { agent, tasks: [] });
+      buckets.get(assigneeName)!.tasks.push(task);
+    }
+
+    console.log(`[TaskCheck] dispatching to ${buckets.size} agent(s): ${[...buckets.keys()].join(', ')}`);
+    for (const { agent, tasks: agentTasks } of buckets.values()) {
+      for (const task of agentTasks) {
+        agent.handleOverdueTask(task, () => {
+          tasks.markComplete(task.id as string, 'platform');
+          console.log(`[TaskCheck] marked task "${task.name as string}" complete after ${agent.getName()} run`);
+        });
+      }
+    }
+  }
+
   // ── Background task board ──────────────────────────────────────────────────────
 
   /**
@@ -179,3 +383,9 @@ export class AgentFleet {
     this.toolsRegistry.saveDisabledTools(new Set(names));
   }
 }
+
+function extractEmail(from: string): string {
+  const m = from.match(/<([^>]+)>/);
+  return (m ? m[1]! : from).trim().toLowerCase();
+}
+

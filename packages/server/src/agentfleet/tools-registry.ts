@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, extname, basename } from 'path';
 import type { ToolDefinition, ToolInvoker, ChannelLog } from '../agent/types.js';
 import { MONOREPO_ROOT } from '../root.js';
 
@@ -17,8 +17,6 @@ type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
 type WebSearchImpl = import('./tools/web-search.js').WebSearch;
 type BrowseImpl = import('./tools/browse.js').Browse;
 type NotificationsImpl = import('./tools/notifications.js').Notifications;
-type RemindersStoreImpl = import('./tools/reminders.js').ReminderStore;
-type McpToolsClientImpl = import('./tools/mcp-tools-client.js').McpToolsClient;
 
 const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 export const AGENTS_DIR = resolve(USER_DATA, 'agents');
@@ -31,6 +29,7 @@ export class ToolsRegistry {
   private readonly agentBash = new Map<string, Bash>();
   private readonly agentBashReadonly = new Map<string, Bash>();
   private readonly agentLogs = new Map<string, AgentLog>();
+  private readonly agentTitles = new Map<string, string>();
   private readonly sharedTasks = new ScheduledTasks(resolve(USER_DATA, 'tasks.json'));
   private readonly sessionTools = new SessionToolsImpl();
   readonly channels: AgentChannels = new AgentChannels();
@@ -42,13 +41,20 @@ export class ToolsRegistry {
     this.gmailClient = client;
   }
 
+  getGmailClient(): GmailClient | null {
+    return this.gmailClient;
+  }
+
+  getScheduledTasks(): ScheduledTasks {
+    return this.sharedTasks;
+  }
+
   // Injected by createApp() after construction
+  clientEmail = '';
   agentTools!: AgentToolsImpl;
   webSearch!: WebSearchImpl;
   browse!: BrowseImpl;
   notifications!: NotificationsImpl;
-  reminderStore!: RemindersStoreImpl;
-  mcpClient!: McpToolsClientImpl;
   eventBusPublish!: (event: Record<string, any>) => void;
 
   init(): void {
@@ -56,10 +62,11 @@ export class ToolsRegistry {
     mkdirSync(SHARED_DIR, { recursive: true });
   }
 
-  registerAgentWorkspace(name: string, workspacePath: string): void {
+  registerAgentWorkspace(name: string, workspacePath: string, title?: string): void {
     this.agentBash.set(name, new Bash(workspacePath, false));
     this.agentBashReadonly.set(name, new Bash(workspacePath, true));
     this.agentLogs.set(name, new AgentLog(workspacePath));
+    if (title) this.agentTitles.set(name, title);
   }
 
   agentChannels(): ChannelLog {
@@ -70,8 +77,6 @@ export class ToolsRegistry {
 
   getTools(): ToolDefinition[] {
     const all: ToolDefinition[] = [...TOOLS, ...SESSION_TOOLS];
-    const mcpTools = this.mcpClient?.getTools() ?? [];
-    all.push(...mcpTools);
     const disabled = this.loadDisabledTools();
     if (disabled.size === 0) return all;
     return all.filter((t) => !disabled.has(t.name));
@@ -124,29 +129,60 @@ export class ToolsRegistry {
         const filePath = resolve(workspace, input.file_path as string);
         if (!filePath.startsWith(workspace)) return { error: 'Path outside workspace' };
         if (!existsSync(filePath)) return { error: `File not found: ${input.file_path}` };
+        const sendFileTo = (input.to as string | undefined)?.trim() || this.clientEmail;
+        if (!sendFileTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
         await this.gmailClient.sendFile(
-          input.to as string,
+          sendFileTo,
           input.subject as string,
           filePath,
           input.thread_id as string | undefined,
+          input.in_reply_to as string | undefined,
+          this.agentTitles.get(agentName),
+          input.cc as string | undefined,
         );
         return { sent: true };
       }
       case 'send_email': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const sendTo = (input.to as string | undefined)?.trim() || this.clientEmail;
+        if (!sendTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
+        let attachments: { filename: string; mimeType: string; data: Buffer }[] | undefined;
+        if (Array.isArray(input.attachments) && input.attachments.length > 0) {
+          const workspace = resolve(AGENTS_DIR, agentName, 'workspace');
+          attachments = [];
+          for (const rel of input.attachments as string[]) {
+            const filePath = resolve(workspace, rel);
+            if (!filePath.startsWith(workspace)) return { error: `Path outside workspace: ${rel}` };
+            if (!existsSync(filePath)) return { error: `Attachment not found: ${rel}` };
+            attachments.push({
+              filename: basename(filePath),
+              mimeType: mimeTypeFromExt(extname(filePath)),
+              data: readFileSync(filePath),
+            });
+          }
+        }
         await this.gmailClient.send(
-          input.to as string,
+          sendTo,
           input.subject as string,
           input.body as string | undefined,
           input.thread_id as string | undefined,
           input.html_body as string | undefined,
+          input.in_reply_to as string | undefined,
+          this.agentTitles.get(agentName),
+          input.cc as string | undefined,
+          attachments,
         );
         return { sent: true };
       }
       case 'read_emails': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        let emailQuery = (input.query as string | undefined) ?? 'in:inbox is:unread';
+        // Always restrict to unread unless the agent explicitly asks for read messages
+        if (!emailQuery.includes('is:unread') && !emailQuery.includes('is:read')) {
+          emailQuery += ' is:unread';
+        }
         const emails = await this.gmailClient.fetchRecent(
-          input.query as string | undefined,
+          emailQuery,
           input.max_results != null ? Number(input.max_results) : undefined,
         );
         return { emails };
@@ -167,16 +203,6 @@ export class ToolsRegistry {
         return this.browse.fetch(input.url as string);
       case 'show_image':
         return { url: input.url, caption: input.caption ?? '' };
-      case 'notify_user':
-        return this.notifications.notifyUser(
-          agentName, input.message as string, input.urgency as string, input.context as string,
-        );
-      case 'set_reminder':
-        return this.reminderStore.set(input.time as string, input.message as string);
-      case 'list_reminders':
-        return this.reminderStore.list();
-      case 'delete_reminder':
-        return this.reminderStore.delete(input.id as string);
       case 'create_task':
         return this.sharedTasks.upsert(
           agentName,
@@ -266,9 +292,6 @@ export class ToolsRegistry {
         return { url, title, path };
       }
       default:
-        if (toolName.startsWith('mcp_')) {
-          return this.mcpClient.callTool(toolName, input);
-        }
         return { error: `Unknown tool: ${toolName}` };
     }
   }
@@ -312,35 +335,55 @@ const TOOLS: ToolDefinition[] = [
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
 
   tool('read_emails',
-    'Read emails from the inbox. Use during heartbeat to check for new messages. ' +
-    'Returns sender, subject, body, messageId, and threadId for each email.',
+    'Read emails from the shared mailbox. ' +
+    'Returns an array of emails, each with: messageId, rfcMessageId, threadId, from, to, cc, subject, body (truncated to 10,000 chars), and thread (prior messages in the thread, oldest first). ' +
+    'Pass rfcMessageId as in_reply_to when replying — this is the RFC 2822 Message-ID required for proper thread linking. ' +
+    'Note: queries that do not specify is:unread or is:read will have is:unread appended automatically.',
     props(
-      prop('query', 'string', 'Gmail search query (default: "in:inbox is:unread"). Examples: "in:inbox is:unread", "from:someone@example.com", "subject:urgent".'),
+      prop('query', 'string', 'Gmail search query (default: "in:inbox is:unread"). Examples: "in:inbox is:unread", "in:inbox is:read", "from:someone@example.com".'),
       prop('max_results', 'number', 'Max number of emails to return (default: 10)'),
     ),
     []),
 
   tool('send_file_email',
-    'Send an HTML file from your workspace as an email. Use this instead of send_email when the content is a file (e.g. a report in _artifacts/). ' +
-    'Pass the file path relative to your workspace root (e.g. "_artifacts/report.html"). The server reads the file directly.',
+    'Send an HTML file from your workspace as the email body. The file content becomes the email body — this is NOT an attachment. ' +
+    'Use this when you have an HTML report already saved in _artifacts/ and want to avoid reading it into a tool call. ' +
+    'For inline HTML content you are constructing now, use send_email with html_body instead. ' +
+    'For files recipients should download (PDFs, CSVs), use send_email with attachments instead. ' +
+    'The From header is automatically set to your agent title and the shared mailbox address. ' +
+    'Always include a signature line in the HTML file: "@{your agent name}" (e.g. "@chicago_childcare"). This is used to route future replies back to you. ' +
+    'When replying, you MUST set thread_id and in_reply_to — both required for the reply to stay in the correct thread.',
     props(
-      prop('to', 'string', 'Recipient email address'),
+      prop('to', 'string', 'Recipient email address. Omit when emailing the client — the configured client address is used by default. Required for all other recipients.'),
+      prop('cc', 'string', 'CC recipients — comma-separated. When replying to a group thread, include the To and CC participants from the original email to reply-all.'),
       prop('subject', 'string', 'Email subject'),
       prop('file_path', 'string', 'Path to HTML file relative to your workspace root (e.g. "_artifacts/report.html")'),
-      prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
+      prop('thread_id', 'string', 'Thread ID from the email context. Always set when replying.'),
+      prop('in_reply_to', 'string', 'RFC 2822 Message-ID from the email context (rfcMessageId). Always set when replying — required for proper threading in mail clients.'),
     ),
-    ['to', 'subject', 'file_path']),
+    ['subject', 'file_path']),
 
   tool('send_email',
-    'Send an email on behalf of the user. Use html_body for rich emails, body for plain text. Do not provide both.',
+    'Send an email on behalf of the user. ' +
+    'The From header is automatically set to your agent title and the shared mailbox address. ' +
+    'Body options — pick one: ' +
+    '(1) html_body: inline HTML you construct now — use for formatted replies and reports. Clean HTML, inline CSS — clear hierarchy, readable spacing, minimal color, minimal styling. No decorative elements. ' +
+    '(2) body: plain text — use only for short conversational replies (2–3 sentences). No markdown syntax. ' +
+    'Do not provide both body and html_body. ' +
+    'Attachments can be included alongside either body option — use for large, durable artifacts that will be referenced repeatedly (PDFs, CSVs, PPTs, interactive web pages). ' +
+    'Always end your email with a signature line: "@{your agent name}" (e.g. "@cos", "@chicago_childcare"). This is used to route future replies back to you. ' +
+    'When replying, you MUST set thread_id and in_reply_to — both required for the reply to stay in the correct thread.',
     props(
-      prop('to', 'string', 'Recipient email address'),
+      prop('to', 'string', 'Recipient email address. Omit when emailing the client — the configured client address is used by default. Required for all other recipients. When replying, set this to the sender\'s address (the From field of the incoming email).'),
+      prop('cc', 'string', 'CC recipients — comma-separated. When replying to a group thread, include the To and CC participants from the original email to reply-all.'),
       prop('subject', 'string', 'Email subject'),
-      prop('html_body', 'string', 'HTML email body. Use this for rich formatting. Do not include body when using this.'),
-      prop('body', 'string', 'Plain text email body. Only use when not sending HTML.'),
-      prop('thread_id', 'string', 'Thread ID to reply within. Omit for a new email.'),
+      prop('html_body', 'string', 'HTML email body. Use for formatted replies and reports. Do not include body when using this.'),
+      prop('body', 'string', 'Plain text email body. Only for short conversational replies. No markdown syntax.'),
+      prop('thread_id', 'string', 'Thread ID from the email context. Always set when replying.'),
+      prop('in_reply_to', 'string', 'RFC 2822 Message-ID from the email context (rfcMessageId). Always set when replying — required for proper threading in mail clients.'),
+      ['attachments', { type: 'array', items: { type: 'string' }, description: 'Workspace-relative file paths to send as downloadable attachments (e.g. ["_artifacts/report.pdf", "_artifacts/slides.pptx"]). Any file type is supported.' }],
     ),
-    ['to', 'subject']),
+    ['subject']),
 
   tool('shared_bash',
     'Shared folder for passing files between agents — NOT for your own notes (use agent_bash for that). ' +
@@ -380,34 +423,8 @@ const TOOLS: ToolDefinition[] = [
 
   tool('get_current_datetime',
     'Get the current date and time. ' +
-    'Call before set_reminder, create_task with due_at, or any time-relative calculation.',
+    'Call before create_task with due_at or any time-relative calculation.',
     props(), []),
-
-  tool('notify_user',
-    'Send an immediate notification to the user. ' +
-    'Use this when you find something genuinely important — a risk, a time-sensitive finding, or something requiring their attention. ' +
-    'Available in background modes only (heartbeat, post-session). Do NOT use for routine updates or progress reports.',
-    props(
-      prop('message', 'string', 'Short, direct message — treat it like a text. No preamble, no pleasantries. 1–3 sentences max.'),
-      ['urgency', { type: 'string', enum: ['low', 'medium', 'high'], description: 'low=informational, medium=action needed soon, high=time-sensitive/urgent' }],
-      prop('context', 'string', 'Optional additional detail shown in-app (not in the OS push notification)'),
-    ),
-    ['message']),
-
-  tool('set_reminder',
-    'Schedule a reminder that fires at a specific future time. ' +
-    'Always call get_current_datetime first to know the current time before computing the target time. ' +
-    'time must be a full ISO-8601 datetime with timezone offset (e.g. 2026-03-15T15:00:00-05:00).',
-    props(
-      prop('time', 'string', 'ISO-8601 datetime with timezone offset when the reminder should fire'),
-      prop('message', 'string', 'Reminder message shown to the user'),
-    ),
-    ['time', 'message']),
-
-  tool('list_reminders', 'List all pending (not yet fired) reminders.', props(), []),
-
-  tool('delete_reminder', 'Cancel a pending reminder by id.',
-    props(prop('id', 'string', 'Reminder id from list_reminders')), ['id']),
 
   tool('create_task',
     'Create or update a task on the shared task board. ' +
@@ -518,14 +535,16 @@ const TOOLS: ToolDefinition[] = [
     ['agent']),
 
   tool('update_agent',
-    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first.',
+    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first. ' +
+    'Identity should describe who the agent is and their standing capabilities — keep it stable, general, and non-restrictive. ' +
+    'Do not encode current project state, deadlines, or situational context in identity — that belongs in the agent\'s workspace (_memory.md, plans, etc.).',
     props(
       prop('name', 'string', 'Agent slug to update'),
       prop('title', 'string', 'New display name'),
       prop('description', 'string', 'New one-sentence description'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager (e.g. "cos", "advisor")'),
-      prop('identity', 'string', 'New identity prompt'),
+      prop('identity', 'string', 'Who the agent is and their standing capabilities. Keep stable and general — no project state, deadlines, or situational context.'),
       prop('chat_instructions', 'string', 'New session-mode instructions'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'New tool list (replaces current list)' }],
     ),
@@ -580,3 +599,16 @@ const SESSION_TOOLS: ToolDefinition[] = [
     props(prop('session_id', 'string', 'Session ID from list_sessions')),
     ['session_id']),
 ];
+
+function mimeTypeFromExt(ext: string): string {
+  const map: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.txt': 'text/plain',
+    '.md': 'text/plain',
+    '.html': 'text/html',
+    '.svg': 'image/svg+xml',
+  };
+  return map[ext.toLowerCase()] ?? 'application/octet-stream';
+}

@@ -17,3 +17,4 @@ Inter-agent messages are either **sync** (sender is blocking, waiting for your t
 1. Read your workspace (`_memory.md`) if you need domain context.
 2. Use tools to look up information, take action, or update state.
 3. Write your response as plain text.
+4. Call `log_entry` with `mode: inter-agent-message` — one sentence: who messaged you, what they asked, what you did.

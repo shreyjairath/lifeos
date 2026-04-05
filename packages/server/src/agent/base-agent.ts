@@ -2,6 +2,8 @@ import { Executor, prepareMessages } from './executor/executor.js';
 import { LlmClient } from './executor/llm-client.js';
 import { Confirmations } from './executor/confirmations.js';
 import { SessionHandler } from './session/session-handler.js';
+import type { EmailMessage } from '../agentfleet/tools/gmail.js';
+import { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
 import {
   createRunRecord,
   finishRunRecord,
@@ -22,6 +24,9 @@ const LIFEOS_PROMPT = loadGenericPrompt('lifeos-prompt.md');
 const CHAT_SCAFFOLD = loadGenericPrompt('chat.md');
 const POST_SESSION = loadGenericPrompt('post-session.md');
 const HEARTBEAT = loadGenericPrompt('heartbeat.md');
+const CHECK_EMAIL = loadGenericPrompt('check-email.md');
+const POST_EMAIL = loadGenericPrompt('post-email.md');
+const TASK_TRIGGER = loadGenericPrompt('task-trigger.md');
 const INTER_AGENT = loadGenericPrompt('inter-agent-message.md');
 
 // ── EventBus minimal interface (circular dep avoided by duck-typing) ──────────
@@ -56,6 +61,7 @@ export class BaseAgent implements Agent {
 
   /** Serializes all background runs (heartbeat, post-session) per agent */
   private readonly backgroundQueue = new BackgroundQueue();
+  readonly emailThreadStore: EmailThreadStore;
   /** Active executor keyed by sessionId; allows cancellation */
   private readonly activeRuns = new Map<string, Executor>();
 
@@ -73,6 +79,7 @@ export class BaseAgent implements Agent {
     this.config = config;
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
+    this.emailThreadStore = new EmailThreadStore(def.name);
     this.session = new SessionHandler(config, def.name, (sessionId) => {
       this.backgroundQueue.enqueue(() =>
         this.handleSystemMessage('post-session', `\n\n# Closed Session ID\n\n${sessionId}`),
@@ -105,7 +112,7 @@ export class BaseAgent implements Agent {
     prepareMessages(messages);
 
     const model = this.effectiveChatModel(modelOverride);
-    const record = createRunRecord(this.def.name, 'chat', userMessage, model);
+    const record = createRunRecord(this.def.name, 'chat', system, userMessage, model);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode: 'chat' });
 
     const exec = new Executor(this.config.apiKey, this.confirmations);
@@ -176,6 +183,44 @@ export class BaseAgent implements Agent {
     );
   }
 
+  handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void {
+    console.log(`[${this.def.name}] handleEmailCheck: received ${emails.length} email(s), enqueueing`);
+    // Group by thread and upsert into thread store (for dormancy tracking)
+    const byThread = new Map<string, EmailMessage[]>();
+    for (const email of emails) {
+      if (!byThread.has(email.threadId)) byThread.set(email.threadId, []);
+      byThread.get(email.threadId)!.push(email);
+    }
+    for (const threadEmails of byThread.values()) {
+      this.emailThreadStore.upsert(threadEmails[0]!.threadId, formatEmailsForAgent(threadEmails));
+    }
+    const append = formatEmailsForAgent(emails);
+    this.backgroundQueue.enqueue(async () => {
+      await this.handleSystemMessage('check_email_trigger', append);
+      if (onComplete) await onComplete();
+    });
+  }
+
+  handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void {
+    const taskContent = `# Task: ${task.name as string}\n\n${task.description as string}`;
+    console.log(`[${this.def.name}] handleOverdueTask: enqueueing "${task.name as string}"`);
+    this.backgroundQueue.enqueue(async () => {
+      await this.handleSystemMessage('task_trigger', taskContent);
+      onComplete?.();
+    });
+  }
+
+  checkDormantThreads(): void {
+    const dormant = this.emailThreadStore.getDormant(2 * 60 * 60 * 1000);
+    for (const { threadId, content } of dormant) {
+      console.log(`[${this.def.name}] thread ${threadId} dormant — enqueueing post-email`);
+      this.emailThreadStore.remove(threadId);
+      this.backgroundQueue.enqueue(() =>
+        this.handleSystemMessage('post-email', content),
+      );
+    }
+  }
+
   // ── Private ────────────────────────────────────────────────────────────────
 
   private async runInterAgentMessage(
@@ -192,7 +237,8 @@ export class BaseAgent implements Agent {
 
     const model = this.chatModel();
     const mode = `inter-agent-message (from: ${fromAgent})`;
-    const record = createRunRecord(this.def.name, mode, system, model);
+    const userMsg = messages[0]?.content as string ?? '';
+    const record = createRunRecord(this.def.name, mode, system, userMsg, model);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode: 'inter-agent-message', from: fromAgent });
 
     let result = '';
@@ -236,13 +282,24 @@ export class BaseAgent implements Agent {
     if (this.def.disabledModes.has(mode)) return;
 
     const system = this.buildSystemPrompt(mode, {});
-    let userMsg = this.modePrompt(mode);
-    if (userMsgAppend) userMsg += userMsgAppend;
+    const userMsg = userMsgAppend?.trim() ? userMsgAppend : `[${mode}]`;
 
     const messages: Record<string, any>[] = [{ role: 'user', content: userMsg }];
     const bgModel = this.backgroundModel();
-    const record = createRunRecord(this.def.name, mode, system, bgModel);
+    const record = createRunRecord(this.def.name, mode, system, userMsg, bgModel);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode });
+
+    const invoker = mode === 'check_email_trigger'
+      ? {
+          definitions: () => this.toolInvoker.definitions(),
+          invoke: (name: string, input: Record<string, any>, agent: string) => {
+            if (name === 'message_agent' || name === 'message_agent_async') {
+              return { error: 'message_agent is not allowed in check_email_trigger — tag the agent in your email reply instead.' };
+            }
+            return this.toolInvoker.invoke(name, input, agent);
+          },
+        }
+      : this.toolInvoker;
 
     let result = '';
     try {
@@ -251,10 +308,10 @@ export class BaseAgent implements Agent {
         messages,
         system,
         bgModel,
-        this.toolInvoker.definitions(),
+        invoker.definitions(),
         this.def.name,
         null,
-        this.toolInvoker,
+        invoker,
       )) {
         withRecordLogging(event, record);
         if (event.type === 'agent_append' && event.role === 'assistant' && typeof event.message.content === 'string') {
@@ -278,19 +335,20 @@ export class BaseAgent implements Agent {
   }
 
   private initListeners(): void {
-    if (this.def.disabledModes.has('heartbeat_trigger')) return;
     void (async () => {
       try {
         for await (const event of this.eventBus.subscribe()) {
+          const forMe = event.agent == null || event.agent === this.def.name;
+          if (!forMe) continue;
           if (
             event.type === 'heartbeat_trigger' &&
-            (event.agent == null || event.agent === this.def.name)
+            !this.def.disabledModes.has('heartbeat_trigger')
           ) {
             this.backgroundQueue.enqueue(() => this.handleSystemMessage('heartbeat_trigger'));
           }
         }
       } catch (err) {
-        console.warn(`[${this.def.name}] heartbeat stream error:`, err);
+        console.warn(`[${this.def.name}] event stream error:`, err);
       }
     })();
   }
@@ -342,6 +400,13 @@ export class BaseAgent implements Agent {
       parts.push(`\n\n## Prior Exchanges with ${opts.fromAgent}\n\n${history}`);
     } else {
       parts.push('\n\n' + this.modePrompt(mode));
+      if (mode === 'check_email_trigger' && this.config.mailboxEmail) {
+        parts.push(
+          `\n\n**Shared mailbox:** \`${this.config.mailboxEmail}\` — all agents share this address. ` +
+          `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
+          `— ${this.def.title} (@${this.def.name})`,
+        );
+      }
     }
 
     const now = new Intl.DateTimeFormat('en-US', {
@@ -377,6 +442,9 @@ export class BaseAgent implements Agent {
   private modePrompt(mode: string): string {
     if (mode === 'post-session') return POST_SESSION;
     if (mode === 'heartbeat_trigger') return HEARTBEAT;
+    if (mode === 'check_email_trigger') return CHECK_EMAIL;
+    if (mode === 'post-email') return POST_EMAIL;
+    if (mode === 'task_trigger') return TASK_TRIGGER;
     throw new Error(`Unknown system mode: ${mode}`);
   }
 
@@ -428,7 +496,7 @@ export class BaseAgent implements Agent {
 
 function withRecordLogging(event: ExecutorEvent, record: RunRecord): void {
   if (event.type === 'llm_request') {
-    setInitialMessages(record, event.messages);
+    if (!record.initialMessages) setInitialMessages(record, event.messages);
     if (!record.toolNames) {
       record.toolNames = event.tools.map((t) => (t as any).name).filter(Boolean);
     }
@@ -454,4 +522,74 @@ function resultPreview(result: string): string {
   if (!result?.trim()) return 'no output';
   const s = result.trim();
   return s.length > 120 ? s.slice(0, 120) + '…' : s;
+}
+
+function formatEmailsForAgent(emails: EmailMessage[]): string {
+  // Group by threadId — multiple unread messages on the same thread show as one entry
+  const threads = new Map<string, EmailMessage[]>();
+  for (const email of emails) {
+    if (!threads.has(email.threadId)) threads.set(email.threadId, []);
+    threads.get(email.threadId)!.push(email);
+  }
+
+  const lines: string[] = ['\n\n# Email(s) for You\n'];
+  for (const threadEmails of threads.values()) {
+    const first = threadEmails[0]!;
+    const last = threadEmails[threadEmails.length - 1]!;
+    lines.push('---');
+    lines.push(`Subject: ${first.subject}`);
+    lines.push(`From: ${last.from}`);
+    if (last.to) lines.push(`To: ${last.to}`);
+    if (last.cc) lines.push(`CC: ${last.cc}`);
+    lines.push(`Thread ID: ${first.threadId}`);
+    lines.push(`Message-ID: ${last.rfcMessageId.replace(/^<|>$/g, '')}`);
+    if (first.thread.length > 0) {
+      lines.push('\n**Thread history:**');
+      const truncated = truncateThreadHistory(first.thread);
+      if (truncated.dropped > 0) {
+        lines.push(`> *[${truncated.dropped} earlier message(s) omitted for length]*`);
+        lines.push('');
+      }
+      for (const msg of truncated.messages) {
+        lines.push(`> From: ${msg.from} | ${msg.date}`);
+        const stripped = stripQuotedLines(msg.body);
+        lines.push(`> ${stripped.split('\n').join('\n> ')}`);
+        lines.push('');
+      }
+    }
+    lines.push('\n**New message(s):**');
+    for (const email of threadEmails) {
+      lines.push(`From: ${email.from}`);
+      lines.push(stripQuotedLines(email.body));
+      lines.push('');
+    }
+  }
+  lines.push('---');
+  return lines.join('\n');
+}
+
+const MAX_THREAD_HISTORY_CHARS = 20_000;
+
+function truncateThreadHistory(msgs: { from: string; date: string; body: string }[]): {
+  messages: { from: string; date: string; body: string }[];
+  dropped: number;
+} {
+  // Keep the most recent messages that fit within the char budget (drop oldest first)
+  let total = 0;
+  let cutIdx = msgs.length;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    total += msgs[i]!.from.length + msgs[i]!.body.length;
+    if (total > MAX_THREAD_HISTORY_CHARS) { cutIdx = i + 1; break; }
+    cutIdx = i;
+  }
+  return { messages: msgs.slice(cutIdx), dropped: cutIdx };
+}
+
+function stripQuotedLines(body: string): string {
+  return body
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('>'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

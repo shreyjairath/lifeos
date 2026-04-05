@@ -8,6 +8,8 @@ Read the transcript. Then update your workspace across your three responsibiliti
 
 **Progress** — What moved? What's now blocked or unblocked? Any dropped balls the session revealed? Update your progress tracking to reflect the current state.
 
-Keep `_memory.md` current as an index. Let the log carry the trail — call `log_entry` with `mode: post-session`, a 1–3 sentence summary of what happened and what you updated, and `changed` listing each file and what changed. If nothing warranted a workspace update, log a single line: "no workspace changes." — do not write a full entry.
+Keep `_memory.md` current as an index. 
 
 If the session produced a key learning that other agents should know — a clinical development, a meaningful shift in the client's situation, a strategic change — post it to the knowledge board with `write_to_topic` (`topic: "knowledge"`). Be concise and specific: what changed, what it means, what (if anything) other agents should do with it. Skip routine session summaries — only post if the information would meaningfully affect another agent's work.
+
+Let the log carry the trail — call `log_entry` with `mode: post-session`, a 1–3 sentence summary of what happened and what you updated, and `changed` listing each file and what changed. If nothing warranted a workspace update, log a single line: "no workspace changes." — do not write a full entry.

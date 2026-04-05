@@ -5,11 +5,9 @@ import { MONOREPO_ROOT } from '../root.js';
 
 const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
-const MAX_PROMPT_LEN = 20_000;
 const MAX_TEXT_LEN = 5_000;
 const MAX_TOOL_INPUT_LEN = 1_000;
 const MAX_TOOL_RESULT_LEN = 2_000;
-const MAX_RESULT_LEN = 50_000;
 const MAX_REASONING_LEN = 20_000;
 const MAX_INITIAL_MESSAGES = 50;
 
@@ -27,14 +25,15 @@ export interface RunRecord {
   durationMs?: number;
   inputTokens: number;
   outputTokens: number;
-  prompt: string;
+  systemPrompt: string;
+  userMessage: string;
   toolNames?: string[];
   turns: Record<string, any>[];
   initialMessages?: Record<string, any>[];
   result: string;
 }
 
-export function createRunRecord(agent: string, mode: string, prompt: string, model: string): RunRecord {
+export function createRunRecord(agent: string, mode: string, systemPrompt: string, userMessage: string, model: string): RunRecord {
   return {
     id: randomUUID(),
     agent,
@@ -43,7 +42,8 @@ export function createRunRecord(agent: string, mode: string, prompt: string, mod
     startedAt: Date.now(),
     inputTokens: 0,
     outputTokens: 0,
-    prompt: truncate(prompt, MAX_PROMPT_LEN),
+    systemPrompt,
+    userMessage,
     turns: [],
     result: '',
   };
@@ -52,7 +52,7 @@ export function createRunRecord(agent: string, mode: string, prompt: string, mod
 export function finishRunRecord(record: RunRecord, result: string): void {
   record.endedAt = Date.now();
   record.durationMs = record.endedAt - record.startedAt;
-  record.result = truncate(result, MAX_RESULT_LEN);
+  record.result = result;
 }
 
 export function addTokens(record: RunRecord, input: number, output: number): void {
