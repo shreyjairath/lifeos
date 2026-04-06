@@ -50,8 +50,8 @@ recurring-tasks:
   - name: heartbeat
     prompt: heartbeat.md
     cadence-hours: 6
-  - name: log_process
-    prompt: log-process.md
+  - name: reconcile_workspace
+    prompt: reconcile-workspace.md
     cadence-hours: 2
   - name: self_eval
     prompt: self-eval.md
