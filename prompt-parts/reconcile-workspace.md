@@ -12,6 +12,8 @@ You have been woken up to reconcile your workspace with your recent activity. Yo
 
 Focus on your primary state files first: clarity, plan, and progress files. Some changes will already be written to files from the run itself — skip those. Others will be implied but not yet applied — write them now. Update `_memory.md` last if any files were added, removed, or renamed.
 
+**Refresh tasks** — call `get_overdue_tasks` to see what's due. Call `get_my_tasks` to review your full task list. Cancel or reschedule anything no longer relevant. Create tasks for any follow-ups identified during reconciliation.
+
 Scope: workspace sync only. Do not send emails, message agents, or take outbound actions.
 
 **Log** with `log_entry` using `mode: task-trigger`. Use the `notes` field for anything that needs follow-up in a future run.
