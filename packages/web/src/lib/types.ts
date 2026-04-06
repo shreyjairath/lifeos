@@ -48,6 +48,9 @@ export interface AgentRun {
   id?: string;
   agent: string;
   mode: string;
+  systemPrompt?: string;
+  userMessage?: string;
+  /** @deprecated use systemPrompt */
   prompt?: string;
   model?: string;
   turns?: number | Record<string, unknown>[];
@@ -59,11 +62,20 @@ export interface AgentRun {
   durationMs?: number;
 }
 
-export interface Channel {
-  pair: string;
-  agents: string[];
-  lastActivity?: string;
-  preview?: string;
+export interface FeedEntry {
+  timestamp: string;
+  from: string;
+  to: string[];       // empty = broadcast
+  threadId: string;
+  content: string;
+}
+
+export interface FeedThread {
+  threadId: string;
+  participants: string[];
+  lastActivity: string;
+  entries: FeedEntry[];
+  preview: string;
 }
 
 export interface Task {
@@ -73,7 +85,10 @@ export interface Task {
   assigned_to?: string;
   description?: string;
   cadence_hours?: number;
-  due_at?: string;
+  due_at?: number;
+  next_due?: string;
+  last_run?: number;
+  assignee?: string;
   completed_at?: string;
   status?: string;
 }

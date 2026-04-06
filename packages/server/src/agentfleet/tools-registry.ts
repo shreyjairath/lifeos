@@ -1,16 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, extname, basename } from 'path';
-import type { ToolDefinition, ToolInvoker, ChannelLog } from '../agent/types.js';
+import type { ToolDefinition, ToolInvoker } from '../agent/types.js';
 import { MONOREPO_ROOT } from '../root.js';
 
 // Tool implementations — filled in Phase 5
 import { Bash } from './tools/bash.js';
-import { AgentLog } from './tools/agent-log.js';
 import type { GmailClient } from './tools/gmail.js';
 import { ScheduledTasks } from './tools/scheduled-tasks.js';
 import { SessionToolsImpl } from './tools/session-tools.js';
-import { AgentChannels } from './tools/agent-channels.js';
 import { AgentTopics } from './tools/agent-topics.js';
+import { EmailThreadStore } from './tools/email-thread-store.js';
 
 // These are imported lazily to break circular deps
 type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
@@ -28,11 +27,9 @@ const DISABLED_FILE = resolve(USER_DATA, 'disabled-tools.json');
 export class ToolsRegistry {
   private readonly agentBash = new Map<string, Bash>();
   private readonly agentBashReadonly = new Map<string, Bash>();
-  private readonly agentLogs = new Map<string, AgentLog>();
   private readonly agentTitles = new Map<string, string>();
   private readonly sharedTasks = new ScheduledTasks(resolve(USER_DATA, 'tasks.json'));
   private readonly sessionTools = new SessionToolsImpl();
-  readonly channels: AgentChannels = new AgentChannels();
   readonly topics: AgentTopics = new AgentTopics();
   private readonly sharedBash = new Bash(SHARED_DIR, false);
   private gmailClient: GmailClient | null = null;
@@ -65,12 +62,7 @@ export class ToolsRegistry {
   registerAgentWorkspace(name: string, workspacePath: string, title?: string): void {
     this.agentBash.set(name, new Bash(workspacePath, false));
     this.agentBashReadonly.set(name, new Bash(workspacePath, true));
-    this.agentLogs.set(name, new AgentLog(workspacePath));
     if (title) this.agentTitles.set(name, title);
-  }
-
-  agentChannels(): ChannelLog {
-    return this.channels;
   }
 
   // ── Tool definitions ────────────────────────────────────────────────────────
@@ -187,6 +179,23 @@ export class ToolsRegistry {
         );
         return { emails };
       }
+      case 'read_email_thread': {
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const thread = await this.gmailClient.fetchThread(input.thread_id as string);
+        if (!thread) return { error: `Thread '${input.thread_id as string}' not found or empty` };
+        return { thread };
+      }
+      case 'read_email_thread_summary': {
+        const store = new EmailThreadStore(agentName);
+        const summary = store.readSummary(input.thread_id as string);
+        if (!summary) return { error: `No summary found for thread ${input.thread_id as string}` };
+        return { thread_id: input.thread_id, summary };
+      }
+      case 'write_email_thread_summary': {
+        const store = new EmailThreadStore(agentName);
+        store.writeSummary(input.thread_id as string, input.summary as string);
+        return { status: 'written', thread_id: input.thread_id };
+      }
       case 'get_current_datetime': {
         const now = new Date();
         return {
@@ -223,29 +232,31 @@ export class ToolsRegistry {
       case 'delete_task':
         return this.sharedTasks.delete(input.id as string);
       case 'log_entry': {
-        const log = this.agentLogs.get(agentName);
-        return log
-          ? log.append(input.mode as string, input.summary as string, input.changed as string, input.notes as string)
-          : { error: `No workspace registered for agent: ${agentName}` };
+        const mode = input.mode as string;
+        const summary = input.summary as string;
+        const sessionId = input.session_id as string | undefined;
+        const emailThreadIds = Array.isArray(input.email_thread_ids) ? (input.email_thread_ids as string[]) : undefined;
+        const read = input.read as string | undefined;
+        const changed = input.changed as string | undefined;
+        const notes = input.notes as string | undefined;
+        let msg = `**Mode:** ${mode}\n**Summary:** ${summary.trim()}`;
+        if (sessionId?.trim()) msg += `\n**Session:** ${sessionId.trim()}`;
+        if (emailThreadIds?.length) msg += `\n**Email Threads:** ${emailThreadIds.join(', ')}`;
+        if (read?.trim()) msg += `\n**Read:**\n${read.trim()}`;
+        if (changed?.trim()) msg += `\n**Changed:**\n${changed.trim()}`;
+        if (notes?.trim()) msg += `\n**Notes:** ${notes.trim()}`;
+        return this.topics.writeTopic(agentName, `${agentName}_log`, msg);
       }
       case 'read_log': {
-        const log = this.agentLogs.get(agentName);
-        return log
-          ? log.read(input.entries != null ? Number(input.entries) : undefined)
-          : { error: `No workspace registered for agent: ${agentName}` };
+        const consume = input.consume as boolean ?? false;
+        return this.topics.readTopic(agentName, `${agentName}_log`, consume, input.filter as string | undefined, input.page as number ?? 1, input.page_size as number ?? 20);
       }
-      case 'read_agent_message_history':
-        return this.channels.readChannel(agentName, input.agent as string);
       case 'message_agent':
         return this.agentTools.messageAgent(agentName, input.agent as string, input.message as string);
-      case 'message_agent_async':
-        return this.agentTools.messageAgentAsync(agentName, input.agent as string, input.message as string);
-      case 'write_to_topic':
-        return this.topics.writeTopic(agentName, input.topic as string, input.message as string);
-      case 'read_topic':
-        return this.topics.readTopic(agentName, input.topic as string);
-      case 'list_topics':
-        return this.topics.listTopics(agentName);
+      case 'post_message':
+        return this.agentTools.postMessage(agentName, input.message as string, Array.isArray(input.to) ? input.to.map(String) : []);
+      case 'read_messages':
+        return this.topics.readTopic(agentName, 'feed', input.consume as boolean ?? true, (input.filter as string | undefined) ?? `@${agentName}`, input.page as number ?? 1, input.page_size as number ?? 20);
       case 'read_agent_definition':
         return this.agentTools.readAgentDefinition(input.agent as string);
       case 'update_agent':
@@ -256,7 +267,6 @@ export class ToolsRegistry {
           input.goal as string ?? null,
           input.manager as string ?? null,
           input.identity as string ?? null,
-          input.chat_instructions as string ?? null,
           Array.isArray(input.tools) ? input.tools.map(String) : null,
         );
       case 'list_agents':
@@ -273,7 +283,6 @@ export class ToolsRegistry {
           input.goal as string ?? null,
           input.manager as string ?? null,
           input.identity as string,
-          input.chat_instructions as string,
           Array.isArray(input.tools) ? input.tools.map(String) : [],
         );
       case 'render_artifact': {
@@ -344,6 +353,31 @@ const TOOLS: ToolDefinition[] = [
       prop('max_results', 'number', 'Max number of emails to return (default: 10)'),
     ),
     []),
+
+  tool('read_email_thread',
+    'Fetch a Gmail thread by thread ID. Returns the full thread including all prior messages and the latest message with reply metadata. ' +
+    'Use this during log processing only when no summary exists yet — prefer read_email_thread_summary first.',
+    props(
+      prop('thread_id', 'string', 'Gmail thread ID from a previous log entry email_thread_ids field.'),
+    ),
+    ['thread_id']),
+
+  tool('read_email_thread_summary',
+    'Read the locally stored summary of an email thread. No Gmail API call. ' +
+    'Use during log processing before falling back to read_email_thread.',
+    props(
+      prop('thread_id', 'string', 'Gmail thread ID from a log entry email_thread_ids field.'),
+    ),
+    ['thread_id']),
+
+  tool('write_email_thread_summary',
+    'Store a summary of an email thread. Call this after reviewing a thread via read_email_thread. ' +
+    'Stored locally — future runs use read_email_thread_summary instead of hitting Gmail.',
+    props(
+      prop('thread_id', 'string', 'Gmail thread ID.'),
+      prop('summary', 'string', '2-3 paragraph summary: who the thread is with, what was exchanged, decisions made, open follow-ups, and what action you took.'),
+    ),
+    ['thread_id', 'summary']),
 
   tool('send_file_email',
     'Send an HTML file from your workspace as the email body. The file content becomes the email body — this is NOT an attachment. ' +
@@ -463,63 +497,64 @@ const TOOLS: ToolDefinition[] = [
     ['id']),
 
   tool('log_entry',
-    'Append a structured log entry to _log.md. ' +
-    'Call at the end of every background run: post-session, heartbeat, self-eval, and inter-agent-message.',
+    'Record what happened at the end of any run — chat, email, task, or inter-agent message. ' +
+    'Written to your private log — only you read it.',
     props(
-      prop('mode', 'string', 'Run mode: chat, post-session, heartbeat, self-eval, or inter-agent-message'),
-      prop('summary', 'string', '1–3 sentence summary of what happened'),
-      prop('changed', 'string', 'Files changed and what changed in each (omit if nothing changed)'),
-      prop('notes', 'string', 'Additional context, findings, or decisions (optional)'),
+      prop('mode', 'string', 'Run mode: chat, inter-agent-message, email-check, or task-trigger'),
+      prop('summary', 'string', 'What happened and what you decided — be thorough, this is your memory'),
+      prop('session_id', 'string', 'Session ID for this run. Always include during chat mode — used to pull transcripts later.'),
+      ['email_thread_ids', { type: 'array', items: { type: 'string' }, description: 'Gmail thread IDs processed during this run. Always include during email-check mode — used to pull threads later.' }],
+      prop('read', 'string', 'Workspace files read during this run, one per line (e.g. "clarity/status.md"). Used to identify which files are actively referenced.'),
+      prop('changed', 'string', 'Workspace changes made during this run — list each file and the specific section or value that changed (e.g. "_memory.md § Goals: updated relocation timeline to end of 2026"). Be precise — this is used during log processing to reconcile workspace state.'),
+      prop('notes', 'string', 'Loose observations, open questions, or things to follow up on (optional)'),
     ),
     ['mode', 'summary']),
 
   tool('read_log',
-    'Read your own _log.md — past activity recorded by log_entry. ' +
-    'Returns recent entries newest-last. Defaults to last 10 entries.',
-    props(prop('entries', 'number', 'Number of recent entries to return (default: 10)')),
+    'Read your private activity log written by log_entry. ' +
+    'Safe to call anytime — does not advance the cursor by default. ' +
+    'Returns newest entries first. Use consume: true during log-processing runs to mark entries as seen.',
+    props(
+      prop('consume', 'boolean', 'Advance cursor after reading (default: false). When true, returns all new entries since last consume — pagination ignored.'),
+      prop('filter', 'string', 'Return only entries containing this string — useful for searching by mode or keyword (optional)'),
+      prop('page', 'number', 'Page number, 1-based (default: 1 = most recent entries)'),
+      prop('page_size', 'number', 'Entries per page (default: 20)'),
+    ),
     []),
 
-  tool('read_agent_message_history',
-    'Read the message history between you and another agent (last 10 exchanges).',
-    props(prop('agent', 'string', "Agent name (e.g. 'therapist'). Use list_agents to see available agents.")),
-    ['agent']),
-
   tool('message_agent',
-    'Send a message to another agent and receive their response synchronously. ' +
-    'BLOCKING: waits for the full response — up to 90 seconds. ' +
-    'NEVER call this during user chat — use message_agent_async instead. ' +
-    'For background modes only: post-session, heartbeat, self-eval, inter-agent-message.',
+    'Send a message to another agent and block until they respond. ' +
+    'Use only in background modes (task-trigger, inter-agent-message) — never during user chat. ' +
+    'Use post_message instead when you do not need an immediate reply.',
     props(
-      prop('agent', 'string', "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
-      prop('message', 'string', 'Message to send to the agent.'),
+      prop('agent', 'string', "Agent to message. Use list_agents to see available agents."),
+      prop('message', 'string', 'Message to send.'),
     ),
     ['agent', 'message']),
 
-  tool('message_agent_async',
-    'Send a non-blocking message to another agent. Returns immediately — safe to use during user chat.',
+  tool('post_message',
+    'Post a message to the shared feed. ' +
+    'Use to: ["agentname"] to notify specific agents — they will be woken up and their reply written back to the feed. ' +
+    'Omit to (or pass an empty array) to broadcast to the whole team (no immediate wakeup — agents read it on their next check). ' +
+    'Safe to call during user chat.',
     props(
-      prop('agent', 'string', "Agent name to message (e.g. 'therapist'). Use list_agents to see available agents."),
-      prop('message', 'string', 'Message to send to the agent.'),
+      prop('message', 'string', 'Message content'),
+      ['to', { type: 'array', items: { type: 'string' }, description: 'Agent names to notify, e.g. ["cos"] or ["therapist", "advisor"]. Omit for broadcast.' }],
     ),
-    ['agent', 'message']),
+    ['message']),
 
-  tool('write_to_topic',
-    'Post a message to the shared team knowledge board. Use topic "knowledge" for all team-wide sharing.',
+  tool('read_messages',
+    'Read messages from the feed since your last check. ' +
+    'By default returns only messages addressed to you. ' +
+    'Pass filter: "broadcast" to read team-wide posts, or any other string to search across all entries. ' +
+    'Set consume: false to browse history without advancing the cursor — supports pagination.',
     props(
-      prop('topic', 'string', 'Topic name — use "knowledge" for standard team-wide sharing'),
-      prop('message', 'string', 'Message to post — be specific. State what changed, what it means, and what others should do with it.'),
+      prop('consume', 'boolean', 'Advance cursor after reading (default: true). When true, returns all new entries since last consume — pagination ignored.'),
+      prop('filter', 'string', 'Return only entries containing this string. Default: "@yourname". Use "broadcast" for team posts.'),
+      prop('page', 'number', 'Page number when browsing history (consume: false only). 1 = most recent (default: 1)'),
+      prop('page_size', 'number', 'Entries per page when browsing history (default: 20)'),
     ),
-    ['topic', 'message']),
-
-  tool('read_topic',
-    'Read new messages on a topic since your last check. ' +
-    'On first read: returns up to the last 20 entries. On subsequent reads: returns only new messages.',
-    props(prop('topic', 'string', 'Topic name — use "knowledge" for the shared team board')),
-    ['topic']),
-
-  tool('list_topics',
-    'List all topics on the knowledge board with their subscriber lists.',
-    props(), []),
+    []),
 
   tool('read_agent_workspace',
     'Read-only access to another agent\'s workspace. Write operations are blocked.',
@@ -545,7 +580,6 @@ const TOOLS: ToolDefinition[] = [
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager (e.g. "cos", "advisor")'),
       prop('identity', 'string', 'Who the agent is and their standing capabilities. Keep stable and general — no project state, deadlines, or situational context.'),
-      prop('chat_instructions', 'string', 'New session-mode instructions'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'New tool list (replaces current list)' }],
     ),
     ['name']),
@@ -576,11 +610,10 @@ const TOOLS: ToolDefinition[] = [
       prop('description', 'string', 'One-sentence description of what this agent does.'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager who hired this agent (e.g. "cos", "advisor"). Omit if hired directly by the client.'),
-      prop('identity', 'string', 'Durable identity prompt.'),
-      prop('chat_instructions', 'string', 'Session-mode instructions — how the agent shows up when the user is present.'),
+      prop('identity', 'string', 'Durable identity prompt — who the agent is and their standing capabilities. All mode-specific framing goes here.'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'Tool names to expose to this agent in addition to agent_bash (always included automatically).' }],
     ),
-    ['name', 'identity', 'chat_instructions', 'tools']),
+    ['name', 'identity', 'tools']),
 ];
 
 const SESSION_TOOLS: ToolDefinition[] = [
@@ -598,6 +631,15 @@ const SESSION_TOOLS: ToolDefinition[] = [
     'Call list_sessions first to find the session_id. Use read_session_summary if you only need an overview.',
     props(prop('session_id', 'string', 'Session ID from list_sessions')),
     ['session_id']),
+
+  tool('write_session_summary',
+    'Store a summary of a session you just read. Call this after reviewing a transcript via read_session_transcript. ' +
+    'Overwrites any existing server-generated summary.',
+    props(
+      prop('session_id', 'string', 'Session ID.'),
+      prop('summary', 'string', '2-3 paragraph summary: what was discussed, decisions made, actions committed to, open threads.'),
+    ),
+    ['session_id', 'summary']),
 ];
 
 function mimeTypeFromExt(ext: string): string {

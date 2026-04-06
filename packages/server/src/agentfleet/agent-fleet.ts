@@ -129,15 +129,6 @@ export class AgentFleet {
     this.eventBus.publish({ ...extra, type: eventType });
   }
 
-  triggerHeartbeat(): void {
-    for (const a of this.registry.all()) {
-      const def = a.getDefinition();
-      if (!def.disabledModes.has('heartbeat_trigger')) {
-        this.trigger('heartbeat_trigger', { agent: def.name });
-      }
-    }
-  }
-
   async triggerEmailCheck(): Promise<void> {
     const gmail = this.toolsRegistry.getGmailClient();
     if (!gmail) return;
@@ -255,10 +246,9 @@ export class AgentFleet {
 
     for (const agentBuckets of buckets.values()) {
       const agent = agentBuckets[0]!.agent;
-      const allEmails = agentBuckets.flatMap((b) => b.emails);
 
-      agent.handleEmailCheck(allEmails, async () => {
-        for (const { emails: agentEmails, thread } of agentBuckets) {
+      for (const { emails: agentEmails, thread } of agentBuckets) {
+        agent.handleEmailCheck(agentEmails, async () => {
           const latestNewMsg = agentEmails[agentEmails.length - 1]!;
 
           // Check if agent sent a reply tagging another agent
@@ -271,7 +261,7 @@ export class AgentFleet {
               if (prevMsgId) tagged.emailThreadStore.markSeen(thread.threadId, prevMsgId);
               agent.emailThreadStore.markSeen(thread.threadId, sent.id);
               console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — ${tagged.getName()} cursor set to ${prevMsgId ?? 'start'}`);
-              continue;
+              return;
             }
           }
 
@@ -295,14 +285,10 @@ export class AgentFleet {
               }
             }
           }
-        }
-      });
+        });
+      }
     }
 
-    // Check all agents for threads that have gone dormant
-    for (const agent of allAgents) {
-      agent.checkDormantThreads();
-    }
   }
 
   async triggerTaskCheck(): Promise<void> {

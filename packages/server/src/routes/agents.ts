@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { AgentFleet } from '../agentfleet/agent-fleet.js';
 import { getRecentRuns } from '../agent/agent-run-logs.js';
 import { ScheduledTasks } from '../agentfleet/tools/scheduled-tasks.js';
 import { MONOREPO_ROOT } from '../root.js';
 
-const CHANNELS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'inter-agent-channels');
+const FEED_FILE = resolve(MONOREPO_ROOT, '.user-data', 'topics', 'feed.md');
 const TASKS_FILE = resolve(MONOREPO_ROOT, '.user-data', 'tasks.json');
 
 export function agentRoutes(fleet: AgentFleet) {
@@ -47,39 +47,43 @@ export function agentRoutes(fleet: AgentFleet) {
   app.post('/agents/trigger/:eventType', async (c) => {
     const { eventType } = c.req.param();
     const extra = await c.req.json().catch(() => ({}));
-    fleet.trigger(eventType, extra);
+    if (eventType === 'check_email_trigger') {
+      void fleet.triggerEmailCheck();
+    } else {
+      fleet.trigger(eventType, extra);
+    }
     return c.json({ triggered: eventType });
   });
 
-  // GET /api/agents/channels — list inter-agent channels
-  app.get('/agents/channels', (c) => {
-    if (!existsSync(CHANNELS_DIR)) return c.json([]);
+  // GET /api/agents/feed — inter-agent message feed
+  app.get('/agents/feed', (c) => {
+    if (!existsSync(FEED_FILE)) return c.json([]);
     try {
-      const files = readdirSync(CHANNELS_DIR)
-        .filter((f) => f.endsWith('.md'))
-        .sort();
-      const channels = files.map((f) => {
-        const pair = f.replace('.md', '');
-        const agents = pair.split('-', 2);
-        return { pair, agents };
-      });
-      return c.json(channels);
+      const raw = readFileSync(FEED_FILE, 'utf-8');
+      const entries = raw
+        .split('\n---\n')
+        .filter((e) => e.trim())
+        .map(parseFeedEntry)
+        .filter(Boolean)
+        .reverse(); // newest first
+      return c.json(entries);
     } catch {
       return c.json([]);
     }
   });
 
-  // GET /api/agents/channels/:pair
-  app.get('/agents/channels/:pair', (c) => {
-    const { pair } = c.req.param();
-    const file = resolve(CHANNELS_DIR, `${pair}.md`);
-    if (!existsSync(file)) return c.json({ error: 'Not found' }, 404);
-    try {
-      return c.json({ pair, content: readFileSync(file, 'utf-8') });
-    } catch {
-      return c.json({ error: 'Failed to read channel' }, 500);
-    }
-  });
-
   return app;
+}
+
+function parseFeedEntry(entry: string): Record<string, any> | null {
+  const lines = entry.trim().split('\n');
+  const headerLine = lines[0]?.trim() ?? '';
+  const m = headerLine.match(
+    /^##\s+(\S+)\s+\|\s+from:\s+(\S+)\s+\|\s+to:\s+(.+?)\s+\|\s+thread:\s+(\S+)/,
+  );
+  if (!m) return null;
+  const [, timestamp, from, toStr, threadId] = m as [string, string, string, string, string];
+  const to = toStr === 'broadcast' ? [] : toStr.split(/\s+/).map((t) => t.replace(/^@/, ''));
+  const content = lines.slice(2).join('\n').replace(/\n?---\s*$/, '').trim();
+  return { timestamp, from, to, threadId, content };
 }

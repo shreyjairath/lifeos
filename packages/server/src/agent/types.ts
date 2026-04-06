@@ -1,5 +1,7 @@
 import type { AgentDefinition } from './agent-definition.js';
 import type { SessionHandler } from './session/session-handler.js';
+import type { EmailMessage } from '../agentfleet/tools/gmail.js';
+import type { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
 
 // ── Tool Invocation ──────────────────────────────────────────────────────────
 
@@ -17,6 +19,7 @@ export interface ToolDefinition {
 // ── Agent ────────────────────────────────────────────────────────────────────
 
 export interface Agent {
+  readonly emailThreadStore: EmailThreadStore;
   getName(): string;
   getTitle(): string;
   getDescription(): string;
@@ -29,15 +32,9 @@ export interface Agent {
     modelOverride?: string
   ): AsyncGenerator<ExecutorEvent>;
   handleAgentMessage(fromAgent: string, content: string): Promise<string>;
-  handleAgentMessageAsync(fromAgent: string, content: string): void;
-}
-
-// ── Channel Log ──────────────────────────────────────────────────────────────
-
-export interface ChannelLog {
-  loadFull(agentA: string, agentB: string): string;
-  append(fromAgent: string, toAgent: string, inbound: string, response: string): void;
-  readChannel(callerAgent: string, partnerAgent: string): Record<string, any>;
+  handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void;
+  handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void;
+  handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void;
 }
 
 // ── Push Notifier ────────────────────────────────────────────────────────────

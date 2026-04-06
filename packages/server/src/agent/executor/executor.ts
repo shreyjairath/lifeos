@@ -3,6 +3,8 @@ import { invokeTools, newToolsResult } from './tools-client.js';
 import type { Confirmations } from './confirmations.js';
 import type { ExecutorEvent, ToolInvoker } from '../types.js';
 
+const MAX_TURNS = 100;
+
 /**
  * The agentic loop: LLM → tools → LLM, until done or cancelled.
  *
@@ -34,9 +36,16 @@ export class Executor {
   ): AsyncGenerator<ExecutorEvent> {
     // Work on a local copy so the caller's array isn't mutated mid-stream
     const local = [...messages];
+    let turns = 0;
 
     while (true) {
       if (this._cancelled) return;
+      if (turns >= MAX_TURNS) {
+        console.warn(`[${agentName}] max turns (${MAX_TURNS}) reached — stopping`);
+        yield { type: 'llm_text', text: `\n\n[Run stopped: max turns (${MAX_TURNS}) reached]` } as ExecutorEvent;
+        return;
+      }
+      turns++;
 
       // ── LLM call ──────────────────────────────────────────────────────────
       const llmResult = newLlmResult();

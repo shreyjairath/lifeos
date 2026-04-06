@@ -4,11 +4,17 @@ import yaml from 'js-yaml';
 import { AGENTS_DIR } from '../tools-registry.js';
 import type { AgentRegistry } from '../agent-registry.js';
 import type { EventBus } from '../event-bus.js';
+import type { AgentTopics } from './agent-topics.js';
+
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
 
 export class AgentTools {
   constructor(
     private readonly getRegistry: () => AgentRegistry,
     private readonly eventBus: EventBus,
+    private readonly topics: AgentTopics,
   ) {}
 
   async messageAgent(fromAgent: string, targetAgent: string, message: string): Promise<Record<string, any>> {
@@ -18,12 +24,30 @@ export class AgentTools {
     const registry = this.getRegistry();
     const agent = registry.get(targetAgent);
     if (!agent) return { error: `Agent '${targetAgent}' not found. Use list_agents to see available agents.` };
+    const threadId = randomId();
+    this.topics.writeTopic(fromAgent, 'feed', message, [targetAgent], threadId);
     try {
       const response = await agent.handleAgentMessage(fromAgent, message);
+      this.topics.writeTopic(targetAgent, 'feed', response, [fromAgent], threadId);
       return { agent: targetAgent, response };
     } catch (err: any) {
       return { error: `Failed to message agent '${targetAgent}': ${err?.message ?? 'unknown'}` };
     }
+  }
+
+  postMessage(fromAgent: string, message: string, to: string[]): Record<string, any> {
+    const threadId = randomId();
+    this.topics.writeTopic(fromAgent, 'feed', message, to, threadId);
+    if (to.length === 0) return { status: 'broadcast', thread_id: threadId };
+    const registry = this.getRegistry();
+    for (const target of to) {
+      const agent = registry.get(target);
+      if (!agent) continue;
+      agent.handleAgentMessageAsync(fromAgent, message, (response) => {
+        this.topics.writeTopic(target, 'feed', response, [fromAgent], threadId);
+      });
+    }
+    return { status: 'queued', thread_id: threadId };
   }
 
   messageAgentAsync(fromAgent: string, targetAgent: string, message: string): Record<string, any> {
@@ -31,9 +55,12 @@ export class AgentTools {
     const registry = this.getRegistry();
     const agent = registry.get(targetAgent);
     if (!agent) return { error: `Agent '${targetAgent}' not found. Use list_agents to see available agents.` };
-    agent.handleAgentMessageAsync(fromAgent, message);
-    const pair = fromAgent < targetAgent ? `${fromAgent}-${targetAgent}` : `${targetAgent}-${fromAgent}`;
-    return { status: 'queued', channel: pair };
+    const threadId = randomId();
+    this.topics.writeTopic(fromAgent, 'feed', message, [targetAgent], threadId);
+    agent.handleAgentMessageAsync(fromAgent, message, (response) => {
+      this.topics.writeTopic(targetAgent, 'feed', response, [fromAgent], threadId);
+    });
+    return { status: 'queued', thread_id: threadId };
   }
 
   listAgents(callerName: string): Record<string, any> {
@@ -68,7 +95,7 @@ export class AgentTools {
       const agentYml = readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8');
       const parsed = yaml.load(agentYml) as Record<string, any>;
       const result: Record<string, any> = { ...parsed };
-      for (const file of ['identity.md', 'chat.md', 'post-session.md', 'self-eval.md', 'heartbeat.md']) {
+      for (const file of ['identity.md', 'self-eval.md', 'heartbeat.md']) {
         const path = resolve(agentDir, file);
         if (existsSync(path)) result[file] = readFileSync(path, 'utf-8');
       }
@@ -85,7 +112,6 @@ export class AgentTools {
     goal: string | null,
     manager: string | null,
     identity: string | null,
-    chatInstructions: string | null,
     tools: string[] | null,
   ): Record<string, any> {
     const agentDir = resolve(AGENTS_DIR, name);
@@ -102,8 +128,6 @@ export class AgentTools {
 
       const identityPath = resolve(agentDir, 'identity.md');
       const newIdentity = identity ?? (existsSync(identityPath) ? readFileSync(identityPath, 'utf-8') : '');
-      const chatPath = resolve(agentDir, 'chat.md');
-      const newChat = chatInstructions ?? (existsSync(chatPath) ? readFileSync(chatPath, 'utf-8') : '');
 
       let newTools: string[];
       if (tools != null) {
@@ -114,7 +138,6 @@ export class AgentTools {
       }
 
       writeFileSync(identityPath, newIdentity ?? '', 'utf-8');
-      writeFileSync(chatPath, newChat ?? '', 'utf-8');
 
       const yamlContent = buildAgentYaml(name, newTitle, newDesc, newGoal, newManager, newTools);
       writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
@@ -134,7 +157,6 @@ export class AgentTools {
     goal: string | null,
     manager: string | null,
     identity: string,
-    chatInstructions: string,
     tools: string[],
   ): Record<string, any> {
     if (!name || !/^[a-z][a-z0-9_]*$/.test(name)) {
@@ -144,7 +166,6 @@ export class AgentTools {
     try {
       mkdirSync(agentDir, { recursive: true });
       writeFileSync(resolve(agentDir, 'identity.md'), identity, 'utf-8');
-      writeFileSync(resolve(agentDir, 'chat.md'), chatInstructions, 'utf-8');
 
       const yamlContent = buildAgentYaml(name, title, description, goal, manager, tools);
       writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
@@ -173,7 +194,6 @@ function buildAgentYaml(
   if (goal?.trim()) s += `goal: ${goal.trim()}\n`;
   if (manager?.trim()) s += `manager: ${manager.trim()}\n`;
   s += `identity:\n  - identity.md\n`;
-  s += `chat-prompt: chat.md\n`;
   s += `tools:\n  mode: include\n  names:\n`;
   for (const tool of allTools) s += `    - ${tool}\n`;
   return s;

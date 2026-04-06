@@ -124,8 +124,28 @@ export class GmailClient {
     const rfcId = inReplyTo
       ? (inReplyTo.startsWith('<') ? inReplyTo : `<${inReplyTo}>`)
       : null;
+
+    // Build full References chain for proper threading in recipient mailboxes.
+    // References = parent's References + parent's Message-ID (RFC 2822).
+    let references = rfcId;
+    if (rfcId && threadId) {
+      try {
+        const threadRes = await this.withTimeout(
+          this.gmail().users.threads.get({ userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['References', 'Message-ID'] }),
+        );
+        for (const msg of (threadRes.data.messages ?? []) as any[]) {
+          const hdrs: Record<string, string> = {};
+          for (const h of (msg.payload?.headers ?? []) as any[]) hdrs[(h.name as string).toLowerCase()] = h.value as string;
+          if (hdrs['message-id'] === rfcId) {
+            references = hdrs['references'] ? `${hdrs['references']} ${rfcId}` : rfcId;
+            break;
+          }
+        }
+      } catch { /* fall back to just inReplyTo */ }
+    }
+
     const replyHeaders = rfcId
-      ? `In-Reply-To: ${rfcId}\r\nReferences: ${rfcId}\r\n`
+      ? `In-Reply-To: ${rfcId}\r\nReferences: ${references}\r\n`
       : '';
     const ccHeader = cc ? `CC: ${cc}\r\n` : '';
 
@@ -236,6 +256,22 @@ export class GmailClient {
       }
     }
     return results;
+  }
+
+  async fetchThread(threadId: string): Promise<EmailMessage | null> {
+    const gm = this.gmail();
+    try {
+      const threadRes = await this.withTimeout(gm.users.threads.get({ userId: 'me', id: threadId, format: 'full' }));
+      const threadMsgs: any[] = threadRes.data.messages ?? [];
+      if (!threadMsgs.length) return null;
+      const current = threadMsgs[threadMsgs.length - 1];
+      const prior = threadMsgs.slice(0, threadMsgs.length - 1);
+      const thread: ThreadMessage[] = prior.map((t: any) => parseThreadMessage(t)).filter(Boolean) as ThreadMessage[];
+      return parseMessage(current, thread);
+    } catch (err: any) {
+      console.warn(`[Gmail] fetchThread failed for ${threadId}:`, err?.message);
+      return null;
+    }
   }
 
   /** Fetch all threads with recent inbox activity, returning raw message data for per-agent cursor comparison. */

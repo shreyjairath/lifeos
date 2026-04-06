@@ -5,7 +5,7 @@ import { fetchTasks } from '@/lib/api';
 import type { Task } from '@/lib/types';
 
 function formatDate(s?: string): string {
-  if (!s) return '—';
+  if (!s || s === 'completed') return s === 'completed' ? 'done' : '—';
   const d = new Date(s);
   if (isNaN(d.getTime())) return s;
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
@@ -13,8 +13,9 @@ function formatDate(s?: string): string {
 
 function getStatus(task: Task): string {
   if (task.completed_at) return 'completed';
-  if (task.due_at) {
-    const due = new Date(task.due_at);
+  if (task.next_due) {
+    if (task.next_due === 'completed') return 'completed';
+    const due = new Date(task.next_due);
     if (!isNaN(due.getTime()) && due < new Date()) return 'overdue';
   }
   return task.status ?? 'pending';
@@ -73,9 +74,9 @@ export default function TaskBoard() {
                     </div>
                   )}
                 </td>
-                <td style={{ color: 'var(--text-muted)' }}>{task.assigned_to ?? '—'}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{task.assignee ?? '—'}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{task.created_by ?? '—'}</td>
-                <td style={{ fontSize: 12 }}>{formatDate(task.due_at)}</td>
+                <td style={{ fontSize: 12 }}>{formatDate(task.next_due)}</td>
                 <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   {task.cadence_hours ? `${task.cadence_hours}h` : '—'}
                 </td>

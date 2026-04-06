@@ -8,7 +8,7 @@ import { resolve, dirname } from 'path';
 const TOPICS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'topics');
 const CURSORS_DIR = resolve(TOPICS_DIR, '.cursors');
 const MAX_ENTRIES = 100;
-const DEFAULT_FIRST_READ = 20;
+const DEFAULT_PAGE_SIZE = 20;
 const HEADER_RE = /^## (\S+) \| (.+)$/;
 
 export class AgentTopics {
@@ -17,14 +17,22 @@ export class AgentTopics {
     mkdirSync(CURSORS_DIR, { recursive: true });
   }
 
-  writeTopic(fromAgent: string, topic: string, message: string): Record<string, any> {
+  writeTopic(fromAgent: string, topic: string, message: string, to?: string[], threadId?: string): Record<string, any> {
     if (!topic || !/^[a-z0-9_-]+$/.test(topic)) {
       return { error: 'topic must only contain lowercase letters, digits, underscores, or hyphens' };
     }
     if (!message?.trim()) return { error: 'message is required' };
 
     const ts = new Date().toISOString();
-    const entry = `## ${ts} | ${fromAgent}\n\n${message.trim()}\n\n---\n\n`;
+    let header: string;
+    if (to !== undefined || threadId !== undefined) {
+      const toStr = to && to.length > 0 ? to.map((a) => `@${a}`).join(' ') : 'broadcast';
+      const tid = threadId ?? randomId();
+      header = `## ${ts} | from: ${fromAgent} | to: ${toStr} | thread: ${tid}`;
+    } else {
+      header = `## ${ts} | ${fromAgent}`;
+    }
+    const entry = `${header}\n\n${message.trim()}\n\n---\n\n`;
     const file = resolve(TOPICS_DIR, `${topic}.md`);
     try {
       appendFileSync(file, entry, 'utf-8');
@@ -35,7 +43,7 @@ export class AgentTopics {
     }
   }
 
-  readTopic(agentName: string, topic: string): Record<string, any> {
+  readTopic(agentName: string, topic: string, consume = true, filter?: string, page = 1, pageSize = DEFAULT_PAGE_SIZE): Record<string, any> {
     if (!topic?.trim()) return { error: 'topic is required' };
 
     const file = resolve(TOPICS_DIR, `${topic}.md`);
@@ -45,23 +53,33 @@ export class AgentTopics {
       const raw = readFileSync(file, 'utf-8');
       const allEntries = raw.split(/(?<=\n---\n\n)/).filter((e) => e.trim());
 
+      if (!consume) {
+        // Peek: full visibility, paginated newest-first, no cursor applied
+        const filtered = filter ? allEntries.filter((e) => e.includes(filter)) : allEntries;
+        const total = filtered.length;
+        const p = Math.max(1, page);
+        const ps = Math.max(1, pageSize);
+        const end = total - (p - 1) * ps;
+        const start = Math.max(0, end - ps);
+        const page_entries = filtered.slice(start, end).reverse();
+        const messages = page_entries.map(parseEntry).filter(Boolean) as Record<string, any>[];
+        return { topic, messages, count: messages.length, total, page: p, page_size: ps, pages: Math.ceil(total / ps) };
+      }
+
+      // Consume: delta since cursor, advance cursor, no pagination
       const cursor = this.readCursor(agentName, topic);
-      const firstRead = cursor === null;
       this.writeCursor(agentName, topic, new Date().toISOString());
 
+      const filtered = filter ? allEntries.filter((e) => e.includes(filter)) : allEntries;
       let messages: Record<string, any>[];
-      if (firstRead) {
-        const subset = allEntries.length > DEFAULT_FIRST_READ
-          ? allEntries.slice(-DEFAULT_FIRST_READ)
-          : allEntries;
-        messages = subset.map(parseEntry).filter(Boolean) as Record<string, any>[];
+      if (cursor === null) {
+        messages = filtered.map(parseEntry).filter(Boolean) as Record<string, any>[];
       } else {
-        const cursorTs = new Date(cursor!).getTime();
-        messages = allEntries
+        const cursorTs = new Date(cursor).getTime();
+        messages = filtered
           .map((e) => parseEntryAfter(e, cursorTs))
           .filter(Boolean) as Record<string, any>[];
       }
-
       return { topic, messages, count: messages.length };
     } catch (err: any) {
       return { error: err?.message ?? 'unknown' };
@@ -121,6 +139,10 @@ function parseEntryAfter(entry: string, cursorMs: number | null): Record<string,
   } catch {
     return null;
   }
+}
+
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 8);
 }
 
 function pruneFile(file: string): void {

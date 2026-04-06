@@ -1,4 +1,4 @@
-import type { AgentInfo, Session, AgentRun, Channel, Task } from './types';
+import type { AgentInfo, Session, AgentRun, FeedEntry, Task } from './types';
 
 export async function fetchAgents(): Promise<AgentInfo[]> {
   const res = await fetch('/api/agents');
@@ -64,23 +64,17 @@ export async function fetchAgentRuns(agentName: string): Promise<AgentRun[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchChannels(): Promise<Channel[]> {
-  const res = await fetch('/api/agents/channels');
+export async function fetchFeed(): Promise<FeedEntry[]> {
+  const res = await fetch('/api/agents/feed');
   if (!res.ok) return [];
   return res.json();
-}
-
-export async function fetchChannelContent(pair: string): Promise<string> {
-  const res = await fetch(`/api/agents/channels/${encodeURIComponent(pair)}`);
-  if (!res.ok) return '';
-  const data = await res.json();
-  return data.content ?? '';
 }
 
 export async function fetchTasks(): Promise<Task[]> {
   const res = await fetch('/api/agents/tasks');
   if (!res.ok) return [];
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.tasks ?? []);
 }
 
 export async function fetchVapidPublicKey(): Promise<string | null> {

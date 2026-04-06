@@ -22,12 +22,10 @@ export interface AgentDefinition {
   promptBase: string;
   manager: string | null;
   identity: string[];
-  chatPrompt: string | null;
   tools: ToolsFilter | null;
   disabledModes: Set<string>;
   recurringTasks: RecurringTask[];
   subscribedTopics: string[];
-  emailCheck: boolean;
   model: string | null;
   backgroundModel: string | null;
   reasoning: AgentReasoning | null;
@@ -43,8 +41,6 @@ export function parseAgentDefinition(
   const goal = (map.goal ?? null) as string | null;
   const manager = (map.manager ?? null) as string | null;
   const identity = (map.identity ?? []) as string[];
-  const chatPrompt = (map['chat-prompt'] ?? null) as string | null;
-
   const toolsMap = map.tools as Record<string, any> | undefined;
   const tools = toolsMap
     ? { mode: toolsMap.mode as string, names: (toolsMap.names ?? []) as string[] }
@@ -60,7 +56,6 @@ export function parseAgentDefinition(
   }));
 
   const subscribedTopics = (map['subscribed-topics'] ?? []) as string[];
-  const emailCheck = (map['email-check'] ?? false) as boolean;
   const model = (map.model ?? null) as string | null;
   const backgroundModel = (map['background-model'] ?? null) as string | null;
 
@@ -80,12 +75,10 @@ export function parseAgentDefinition(
     promptBase,
     manager,
     identity,
-    chatPrompt,
     tools,
     disabledModes: new Set(disabledList),
     recurringTasks,
     subscribedTopics,
-    emailCheck,
     model,
     backgroundModel,
     reasoning,

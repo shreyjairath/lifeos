@@ -2,8 +2,17 @@ server:
   port: 8000
 
 lifeos:
-  model: minimax/minimax-m2.7
-  background-model: minimax/minimax-m2.7
+  client-email: shreyjairath@gmail.com
+  mailbox-email: sjairath.cos@gmail.com
+  contacts:
+    - email: jairath.nishant@gmail.com
+      agents: [relocation, chicago_childcare, chicago_realestate]
+      fallback: relocation
+    - email: akanksha.khanna28@gmail.com
+      agents: [relocation, chicago_childcare, chicago_realestate]
+      fallback: relocation
+  model: xiaomi/mimo-v2-pro
+  background-model: xiaomi/mimo-v2-pro
   reasoning:
     effort: medium
   session:
@@ -13,9 +22,3 @@ lifeos:
     cron: "0 0 */4 * * *"
   session-expiry-check:
     cron: "0 0 * * * *"
-  mcp-servers:
-    - name: gmail
-      command: npx
-      args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
-      env:
-        GMAIL_TOKEN_PATH: .user-data/system/gmail/token.json

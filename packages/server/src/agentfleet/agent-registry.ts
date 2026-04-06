@@ -93,7 +93,7 @@ export class AgentRegistry {
     const workspace = resolve(AGENTS_DIR, def.name, 'workspace');
     try {
       mkdirSync(workspace, { recursive: true });
-      this.toolsRegistry.registerAgentWorkspace(def.name, workspace);
+      this.toolsRegistry.registerAgentWorkspace(def.name, workspace, def.title);
     } catch (err: any) {
       console.warn(`[AgentRegistry] Failed to provision workspace for '${def.name}': ${err?.message}`);
     }
@@ -109,7 +109,7 @@ export class AgentRegistry {
         : allTools.filter((t) => nameSet.has(t.name));
     }
     // these tools are always available to every agent regardless of their filter
-    const ALWAYS_INCLUDE = ['agent_bash', 'shared_bash', 'read_emails', 'send_email', 'send_file_email'];
+    const ALWAYS_INCLUDE = ['agent_bash', 'shared_bash'];
     for (const name of ALWAYS_INCLUDE) {
       if (!toolDefs.some((t) => t.name === name)) {
         const def = allTools.find((t) => t.name === name);
@@ -132,8 +132,6 @@ export class AgentRegistry {
       this.eventBus,
       hiresProvider,
     );
-    agent.setChannelLog(this.toolsRegistry.agentChannels());
-
     this.agentsMap.set(def.name, agent);
     console.log(`[AgentRegistry] Loaded agent '${def.name}' from ${promptBase}`);
     return agent;

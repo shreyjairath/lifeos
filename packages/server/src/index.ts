@@ -13,15 +13,12 @@ import { AgentRouter } from './agentfleet/agent-router.js';
 import { AgentFleet } from './agentfleet/agent-fleet.js';
 import { WebPushService } from './agentfleet/web-push-service.js';
 import { AgentFleetScheduler } from './agentfleet/schedulers/agent-fleet-scheduler.js';
-import { ReminderScheduler } from './agentfleet/schedulers/reminder-scheduler.js';
 
 // Tool implementations
 import { AgentTools } from './agentfleet/tools/agent-tools.js';
 import { WebSearch } from './agentfleet/tools/web-search.js';
 import { Browse } from './agentfleet/tools/browse.js';
 import { Notifications } from './agentfleet/tools/notifications.js';
-import { ReminderStore } from './agentfleet/tools/reminders.js';
-import { McpToolsClient } from './agentfleet/tools/mcp-tools-client.js';
 
 // Routes
 import { chatRoutes } from './routes/chat.js';
@@ -54,25 +51,13 @@ async function createApp() {
 
   const webSearch = new WebSearch();
   const browse = new Browse();
-  const reminderStore = new ReminderStore();
-  const mcpClient = new McpToolsClient();
-
-  // ── MCP init (async — starts stdio subprocesses) ──────────────────────────
-
-  if (config.mcpServers.length > 0) {
-    try {
-      await mcpClient.init(config.mcpServers);
-    } catch (err: any) {
-      console.warn('[MCP] Init failed:', err?.message);
-    }
-  }
 
   // ── Agent registry (must be before AgentTools — lazy ref) ─────────────────
 
   const registry = new AgentRegistry(toolsRegistry, eventBus, confirmations, config);
 
   // Tools that need lazy registry reference (circular dep)
-  const agentTools = new AgentTools(() => registry, eventBus);
+  const agentTools = new AgentTools(() => registry, eventBus, toolsRegistry.topics);
   const notifications = new Notifications(() => registry, eventBus, webPush);
 
   // Wire injectable deps into ToolsRegistry
@@ -80,9 +65,8 @@ async function createApp() {
   toolsRegistry.webSearch = webSearch;
   toolsRegistry.browse = browse;
   toolsRegistry.notifications = notifications;
-  toolsRegistry.reminderStore = reminderStore;
-  toolsRegistry.mcpClient = mcpClient;
   toolsRegistry.eventBusPublish = (e) => eventBus.publish(e);
+  toolsRegistry.clientEmail = config.clientEmail;
 
   registry.load();
 
@@ -103,9 +87,6 @@ async function createApp() {
 
   const fleetScheduler = new AgentFleetScheduler(fleet);
   fleetScheduler.start();
-
-  const reminderScheduler = new ReminderScheduler(reminderStore, webPush);
-  reminderScheduler.start();
 
   // ── Hono app ───────────────────────────────────────────────────────────────
 

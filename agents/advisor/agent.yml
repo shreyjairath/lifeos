@@ -41,11 +41,18 @@ tools:
     - read_session_transcript
     # time & reminders
     - get_current_datetime
-    - set_reminder
-    - list_reminders
-    - delete_reminder
+    # email
+    - read_emails
+    - send_email
+    - send_file_email
 
 recurring-tasks:
+  - name: heartbeat
+    prompt: heartbeat.md
+    cadence-hours: 6
+  - name: log_process
+    prompt: log-process.md
+    cadence-hours: 2
   - name: self_eval
     prompt: self-eval.md
     cadence-hours: 24

@@ -3,13 +3,6 @@ import { resolve } from 'path';
 import yaml from 'js-yaml';
 import { MONOREPO_ROOT } from './root.js';
 
-export interface McpServerConfig {
-  name: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
 export interface ReasoningConfig {
   effort?: string;
   maxTokens?: number;
@@ -20,16 +13,24 @@ export interface SessionConfig {
   timeThresholdHours: number;
 }
 
+export interface Contact {
+  email: string;
+  agents: string[];
+  fallback: string;
+}
+
 export interface AppConfig {
   port: number;
   apiKey: string;
   model: string;
   backgroundModel: string;
+  clientEmail: string;
+  mailboxEmail: string;
+  contacts: Contact[];
   reasoning: ReasoningConfig | null;
   session: SessionConfig;
   heartbeatCron: string;
   sessionExpiryCheckCron: string;
-  mcpServers: McpServerConfig[];
 }
 
 function envReplace(value: string): string {
@@ -59,6 +60,13 @@ export function loadConfig(configPath?: string): AppConfig {
     apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     model: lifeos.model,
     backgroundModel: lifeos['background-model'],
+    clientEmail: lifeos['client-email'] ?? '',
+    mailboxEmail: lifeos['mailbox-email'] ?? '',
+    contacts: ((lifeos.contacts ?? []) as Record<string, any>[]).map((c) => ({
+      email: (c.email as string).toLowerCase(),
+      agents: (c.agents ?? []) as string[],
+      fallback: c.fallback as string,
+    })),
     reasoning: reasoning
       ? {
           effort: reasoning.effort ?? undefined,
@@ -71,11 +79,5 @@ export function loadConfig(configPath?: string): AppConfig {
     },
     heartbeatCron: heartbeat.cron ?? '0 0 */4 * * *',
     sessionExpiryCheckCron: expiryCheck.cron ?? '0 0 * * * *',
-    mcpServers: (lifeos['mcp-servers'] ?? []).map((s: any) => ({
-      name: s.name,
-      command: s.command,
-      args: s.args ?? [],
-      env: s.env ?? {},
-    })),
   };
 }

@@ -85,19 +85,22 @@ function RunCard({ run }: { run: AgentRun }) {
               </div>
             </div>
           )}
-          {run.prompt && (
+          {(run.systemPrompt ?? run.prompt) && (
             <div className="run-section">
-              <div className="run-section-label">Prompt (truncated)</div>
-              <div className="run-section-content">{run.prompt.slice(0, 800)}{run.prompt.length > 800 ? '...' : ''}</div>
+              <div className="run-section-label">System Prompt</div>
+              <div className="run-section-content">{run.systemPrompt ?? run.prompt}</div>
+            </div>
+          )}
+          {run.userMessage && (
+            <div className="run-section">
+              <div className="run-section-label">User Message</div>
+              <div className="run-section-content">{run.userMessage}</div>
             </div>
           )}
           {run.result && (
             <div className="run-section">
               <div className="run-section-label">Result</div>
-              <div className="run-section-content">{(() => {
-                const s = typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2);
-                return s.length > 600 ? s.slice(0, 600) + '...' : s;
-              })()}</div>
+              <div className="run-section-content">{typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)}</div>
             </div>
           )}
         </div>

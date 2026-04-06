@@ -1150,9 +1150,10 @@ input, textarea, select {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 16px;
-  overflow-y: auto;
+  overflow: hidden;
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Task board */

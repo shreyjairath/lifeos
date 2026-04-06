@@ -64,18 +64,15 @@ export class SessionHandler {
   private store: SessionStore;
   private config: AppConfig;
   private agentName: string;
-  private onSessionClosed: (sessionId: string) => void;
   // LlmClient injected lazily to avoid circular dep at construction time
   private getLlmClient?: () => { streamBlocking(model: string, system: string, messages: Record<string, any>[], maxTokens: number): Promise<string> };
 
   constructor(
     config: AppConfig,
     agentName: string,
-    onSessionClosed: (sessionId: string) => void,
   ) {
     this.config = config;
     this.agentName = agentName;
-    this.onSessionClosed = onSessionClosed;
     this.store = new SessionStore(agentName);
   }
 
@@ -107,12 +104,9 @@ export class SessionHandler {
     this.store.saveMeta(newSessionId_, meta);
     this.store.saveMessages(newSessionId_, []);
 
-    // Run summarization + callback asynchronously (don't block)
+    // Run summarization asynchronously (don't block)
     const closedId = oldSessionId;
-    void (async () => {
-      await this.summarize(closedId, buildTranscript(this.getHistory(closedId)));
-      this.onSessionClosed(closedId);
-    })();
+    void this.summarize(closedId, buildTranscript(this.getHistory(closedId)));
 
     return newSessionId_;
   }
@@ -259,7 +253,6 @@ export class SessionHandler {
         meta.closed = true;
         this.store.saveMeta(sessionId, meta);
         void this.summarize(sessionId, buildTranscript(this.getHistory(sessionId)));
-        this.onSessionClosed(sessionId);
       } catch (e) {
         console.warn(`[SessionHandler] error checking session ${sessionId}:`, e);
       }

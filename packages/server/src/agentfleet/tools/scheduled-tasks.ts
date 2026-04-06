@@ -87,6 +87,34 @@ export class ScheduledTasks {
     }
   }
 
+  /** System-only: returns all overdue tasks as a raw array. */
+  getAllOverdue(): Record<string, any>[] {
+    try {
+      const now = epochNow();
+      return this.load().filter((t) => isOverdue(t, now));
+    } catch {
+      return [];
+    }
+  }
+
+  /** System-only: marks multiple tasks complete in a single write. */
+  markAllComplete(ids: string[], calledBy: string): void {
+    try {
+      const list = this.load();
+      const now = epochNow();
+      for (const task of list) {
+        if (ids.includes(task.id as string)) {
+          task.last_run = now;
+          task.last_modified_at = now;
+          task.last_modified_by = calledBy;
+        }
+      }
+      this.save(list);
+    } catch (err: any) {
+      console.warn('[ScheduledTasks] markAllComplete failed:', err?.message);
+    }
+  }
+
   markComplete(id: string, calledBy: string): Record<string, any> {
     try {
       const list = this.load();

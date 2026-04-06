@@ -9,9 +9,10 @@ export class SessionToolsImpl {
   dispatch(toolName: string, input: Record<string, any>, agentName: string): Record<string, any> | null {
     const store = new SessionStore(agentName);
     switch (toolName) {
-      case 'list_sessions':         return this.listSessions(store);
-      case 'read_session_summary':  return this.readSessionSummary(store, input.session_id as string);
+      case 'list_sessions':           return this.listSessions(store);
+      case 'read_session_summary':    return this.readSessionSummary(store, input.session_id as string);
       case 'read_session_transcript': return this.readSessionTranscript(store, input.session_id as string);
+      case 'write_session_summary':   return this.writeSessionSummary(store, input.session_id as string, input.summary as string);
       default: return null;
     }
   }
@@ -41,6 +42,13 @@ export class SessionToolsImpl {
     const summary = store.readSummary(sessionId);
     if (!summary) return { error: `No summary found for session: ${sessionId}` };
     return { session_id: sessionId, summary };
+  }
+
+  private writeSessionSummary(store: SessionStore, sessionId: string, summary: string): Record<string, any> {
+    if (!sessionId?.trim()) return { error: 'session_id required' };
+    if (!summary?.trim()) return { error: 'summary required' };
+    store.writeSummary(sessionId, summary.trim());
+    return { status: 'written', session_id: sessionId };
   }
 
   private readSessionTranscript(store: SessionStore, sessionId: string): Record<string, any> {

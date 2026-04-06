@@ -22,10 +22,7 @@ import type { AppConfig } from '../config.js';
 // Shared prompt scaffolding — loaded once at module init
 const LIFEOS_PROMPT = loadGenericPrompt('lifeos-prompt.md');
 const CHAT_SCAFFOLD = loadGenericPrompt('chat.md');
-const POST_SESSION = loadGenericPrompt('post-session.md');
-const HEARTBEAT = loadGenericPrompt('heartbeat.md');
 const CHECK_EMAIL = loadGenericPrompt('check-email.md');
-const POST_EMAIL = loadGenericPrompt('post-email.md');
 const TASK_TRIGGER = loadGenericPrompt('task-trigger.md');
 const INTER_AGENT = loadGenericPrompt('inter-agent-message.md');
 
@@ -59,7 +56,7 @@ export class BaseAgent implements Agent {
   private readonly hiresProvider: () => string[];
   readonly session: SessionHandler;
 
-  /** Serializes all background runs (heartbeat, post-session) per agent */
+  /** Serializes all background runs per agent */
   private readonly backgroundQueue = new BackgroundQueue();
   readonly emailThreadStore: EmailThreadStore;
   /** Active executor keyed by sessionId; allows cancellation */
@@ -80,11 +77,7 @@ export class BaseAgent implements Agent {
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
     this.emailThreadStore = new EmailThreadStore(def.name);
-    this.session = new SessionHandler(config, def.name, (sessionId) => {
-      this.backgroundQueue.enqueue(() =>
-        this.handleSystemMessage('post-session', `\n\n# Closed Session ID\n\n${sessionId}`),
-      );
-    });
+    this.session = new SessionHandler(config, def.name);
     this.session.setLlmClientFactory(() => new LlmClient(config.apiKey));
     this.initListeners();
   }
@@ -177,26 +170,34 @@ export class BaseAgent implements Agent {
   }
 
   /** Async variant — submits to the background queue and returns immediately. */
-  handleAgentMessageAsync(fromAgent: string, content: string): void {
+  handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void {
     this.backgroundQueue.enqueue(() =>
-      this.runInterAgentMessage(fromAgent, content, true).then(() => {}),
+      this.runInterAgentMessage(fromAgent, content, true, onComplete).then(() => {}),
     );
   }
 
   handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void {
     console.log(`[${this.def.name}] handleEmailCheck: received ${emails.length} email(s), enqueueing`);
-    // Group by thread and upsert into thread store (for dormancy tracking)
-    const byThread = new Map<string, EmailMessage[]>();
+    // Build per-thread reply metadata
+    const threadMeta = new Map<string, { threadId: string; inReplyTo: string; subject: string; replyTo: string }>();
     for (const email of emails) {
-      if (!byThread.has(email.threadId)) byThread.set(email.threadId, []);
-      byThread.get(email.threadId)!.push(email);
-    }
-    for (const threadEmails of byThread.values()) {
-      this.emailThreadStore.upsert(threadEmails[0]!.threadId, formatEmailsForAgent(threadEmails));
+      if (!threadMeta.has(email.threadId)) {
+        threadMeta.set(email.threadId, {
+          threadId: email.threadId,
+          inReplyTo: email.rfcMessageId.replace(/^<|>$/g, ''),
+          subject: email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`,
+          replyTo: email.from,
+        });
+      } else {
+        // Update to latest message in thread
+        const meta = threadMeta.get(email.threadId)!;
+        meta.inReplyTo = email.rfcMessageId.replace(/^<|>$/g, '');
+        meta.replyTo = email.from;
+      }
     }
     const append = formatEmailsForAgent(emails);
     this.backgroundQueue.enqueue(async () => {
-      await this.handleSystemMessage('check_email_trigger', append);
+      await this.handleSystemMessage('check_email_trigger', append, { emailThreadMeta: [...threadMeta.values()] });
       if (onComplete) await onComplete();
     });
   }
@@ -210,26 +211,15 @@ export class BaseAgent implements Agent {
     });
   }
 
-  checkDormantThreads(): void {
-    const dormant = this.emailThreadStore.getDormant(2 * 60 * 60 * 1000);
-    for (const { threadId, content } of dormant) {
-      console.log(`[${this.def.name}] thread ${threadId} dormant — enqueueing post-email`);
-      this.emailThreadStore.remove(threadId);
-      this.backgroundQueue.enqueue(() =>
-        this.handleSystemMessage('post-email', content),
-      );
-    }
-  }
-
-  // ── Private ────────────────────────────────────────────────────────────────
+// ── Private ────────────────────────────────────────────────────────────────
 
   private async runInterAgentMessage(
     fromAgent: string,
     content: string,
     async: boolean,
+    onComplete?: (response: string) => void,
   ): Promise<string> {
-    const channelLog = this.loadChannelLog(fromAgent);
-    const system = this.buildSystemPrompt('inter-agent-message', { fromAgent, channelLog, async });
+    const system = this.buildSystemPrompt('inter-agent-message', { fromAgent, async });
     const messages: Record<string, any>[] = [
       { role: 'user', content: `[From: ${fromAgent}]\n\n${content}` },
     ];
@@ -258,7 +248,7 @@ export class BaseAgent implements Agent {
           result += event.message.content;
         }
       }
-      this.appendChannelLog(fromAgent, content, result);
+      onComplete?.(result);
       finishRunRecord(record, result);
     } catch (err: any) {
       const msg = err?.message ?? 'unknown error';
@@ -278,10 +268,10 @@ export class BaseAgent implements Agent {
     return result;
   }
 
-  private async handleSystemMessage(mode: string, userMsgAppend?: string): Promise<void> {
+  private async handleSystemMessage(mode: string, userMsgAppend?: string, opts: { emailThreadMeta?: { threadId: string; inReplyTo: string; subject: string; replyTo: string }[] } = {}): Promise<void> {
     if (this.def.disabledModes.has(mode)) return;
 
-    const system = this.buildSystemPrompt(mode, {});
+    const system = this.buildSystemPrompt(mode, opts);
     const userMsg = userMsgAppend?.trim() ? userMsgAppend : `[${mode}]`;
 
     const messages: Record<string, any>[] = [{ role: 'user', content: userMsg }];
@@ -293,8 +283,8 @@ export class BaseAgent implements Agent {
       ? {
           definitions: () => this.toolInvoker.definitions(),
           invoke: (name: string, input: Record<string, any>, agent: string) => {
-            if (name === 'message_agent' || name === 'message_agent_async') {
-              return { error: 'message_agent is not allowed in check_email_trigger — tag the agent in your email reply instead.' };
+            if (name === 'message_agent' || name === 'post_message') {
+              return { error: 'message_agent and post_message are not allowed in check_email_trigger — tag the agent in your email reply instead.' };
             }
             return this.toolInvoker.invoke(name, input, agent);
           },
@@ -340,12 +330,6 @@ export class BaseAgent implements Agent {
         for await (const event of this.eventBus.subscribe()) {
           const forMe = event.agent == null || event.agent === this.def.name;
           if (!forMe) continue;
-          if (
-            event.type === 'heartbeat_trigger' &&
-            !this.def.disabledModes.has('heartbeat_trigger')
-          ) {
-            this.backgroundQueue.enqueue(() => this.handleSystemMessage('heartbeat_trigger'));
-          }
         }
       } catch (err) {
         console.warn(`[${this.def.name}] event stream error:`, err);
@@ -357,7 +341,7 @@ export class BaseAgent implements Agent {
 
   private buildSystemPrompt(
     mode: string,
-    opts: { sessionId?: string; fromAgent?: string; channelLog?: string; async?: boolean },
+    opts: { sessionId?: string; fromAgent?: string; async?: boolean; emailThreadMeta?: { threadId: string; inReplyTo: string; subject: string; replyTo: string }[] },
   ): string {
     const parts: string[] = [LIFEOS_PROMPT];
 
@@ -369,26 +353,20 @@ export class BaseAgent implements Agent {
 
     if (mode === 'chat') {
       parts.push('\n\n' + CHAT_SCAFFOLD);
-      if (this.def.chatPrompt) {
-        const agentChat = loadPrompt(this.def.promptBase, this.def.chatPrompt);
-        if (agentChat.trim()) parts.push('\n\n' + agentChat);
-      }
       if (opts.sessionId) {
+        parts.push(`\n\n**Session ID:** ${opts.sessionId}`);
         const parentSummary = this.session.getParentSummary(opts.sessionId);
         if (parentSummary) {
           parts.push(`\n\n## Last Session — ${parentSummary.dateStr}\n\n${parentSummary.content}`);
         }
       }
     } else if (mode === 'inter-agent-message') {
-      const history = opts.channelLog?.trim()
-        ? truncateTail(opts.channelLog, 8_000)
-        : 'No prior exchanges.';
       parts.push('\n\n' + INTER_AGENT);
       if (opts.async) {
         parts.push(
           '\n\n> **Async message** — the sender has moved on and will not receive your text directly. ' +
-          'Your response is stored in the channel history. ' +
-          'Call `message_agent_async` if you need to send them an explicit reply.',
+          'Your response is written to the feed. ' +
+          'Call `post_message` if you need to send them an explicit reply.',
         );
       } else {
         parts.push(
@@ -397,15 +375,24 @@ export class BaseAgent implements Agent {
           'Do NOT call `message_agent` (sync) to reply — deadlock.',
         );
       }
-      parts.push(`\n\n## Prior Exchanges with ${opts.fromAgent}\n\n${history}`);
     } else {
       parts.push('\n\n' + this.modePrompt(mode));
-      if (mode === 'check_email_trigger' && this.config.mailboxEmail) {
-        parts.push(
-          `\n\n**Shared mailbox:** \`${this.config.mailboxEmail}\` — all agents share this address. ` +
-          `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
-          `— ${this.def.title} (@${this.def.name})`,
-        );
+      if (mode === 'check_email_trigger') {
+        if (opts.emailThreadMeta?.length) {
+          const threadLines = opts.emailThreadMeta.map((t) =>
+            `- **thread_id:** \`${t.threadId}\` | **in_reply_to:** \`${t.inReplyTo}\` | **subject:** ${t.subject} | **reply_to:** ${t.replyTo}`,
+          );
+          parts.push(
+            `\n\n**You are processing ${opts.emailThreadMeta.length === 1 ? 'this thread' : 'these threads'} — use the fields below when calling \`send_email\` or \`send_file_email\` to reply, and pass all thread_ids to \`email_thread_ids\` in \`log_entry\`:**\n\n${threadLines.join('\n')}`,
+          );
+        }
+        if (this.config.mailboxEmail) {
+          parts.push(
+            `\n\n**Shared mailbox:** \`${this.config.mailboxEmail}\` — all agents share this address. ` +
+            `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
+            `— ${this.def.title} (@${this.def.name})`,
+          );
+        }
       }
     }
 
@@ -440,10 +427,7 @@ export class BaseAgent implements Agent {
   }
 
   private modePrompt(mode: string): string {
-    if (mode === 'post-session') return POST_SESSION;
-    if (mode === 'heartbeat_trigger') return HEARTBEAT;
     if (mode === 'check_email_trigger') return CHECK_EMAIL;
-    if (mode === 'post-email') return POST_EMAIL;
     if (mode === 'task_trigger') return TASK_TRIGGER;
     throw new Error(`Unknown system mode: ${mode}`);
   }
@@ -475,21 +459,6 @@ export class BaseAgent implements Agent {
     return Object.keys(map).length ? map : null;
   }
 
-  // ── Channel log stubs (filled in by platform layer via ChannelLog) ─────────
-  // Base implementation is no-op; AgentFleet wires the real ChannelLog
-  protected channelLogImpl: import('./types.js').ChannelLog | null = null;
-
-  setChannelLog(cl: import('./types.js').ChannelLog): void {
-    this.channelLogImpl = cl;
-  }
-
-  private loadChannelLog(fromAgent: string): string {
-    return this.channelLogImpl?.loadFull(this.def.name, fromAgent) ?? '';
-  }
-
-  private appendChannelLog(fromAgent: string, inbound: string, response: string): void {
-    this.channelLogImpl?.append(fromAgent, this.def.name, inbound, response);
-  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -541,7 +510,6 @@ function formatEmailsForAgent(emails: EmailMessage[]): string {
     lines.push(`From: ${last.from}`);
     if (last.to) lines.push(`To: ${last.to}`);
     if (last.cc) lines.push(`CC: ${last.cc}`);
-    lines.push(`Thread ID: ${first.threadId}`);
     lines.push(`Message-ID: ${last.rfcMessageId.replace(/^<|>$/g, '')}`);
     if (first.thread.length > 0) {
       lines.push('\n**Thread history:**');
