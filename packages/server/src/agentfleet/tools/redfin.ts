@@ -149,7 +149,7 @@ function parseHeight(tags: Record<string, string>): { heightM: number; estimated
   }
   const typeH = BUILDING_TYPE_HEIGHTS[tags['building'] ?? ''];
   if (typeH != null) return { heightM: typeH, estimated: true };
-  return { heightM: FLOOR_HEIGHT_M * 2, estimated: true }; // fallback: 2 floors
+  return { heightM: FLOOR_HEIGHT_M * 5, estimated: true }; // fallback: 5 floors
 }
 
 interface NearestBuilding { distM: number; heightM: number; heightEstimated: boolean }
@@ -353,51 +353,55 @@ export class Redfin {
 
     const { html, finalUrl } = result;
 
-    // Try __NEXT_DATA__
-    const nextData = extractNextData(html);
-    if (nextData) {
-      try {
-        const props = nextData?.props?.pageProps;
-        const homes = props?.initialRedfin?.searchList?.homes ??
-                      props?.homes ??
-                      props?.initialRedfin?.mapState?.homes;
-        if (Array.isArray(homes) && homes.length > 0) {
-          const properties = homes.map((h: any) => {
-            const info = h?.homeData?.homeInfo ?? h?.homeInfo ?? h;
-            return {
-              address: [info?.streetLine, info?.city, info?.state, info?.zip].filter(Boolean).join(', '),
-              price: info?.price,
-              beds: info?.beds,
-              baths: info?.baths,
-              sqft: info?.sqFt,
-              url: info?.url ? `https://www.redfin.com${info.url}` : undefined,
-            };
-          });
-          return { url: finalUrl, count: properties.length, properties };
-        }
-      } catch {}
-    }
-
-    // DOM fallback
+    // Parse server-rendered home cards
+    // Cards: [data-rf-test-name="basicNode-homeCard"] with aria-label="Property at {addr}, {n} beds, {n} baths"
     const $ = cheerio.load(html);
     const properties: any[] = [];
-    $('.HomeCardContainer, [data-rf-test-name="mapHomeCard"]').each((_i, el) => {
+
+    $('[data-rf-test-name="basicNode-homeCard"]').each((_i, el) => {
       const card = $(el);
-      properties.push({
-        address: card.find('.homeAddressV2, .home-address').text().trim(),
-        price: card.find('.price, .homePriceV2').first().text().trim(),
-        beds: card.find('.beds').first().text().trim(),
-        baths: card.find('.baths').first().text().trim(),
-        sqft: card.find('.sqft').first().text().trim(),
-        url: (() => {
-          const href = card.find('a').first().attr('href');
-          return href ? `https://www.redfin.com${href}` : undefined;
-        })(),
-      });
+      const label = card.attr('aria-label') ?? '';
+      // aria-label: "Property at 123 Main St, City, ST ZIP, 2 beds, 2 baths"
+      const labelMatch = label.match(/^Property at (.+),\s*(\d+)\s*beds?,\s*([\d.]+)\s*baths?$/i);
+      const address = labelMatch?.[1] ?? card.attr('title') ?? '';
+      const beds = labelMatch?.[2] ?? '';
+      const baths = labelMatch?.[3] ?? '';
+
+      const price = card.find('.bp-Homecard__Price').first().text().trim();
+
+      const cardText = card.text();
+      const sqftMatch = cardText.match(/([\d,]+)\s*sq\s*ft/i);
+      const sqft = sqftMatch?.[1] ?? '';
+
+      // URL is in a sibling/parent anchor or in href within card
+      let url: string | undefined;
+      const href = card.find('a[href*="/home/"]').first().attr('href') ??
+                   card.closest('a').attr('href');
+      if (href) {
+        url = href.startsWith('http') ? href : `https://www.redfin.com${href}`;
+      }
+
+      if (address) properties.push({ address, price, beds, baths, sqft, url });
     });
 
+    // If no cards found via new selector, try legacy selectors
     if (properties.length === 0) {
-      return { error: 'Could not extract search results (page may require JS rendering). Try a zipcode URL: redfin.com/zipcode/{zip}', url: finalUrl };
+      $('.HomeCardContainer, [data-rf-test-name="mapHomeCard"]').each((_i, el) => {
+        const card = $(el);
+        const href = card.find('a').first().attr('href');
+        properties.push({
+          address: card.find('.homeAddressV2, .home-address').text().trim(),
+          price: card.find('.price, .homePriceV2').first().text().trim(),
+          beds: card.find('.beds').first().text().trim(),
+          baths: card.find('.baths').first().text().trim(),
+          sqft: card.find('.sqft').first().text().trim(),
+          url: href ? `https://www.redfin.com${href}` : undefined,
+        });
+      });
+    }
+
+    if (properties.length === 0) {
+      return { error: 'Could not extract search results. Try a zipcode URL: redfin.com/zipcode/{zip}', url: finalUrl };
     }
 
     return { url: finalUrl, count: properties.length, properties };
@@ -426,8 +430,8 @@ export class Redfin {
       coordinates: { lat: Math.round(lat * 100000) / 100000, lng: Math.round(lng * 100000) / 100000 },
     };
 
-    // 2. Overpass: buildings (80m) + major roads (80m)
-    const areaQuery = `[out:json];\n(\n  way(around:80,${lat.toFixed(6)},${lng.toFixed(6)})[highway][highway!~"footway|path|cycleway|service|steps|pedestrian"];\n  way["building"](around:80,${lat.toFixed(6)},${lng.toFixed(6)});\n);\nout geom tags;`;
+    // 2. Overpass: buildings (120m) + major roads (80m)
+    const areaQuery = `[out:json];\n(\n  way(around:80,${lat.toFixed(6)},${lng.toFixed(6)})[highway][highway!~"footway|path|cycleway|service|steps|pedestrian"];\n  way["building"](around:120,${lat.toFixed(6)},${lng.toFixed(6)});\n);\nout geom tags;`;
     const areaData = await overpassPost(areaQuery);
 
     const allWays: any[] = areaData?.elements ?? [];
@@ -512,10 +516,8 @@ export class Redfin {
         info.open_distance_m = Math.round(nearest.distM);
         const effectiveDist = Math.max(nearest.distM, BLOCKS_LIGHT_DIST_M);
         info.blocks_light = (nearest.heightM / effectiveDist) > BLOCKS_LIGHT_TAN;
-        if (info.blocks_light) {
-          info.obstruction_height_m = Math.round(nearest.heightM * 10) / 10;
-          info.height_estimated = nearest.heightEstimated;
-        }
+        info.obstruction_height_m = Math.round(nearest.heightM * 10) / 10;
+        info.height_estimated = nearest.heightEstimated;
       } else {
         info.open = true;
       }
@@ -637,7 +639,7 @@ export class Redfin {
         open: info.open ?? false,
         blocks_light: info.blocks_light ?? false,
         ...(info.open_distance_m != null ? { nearest_obstruction_m: info.open_distance_m } : {}),
-        ...(info.blocks_light ? { obstruction_height_m: info.obstruction_height_m, height_estimated: info.height_estimated } : {}),
+        ...(info.open_distance_m != null ? { obstruction_height_m: info.obstruction_height_m, height_estimated: info.height_estimated } : {}),
       }])
     );
 
