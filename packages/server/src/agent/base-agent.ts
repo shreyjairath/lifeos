@@ -105,7 +105,7 @@ export class BaseAgent implements Agent {
     prepareMessages(messages);
 
     const model = this.effectiveChatModel(modelOverride);
-    const record = createRunRecord(this.def.name, 'chat', system, userMessage, model);
+    const record = createRunRecord(this.def.name, 'chat', system, userMessage, model, sessionId);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode: 'chat' });
 
     const exec = new Executor(this.config.apiKey, this.confirmations);

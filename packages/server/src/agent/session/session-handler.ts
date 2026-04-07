@@ -190,7 +190,6 @@ export class SessionHandler {
       const meta = this.store.loadMeta(sessionId);
       if (!meta || Object.keys(meta).length === 0) continue;
       if (meta.closed) continue;
-      if (this.store.readSummary(sessionId)) continue; // closed/rotated session
       result.push({
         id: sessionId,
         title: meta.title ?? sessionId,

@@ -20,6 +20,7 @@ export interface RunRecord {
   agent: string;
   mode: string;
   model: string;
+  sessionId?: string;
   startedAt: number;
   endedAt?: number;
   durationMs?: number;
@@ -33,12 +34,13 @@ export interface RunRecord {
   result: string;
 }
 
-export function createRunRecord(agent: string, mode: string, systemPrompt: string, userMessage: string, model: string): RunRecord {
+export function createRunRecord(agent: string, mode: string, systemPrompt: string, userMessage: string, model: string, sessionId?: string): RunRecord {
   return {
     id: randomUUID(),
     agent,
     mode,
     model,
+    sessionId,
     startedAt: Date.now(),
     inputTokens: 0,
     outputTokens: 0,
