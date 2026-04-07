@@ -267,6 +267,47 @@ if not found:
     print('  (no thrashing detected)')
 " 2>/dev/null || echo "(error)"`
 
+**9. Log entry trail coverage (last 48h)**
+!`python3 -c "
+import json, glob, os, time
+now = time.time()
+cutoff = now - 48 * 3600
+agents_dir = '.user-data/agents'
+agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
+
+for agent in agents:
+    runs_dir = f'{agents_dir}/{agent}/runs'
+    if not os.path.isdir(runs_dir): continue
+    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)
+
+    chat_logged = chat_total = 0
+    bg_logged = bg_total = 0
+
+    for f in files:
+        ts = int(os.path.basename(f).split('_')[0]) / 1000
+        if ts < cutoff: break
+        try:
+            r = json.load(open(f))
+        except: continue
+        mode = r.get('mode', '')
+        turns = r.get('turns', [])
+        tool_calls = [tc.get('name') for t in turns if t.get('role') == 'assistant' for tc in (t.get('tool_calls') or [])]
+        logged = 'log_entry' in tool_calls
+        if mode == 'chat':
+            chat_total += 1
+            if logged: chat_logged += 1
+        else:
+            bg_total += 1
+            if logged: bg_logged += 1
+
+    if chat_total == 0 and bg_total == 0: continue
+    chat_pct = int(100 * chat_logged / chat_total) if chat_total else 0
+    bg_pct = int(100 * bg_logged / bg_total) if bg_total else 0
+    chat_flag = '  *** LOW' if chat_total >= 3 and chat_pct < 30 else ''
+    bg_flag = '  *** LOW' if bg_total >= 3 and bg_pct < 70 else ''
+    print(f'  {agent:<28} chat={chat_logged}/{chat_total} ({chat_pct}%){chat_flag}   bg={bg_logged}/{bg_total} ({bg_pct}%){bg_flag}')
+" 2>/dev/null || echo "(error)"`
+
 ---
 
 ## Analysis
@@ -293,6 +334,9 @@ Is `reconcile_workspace` running on the expected 4h cadence for each agent? Are 
 
 ### Information Flow
 Are feed cursors advancing for all agents? Any agents significantly behind on the feed (reading <50% of entries)? Are broadcasts being picked up? Identify agents that appear to be ignoring their inbox or whose cursors haven't moved.
+
+### Log Entry Trail
+For non-chat runs: are agents consistently calling `log_entry`? Flag any agent below 70% coverage — background runs should always leave a trail. For chat runs: flag agents below 30% — the bar is lower since agents should skip if nothing substantive surfaced, but zero over many sessions is a red flag.
 
 ### Agent Feedback
 Summarize what agents themselves have flagged via `system_feedback`. Group by severity and category. Highlight anything actionable.
