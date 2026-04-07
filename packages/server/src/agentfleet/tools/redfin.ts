@@ -239,8 +239,12 @@ function parseUnitToken(token: string): { floor: number | null; facing: string |
     const dir = DIR_ALIASES[m1[2]!.toLowerCase()] ?? null;
     return { floor, facing: dir };
   }
-  // Pure digits
-  if (/^\d+$/.test(t)) return { floor: parseInt(t), facing: null };
+  // Pure digits — 4-digit apartment codes (e.g. 2120) encode floor as first 2 digits
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t);
+    if (t.length === 4 && n >= 1000) return { floor: Math.floor(n / 100), facing: null };
+    return { floor: n, facing: null };
+  }
   // Pure letters → direction only
   const dir = DIR_ALIASES[t.toLowerCase()] ?? null;
   return { floor: null, facing: dir };
