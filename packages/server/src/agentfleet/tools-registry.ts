@@ -10,6 +10,7 @@ import { ScheduledTasks } from './tools/scheduled-tasks.js';
 import { SessionToolsImpl } from './tools/session-tools.js';
 import { AgentTopics } from './tools/agent-topics.js';
 import { EmailThreadStore } from './tools/email-thread-store.js';
+import { Redfin } from './tools/redfin.js';
 
 // These are imported lazily to break circular deps
 type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
@@ -32,6 +33,7 @@ export class ToolsRegistry {
   private readonly sessionTools = new SessionToolsImpl();
   readonly topics: AgentTopics = new AgentTopics();
   private readonly sharedBash = new Bash(SHARED_DIR, false);
+  private readonly redfin = new Redfin();
   private gmailClient: GmailClient | null = null;
 
   setGmailClient(client: GmailClient): void {
@@ -210,6 +212,12 @@ export class ToolsRegistry {
         return this.webSearch.search(input.query as string);
       case 'browse_page':
         return this.browse.fetch(input.url as string);
+      case 'parse_redfin_listing':
+        return this.redfin.parseListing(input.url as string);
+      case 'parse_redfin_search':
+        return this.redfin.parseSearch(input.url as string);
+      case 'property_report':
+        return this.redfin.propertyReport(input.address as string);
       case 'show_image':
         return { url: input.url, caption: input.caption ?? '' };
       case 'create_task':

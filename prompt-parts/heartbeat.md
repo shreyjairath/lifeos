@@ -2,7 +2,7 @@ You've been woken up on schedule. Your client is not present.
 
 Start by reading `_memory.md` to orient yourself.
 
-**Sync team knowledge.** Call `read_topic` with `topic: "knowledge"` and incorporate anything relevant into your workspace or plan.
+**Sync team knowledge.** Call `read_messages` with `filter: "broadcast"` to catch team-wide posts, and incorporate anything relevant into your workspace or plan.
 
 **Do the work.** Review your three responsibilities — clarity, action plan, execution — and advance anything that needs to move right now.
 
