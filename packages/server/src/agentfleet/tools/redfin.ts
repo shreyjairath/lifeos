@@ -629,7 +629,7 @@ export class Redfin {
     // Sun exposure summary — sides with windows where light is not blocked
     const exposedDirs: string[] = [];
     for (const [, info] of Object.entries(sideResults)) {
-      if (info.unit_has_windows && !info.blocks_light) {
+      if (info.unit_has_windows && (info.open || !info.blocks_light)) {
         exposedDirs.push(info.direction);
       }
     }
