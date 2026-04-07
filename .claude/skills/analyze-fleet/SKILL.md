@@ -1,5 +1,5 @@
 ---
-description: Analyze recent agent runs across the fleet — tool errors, missed tasks, cadence issues, token bloat, thrashing
+description: Analyze recent agent runs across the fleet — tool errors, missed tasks, cadence issues, token bloat, thrashing, workspace reconciliation health, information flow
 ---
 
 Analyze the agent fleet for health issues. Gather the data below, then produce a structured report.
@@ -145,6 +145,98 @@ else:
         print()
 " 2>/dev/null || echo "(error)"`
 
+**7. Workspace reconciliation health**
+!`python3 -c "
+import json, glob, os, time, datetime
+now = time.time()
+agents_dir = '.user-data/agents'
+agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
+
+print('--- RECONCILE_WORKSPACE CADENCE ---')
+try:
+    tasks = json.load(open('.user-data/tasks.json'))
+except:
+    tasks = []
+
+for agent in agents:
+    agent_tasks = [t for t in tasks if t.get('assignee') == agent and 'reconcile_workspace' in t.get('name','')]
+    for t in agent_tasks:
+        last = t.get('last_run')
+        due = t.get('due_at', 0)
+        cadence = t.get('cadence_hours', '?')
+        last_str = datetime.datetime.fromtimestamp(last).strftime('%b %d %H:%M') if last else 'NEVER'
+        overdue_by = max(0, now - due) / 3600 if due else 0
+        flag = f'  *** OVERDUE by {overdue_by:.1f}h' if overdue_by > 1 else ''
+        print(f'  {agent:<28} last={last_str}  cadence={cadence}h{flag}')
+
+print()
+print('--- WORKSPACE FILE FRESHNESS ---')
+for agent in agents:
+    ws = f'{agents_dir}/{agent}/workspace'
+    if not os.path.isdir(ws): continue
+    files = glob.glob(f'{ws}/**/*', recursive=True) + glob.glob(f'{ws}/*')
+    files = [f for f in files if os.path.isfile(f)]
+    if not files:
+        print(f'  {agent:<28} workspace empty')
+        continue
+    newest = max(os.path.getmtime(f) for f in files)
+    age_h = (now - newest) / 3600
+    flag = '  *** STALE (>12h)' if age_h > 12 else ''
+    newest_str = datetime.datetime.fromtimestamp(newest).strftime('%b %d %H:%M')
+    print(f'  {agent:<28} newest file: {newest_str}  ({age_h:.1f}h ago){flag}')
+" 2>/dev/null || echo "(error)"`
+
+**8. Information flow (feed cursors and inbox health)**
+!`python3 -c "
+import os, re, time, datetime, glob
+now = time.time()
+topics_dir = '.user-data/topics'
+cursors_dir = f'{topics_dir}/.cursors'
+
+feed_path = f'{topics_dir}/feed.md'
+feed_entries = 0
+if os.path.exists(feed_path):
+    content = open(feed_path).read()
+    feed_entries = len([e for e in content.split('\n---\n') if e.strip()])
+
+print(f'--- FEED TOPIC ---')
+print(f'  Total entries: {feed_entries}')
+
+print()
+print('--- CURSOR ADVANCEMENT PER AGENT ---')
+if not os.path.isdir(cursors_dir):
+    print('  (no cursors directory)')
+else:
+    for cursor_file in sorted(glob.glob(f'{cursors_dir}/*.json')):
+        try:
+            import json
+            c = json.load(open(cursor_file))
+            agent = os.path.basename(cursor_file).replace('.json','')
+            feed_pos = c.get('feed', 0)
+            broadcast_pos = c.get('broadcast', 0)
+            total = max(feed_pos, 1)
+            pct = int(100 * feed_pos / max(feed_entries, 1))
+            flag = '  *** BEHIND' if feed_entries > 0 and pct < 50 else ''
+            print(f'  {agent:<28} feed={feed_pos}/{feed_entries} ({pct}%)  broadcast={broadcast_pos}{flag}')
+        except Exception as e:
+            print(f'  {os.path.basename(cursor_file)}: error reading cursor')
+
+print()
+print('--- UNREAD BROADCASTS ---')
+broadcast_path = f'{topics_dir}/broadcast.md'
+if not os.path.exists(broadcast_path):
+    print('  (no broadcast topic)')
+else:
+    content = open(broadcast_path).read()
+    entries = [e for e in content.split('\n---\n') if e.strip()]
+    total_broadcasts = len(entries)
+    print(f'  Total broadcast entries: {total_broadcasts}')
+    # Last 3
+    for entry in entries[-3:]:
+        lines = entry.strip().split('\n')
+        print(f'    {lines[0][:80]}')
+" 2>/dev/null || echo "(error)"`
+
 **6. Thrashing detection (many turns, no apparent output)**
 !`python3 -c "
 import json, glob, os, time
@@ -195,6 +287,12 @@ Which background runs are spending disproportionate tokens? What's causing it �
 
 ### Thrashing
 Any agents looping through many turns without producing observable state change? What's the likely cause?
+
+### Workspace Reconciliation Health
+Is `reconcile_workspace` running on the expected 4h cadence for each agent? Are workspace files being updated (modification timestamps within the last 12h)? Flag any agents with stale workspaces or missed reconciliation runs.
+
+### Information Flow
+Are feed cursors advancing for all agents? Any agents significantly behind on the feed (reading <50% of entries)? Are broadcasts being picked up? Identify agents that appear to be ignoring their inbox or whose cursors haven't moved.
 
 ### Agent Feedback
 Summarize what agents themselves have flagged via `system_feedback`. Group by severity and category. Highlight anything actionable.
