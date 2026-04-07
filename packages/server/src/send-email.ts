@@ -72,6 +72,21 @@ const auth = new google.auth.OAuth2(creds.clientId, creds.clientSecret);
 auth.setCredentials({ refresh_token: creds.refreshToken });
 const gmail = google.gmail({ version: 'v1', auth });
 
+// Normalize soft-wrapped plain text: join single-newline lines into paragraphs
+function normalizeTextBody(text: string): string {
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const paragraphs = text.split(/\n{2,}/);
+  return paragraphs
+    .map((para) => {
+      const lines = para.split('\n');
+      if (lines.length <= 1 || lines.some((l) => /^(\s{2,}|[-*•]|\d+[.)]\s)/.test(l))) {
+        return para;
+      }
+      return lines.map((l) => l.trim()).filter(Boolean).join(' ');
+    })
+    .join('\n\n');
+}
+
 // --- Build MIME ---
 const encodedSubject = /[^\x00-\x7F]/.test(subject)
   ? `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
@@ -81,7 +96,7 @@ let mime: string;
 if (html) {
   mime = `To: ${to}\r\nSubject: ${encodedSubject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
 } else {
-  mime = `To: ${to}\r\nSubject: ${encodedSubject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body ?? ''}`;
+  mime = `To: ${to}\r\nSubject: ${encodedSubject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(body ?? '')}`;
 }
 
 const raw = Buffer.from(mime).toString('base64url');

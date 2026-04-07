@@ -154,7 +154,7 @@ export class GmailClient {
       const boundary = randomUUID().replace(/-/g, '');
       const bodyPart = html
         ? `--${boundary}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`
-        : `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body ?? ''}`;
+        : `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(body ?? '')}`;
       const attachmentParts = attachments.map((a) =>
         `--${boundary}\r\nContent-Type: ${a.mimeType}\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${a.filename}"\r\n\r\n${a.data.toString('base64')}`,
       );
@@ -162,7 +162,7 @@ export class GmailClient {
     } else if (html) {
       mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/html; charset=utf-8\r\n\r\n${html}`;
     } else {
-      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/plain; charset=utf-8\r\n\r\n${body ?? ''}`;
+      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(body ?? '')}`;
     }
 
     const raw = Buffer.from(mime).toString('base64url');
@@ -374,6 +374,26 @@ function parseThreadMessage(msg: any): ThreadMessage | null {
   if (!from) return null;
   const body = extractBody(msg.payload);
   return { from, date, body };
+}
+
+/**
+ * Normalize a plain-text email body so soft-wrapped lines (single \n)
+ * are joined into continuous paragraphs. Double newlines (paragraph breaks)
+ * and list items are preserved.
+ */
+function normalizeTextBody(text: string): string {
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const paragraphs = text.split(/\n{2,}/);
+  return paragraphs
+    .map((para) => {
+      const lines = para.split('\n');
+      // Preserve list items, code-indented lines, or single-line paragraphs
+      if (lines.length <= 1 || lines.some((l) => /^(\s{2,}|[-*•]|\d+[.)]\s)/.test(l))) {
+        return para;
+      }
+      return lines.map((l) => l.trim()).filter(Boolean).join(' ');
+    })
+    .join('\n\n');
 }
 
 function htmlToText(html: string): string {
