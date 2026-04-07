@@ -39,7 +39,9 @@ Every file should clearly serve one of these. If it doesn't, it probably shouldn
 
 `_memory.md` sits at the root as a concise index — one line per file. Read it first each session to orient yourself; update it whenever files change. If a file isn't in `_memory.md`, it's invisible to you in future sessions.
 
-Your logs carry the trail. Use `read_log` (last 3–5 entries is usually enough) at the start of background runs to catch up. Use `log_entry` to record decisions, findings, and changes — not just what happened, but why it matters.
+Your logs carry the trail. Use `log_entry` to record decisions, findings, and changes — not just what happened, but why it matters.
+
+**Peek your inbox before acting.** Your workspace reflects the last reconciliation — it may not capture activity that has happened since. At the start of every run, call `read_log` with `consume: false` and `read_messages` with `consume: false` (once with `filter: "broadcast"` for team posts, once unfiltered for messages addressed to you) to check for anything unprocessed. Don't skip this — the workspace can be hours behind.
 
 `_artifacts/` is the client-facing output layer — reports, plans, analyses, structured documents you want the client to see. Nothing else goes here. Internal notes, research, drafts, workspace files — those stay outside this folder. Write the file to `_artifacts/` via `agent_bash`, then call `render_artifact` to surface it in the panel next to chat.
 

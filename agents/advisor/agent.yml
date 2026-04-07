@@ -27,12 +27,14 @@ tools:
     - list_topics
     - list_agents
     - list_tools
+    - system_feedback
     - read_agent_definition
     - update_agent
     - create_agent
     # research
     - web_search
     - browse_page
+    - browse_page_js
     - show_image
     - render_artifact
     # session history
@@ -52,7 +54,7 @@ recurring-tasks:
     cadence-hours: 6
   - name: reconcile_workspace
     prompt: reconcile-workspace.md
-    cadence-hours: 2
+    cadence-hours: 4
   - name: self_eval
     prompt: self-eval.md
     cadence-hours: 24
@@ -61,4 +63,7 @@ recurring-tasks:
     cadence-hours: 48
   - name: workspace_reorg
     prompt: workspace-reorg.md
+    cadence-hours: 168
+  - name: system_feedback
+    prompt: system-feedback.md
     cadence-hours: 168

@@ -16,6 +16,7 @@ import { Redfin } from './tools/redfin.js';
 type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
 type WebSearchImpl = import('./tools/web-search.js').WebSearch;
 type BrowseImpl = import('./tools/browse.js').Browse;
+import { BrowseJs } from './tools/browse-js.js';
 type NotificationsImpl = import('./tools/notifications.js').Notifications;
 
 const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
@@ -34,6 +35,7 @@ export class ToolsRegistry {
   readonly topics: AgentTopics = new AgentTopics();
   private readonly sharedBash = new Bash(SHARED_DIR, false);
   private readonly redfin = new Redfin();
+  private readonly browseJs = new BrowseJs();
   private gmailClient: GmailClient | null = null;
 
   setGmailClient(client: GmailClient): void {
@@ -212,10 +214,17 @@ export class ToolsRegistry {
         return this.webSearch.search(input.query as string);
       case 'browse_page':
         return this.browse.fetch(input.url as string);
+      case 'browse_page_js':
+        return this.browseJs.fetch(input.url as string);
+      case 'system_feedback': {
+        const { category, subject, detail, severity = 'medium' } = input as any;
+        const message = `**[${String(severity).toUpperCase()}] ${subject}**\n- Category: ${category}\n\n${detail}`;
+        return this.topics.writeTopic(agentName, 'system_feedback', message);
+      }
       case 'parse_redfin_listing':
         return this.redfin.parseListing(input.url as string);
       case 'parse_redfin_search':
-        return this.redfin.parseSearch(input.url as string);
+        return this.redfin.parseSearch(input as any);
       case 'property_report':
         return this.redfin.propertyReport(input.address as string);
       case 'show_image':
@@ -439,15 +448,27 @@ const TOOLS: ToolDefinition[] = [
     'Use to read a specific URL in full. For discovery, use web_search first.',
     props(prop('url', 'string', 'Full URL to fetch')), ['url']),
 
+  tool('browse_page_js',
+    'Fetch a web page using a real browser (JS rendered). Use when browse_page returns empty or incomplete content because the page relies on JavaScript to render. Slower than browse_page — only use when needed.',
+    props(prop('url', 'string', 'Full URL to fetch')), ['url']),
+
   tool('parse_redfin_listing',
     'Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.',
     props(prop('url', 'string', 'Redfin listing URL')), ['url']),
 
   tool('parse_redfin_search',
-    'Parse a Redfin search results page and return all listed properties with price, beds, baths, sq ft, and URL. ' +
-    'IMPORTANT: Use zipcode URLs (e.g. redfin.com/zipcode/60614/filter/...) — neighborhood URLs (/neighborhood/...) do not work. ' +
-    'Filters can be appended: /filter/property-type=condo,min-beds=2,max-price=700k',
-    props(prop('url', 'string', 'Redfin zipcode or city search URL. Do NOT use /neighborhood/ URLs.')), ['url']),
+    'Search Redfin listings by location and filters. Returns properties with price, beds, baths, sq ft, and listing URL.',
+    props(
+      prop('zipcode', 'string', 'ZIP code to search (e.g. "60614")'),
+      prop('listing_type', 'string', 'Type of listing: "for_sale" (default) or "for_rent"'),
+      prop('min_beds', 'number', 'Minimum bedrooms'),
+      prop('max_beds', 'number', 'Maximum bedrooms'),
+      prop('min_price', 'number', 'Minimum price (dollars for sale, $/mo for rent)'),
+      prop('max_price', 'number', 'Maximum price (dollars for sale, $/mo for rent)'),
+      prop('property_type', 'string', 'Property type: "house", "condo", "townhouse", "multi-family" (comma-separate multiple)'),
+      prop('min_sqft', 'number', 'Minimum square footage'),
+      prop('max_sqft', 'number', 'Maximum square footage'),
+    ), ['zipcode']),
 
   tool('property_report',
     'Generate a comprehensive property report for any address. Includes building obstruction analysis, sun exposure, corner unit detection, floor number, street noise, neighborhood walkability, transit access, parks, flood zone, and elevation.',
@@ -599,6 +620,17 @@ const TOOLS: ToolDefinition[] = [
   tool('list_tools',
     'List all tools available in the system with their names and descriptions.',
     props(), []),
+
+  tool('system_feedback',
+    'Submit feedback about the system — tools, triggers, prompts, or missing capabilities. ' +
+    'Use when you notice something broken, unhelpful, or missing that is blocking your work.',
+    props(
+      prop('category', 'string', 'Area of feedback: "tool", "trigger", "prompt", "capability", or "other"'),
+      prop('subject',  'string', 'Short title describing the issue or suggestion'),
+      prop('detail',   'string', 'Full description — what happened, what you expected, and what the impact is'),
+      prop('severity', 'string', 'Impact level: "low", "medium" (default), or "high"'),
+    ),
+    ['category', 'subject', 'detail']),
 
   tool('render_artifact',
     'Display a file in a persistent panel next to the chat. ' +

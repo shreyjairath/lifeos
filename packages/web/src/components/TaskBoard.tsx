@@ -21,7 +21,7 @@ function getStatus(task: Task): string {
   return task.status ?? 'pending';
 }
 
-export default function TaskBoard() {
+export default function TaskBoard({ selectedAgent }: { selectedAgent: string | null }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,10 +40,14 @@ export default function TaskBoard() {
     );
   }
 
-  if (tasks.length === 0) {
+  const visible = selectedAgent
+    ? tasks.filter(t => t.assignee === selectedAgent || t.created_by === selectedAgent)
+    : tasks;
+
+  if (visible.length === 0) {
     return (
-      <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: 8 }}>
-        No scheduled tasks.
+      <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: 20 }}>
+        No tasks.
       </div>
     );
   }
@@ -62,7 +66,7 @@ export default function TaskBoard() {
           </tr>
         </thead>
         <tbody>
-          {tasks.map(task => {
+          {visible.map(task => {
             const status = getStatus(task);
             return (
               <tr key={task.id}>

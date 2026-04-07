@@ -66,7 +66,7 @@ export interface FeedEntry {
   timestamp: string;
   from: string;
   to: string[];       // empty = broadcast
-  threadId: string;
+  threadId: string | null;
   content: string;
 }
 

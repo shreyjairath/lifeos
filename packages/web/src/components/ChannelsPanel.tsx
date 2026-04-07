@@ -1,161 +1,110 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchFeed } from '@/lib/api';
-import type { FeedEntry, FeedThread } from '@/lib/types';
-
-function groupByThread(entries: FeedEntry[]): FeedThread[] {
-  const map = new Map<string, FeedThread>();
-  // entries are newest-first from the API; iterate in reverse to build threads chronologically
-  for (const entry of [...entries].reverse()) {
-    if (!map.has(entry.threadId)) {
-      map.set(entry.threadId, {
-        threadId: entry.threadId,
-        participants: [],
-        lastActivity: entry.timestamp,
-        entries: [],
-        preview: '',
-      });
-    }
-    const thread = map.get(entry.threadId)!;
-    thread.entries.push(entry);
-    thread.lastActivity = entry.timestamp; // last entry is most recent
-    if (!thread.participants.includes(entry.from)) thread.participants.push(entry.from);
-    thread.preview = entry.content.slice(0, 100);
-  }
-  // Return threads sorted newest-first
-  return [...map.values()].sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
-}
+import remarkBreaks from 'remark-breaks';
+import { useEffect, useState } from 'react';
+import { fetchTopicEntries } from '@/lib/api';
+import type { FeedEntry } from '@/lib/types';
 
 function formatRelativeTime(ts: string): string {
   try {
-    const date = new Date(ts);
-    const diff = Date.now() - date.getTime();
+    const diff = Date.now() - new Date(ts).getTime();
     if (isNaN(diff)) return ts;
     if (diff < 60_000) return 'just now';
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
     return `${Math.floor(diff / 86_400_000)}d ago`;
-  } catch {
-    return ts;
-  }
+  } catch { return ts; }
 }
 
-function agentLabel(name: string): string {
-  return name.replace(/_/g, ' ');
+function formatAbsoluteTime(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return ts; }
 }
 
-function ChatBubble({ content, side, agent }: { content: string; side: 'left' | 'right'; agent: string }) {
+function agentColor(name: string): string {
+  const colors = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffff;
+  return colors[hash % colors.length]!;
+}
+
+function AgentPill({ name }: { name: string }) {
+  const color = agentColor(name);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: side === 'left' ? 'flex-start' : 'flex-end' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3, paddingLeft: side === 'left' ? 4 : 0, paddingRight: side === 'right' ? 4 : 0 }}>
-        {agentLabel(agent)}
-      </div>
-      <div style={{
-        maxWidth: '80%',
-        padding: '8px 12px',
-        borderRadius: side === 'left' ? '4px 12px 12px 12px' : '12px 4px 12px 12px',
-        background: side === 'left' ? 'var(--surface)' : 'var(--accent-bg, #1a2f4a)',
-        border: `1px solid ${side === 'left' ? 'var(--border)' : 'var(--accent, #2d5a8e)'}`,
-        fontSize: 13,
-        lineHeight: 1.5,
-        color: 'var(--text)',
-      }}>
-        <div className="markdown-content" style={{ fontSize: 13 }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-        </div>
-      </div>
-    </div>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      padding: '1px 7px', borderRadius: 10,
+      background: `${color}18`, border: `1px solid ${color}40`,
+      fontSize: 11, fontWeight: 500, color,
+    }}>
+      {name.replace(/_/g, ' ')}
+    </span>
   );
 }
 
-function ThreadView({ thread }: { thread: FeedThread }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const firstAgent = thread.participants[0] ?? '';
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
-  }, [thread.threadId]);
+function FeedEntryCard({ entry, prevEntry }: { entry: FeedEntry; prevEntry?: FeedEntry }) {
+  const day = entry.timestamp ? new Date(entry.timestamp).toDateString() : null;
+  const prevDay = prevEntry?.timestamp ? new Date(prevEntry.timestamp).toDateString() : null;
+  const showDivider = day && prevDay && day !== prevDay;
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {thread.entries.map((entry, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>
+    <>
+      {showDivider && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            {new Date(entry.timestamp).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
+        </div>
+      )}
+      <div className="topic-entry">
+        <div className="topic-entry-header">
+          <AgentPill name={entry.from} />
+          {entry.to && entry.to.length > 0 && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              → {entry.to.map((t) => <AgentPill key={t} name={t} />)}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }} title={formatAbsoluteTime(entry.timestamp)}>
             {formatRelativeTime(entry.timestamp)}
-          </div>
-          <ChatBubble
-            content={entry.content}
-            side={entry.from === firstAgent ? 'left' : 'right'}
-            agent={entry.from}
-          />
+          </span>
         </div>
-      ))}
-      <div ref={bottomRef} />
-    </div>
+        <div className="topic-entry-body markdown-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{entry.content}</ReactMarkdown>
+        </div>
+      </div>
+    </>
   );
 }
 
-export default function ChannelsPanel() {
-  const [threads, setThreads] = useState<FeedThread[]>([]);
-  const [selected, setSelected] = useState<FeedThread | null>(null);
+export default function ChannelsPanel({ topic }: { topic: string }) {
+  const [entries, setEntries] = useState<FeedEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchFeed()
-      .then((entries) => {
-        const grouped = groupByThread(entries);
-        setThreads(grouped);
-      })
-      .catch(() => setThreads([]));
-  }, []);
+    setLoading(true);
+    fetchTopicEntries(topic)
+      .then((data) => { setEntries(data); setLoading(false); })
+      .catch(() => { setEntries([]); setLoading(false); });
+  }, [topic]);
+
+  if (loading) return (
+    <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+  );
 
   return (
-    <div className="channels-layout">
-      <div className="channels-list">
-        {threads.length === 0 && (
-          <div style={{ padding: '8px 4px', fontSize: 13, color: 'var(--text-muted)' }}>
-            No messages yet
-          </div>
-        )}
-        {threads.map((thread) => (
-          <div
-            key={thread.threadId}
-            className={`channel-item${selected?.threadId === thread.threadId ? ' active' : ''}`}
-            onClick={() => setSelected(thread)}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-              <div className="channel-agents">
-                {thread.participants.map((a, i) => (
-                  <span key={a}>
-                    <span className="channel-agent-tag">{agentLabel(a)}</span>
-                    {i < thread.participants.length - 1 && (
-                      <span style={{ color: 'var(--text-muted)', margin: '0 3px', fontSize: 11 }}>↔</span>
-                    )}
-                  </span>
-                ))}
-              </div>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {formatRelativeTime(thread.lastActivity)}
-              </span>
-            </div>
-            {thread.preview && (
-              <div className="channel-item-preview">{thread.preview}</div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className="channel-content">
-        {!selected ? (
-          <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: 16 }}>
-            Select a thread to view the conversation.
-          </div>
-        ) : (
-          <ThreadView key={selected.threadId} thread={selected} />
-        )}
-      </div>
+    <div className="topic-feed">
+      {entries.length === 0 ? (
+        <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>No entries yet.</div>
+      ) : (
+        entries.map((entry, i) => (
+          <FeedEntryCard key={i} entry={entry} prevEntry={entries[i - 1]} />
+        ))
+      )}
     </div>
   );
 }

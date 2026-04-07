@@ -280,32 +280,31 @@ export default function App() {
         </div>
       )}
 
-      {/* Desktop sidebar */}
-      <div style={{ display: 'none' }} className="mobile-hidden">
-        {/* Only visible on desktop via CSS */}
-      </div>
-      <Sidebar
-        agents={agents}
-        sessions={sessions}
-        activeAgent={activeAgent}
-        activeSessionId={sessionId}
-        monitorOpen={monitorOpen}
-        modelOverride={modelOverride}
-        onSelectAgent={handleSelectAgent}
-        onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onNewSession={handleNewSession}
-        onToggleMonitor={handleToggleMonitor}
-        onModelChange={handleModelChange}
-        onHeaderClick={handleHeaderClick}
-        theme={theme}
-        onThemeChange={handleThemeChange}
-      />
+      {/* Desktop sidebar — hidden when monitor is open */}
+      {!monitorOpen && (
+        <Sidebar
+          agents={agents}
+          sessions={sessions}
+          activeAgent={activeAgent}
+          activeSessionId={sessionId}
+          monitorOpen={monitorOpen}
+          modelOverride={modelOverride}
+          onSelectAgent={handleSelectAgent}
+          onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
+          onNewSession={handleNewSession}
+          onToggleMonitor={handleToggleMonitor}
+          onModelChange={handleModelChange}
+          onHeaderClick={handleHeaderClick}
+          theme={theme}
+          onThemeChange={handleThemeChange}
+        />
+      )}
 
       {/* Main content area */}
       <div className="main-area">
         {monitorOpen ? (
-          <AgentMonitor agents={agents} />
+          <AgentMonitor agents={agents} onClose={() => setMonitorOpen(false)} />
         ) : (
           <ChatPanel
             agent={activeAgentInfo}

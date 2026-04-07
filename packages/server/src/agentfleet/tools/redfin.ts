@@ -347,11 +347,48 @@ export class Redfin {
     };
   }
 
-  async parseSearch(url: string): Promise<Record<string, any>> {
+  async parseSearch(params: {
+    zipcode: string;
+    listing_type?: string;
+    min_beds?: number;
+    max_beds?: number;
+    min_price?: number;
+    max_price?: number;
+    property_type?: string;
+    min_sqft?: number;
+    max_sqft?: number;
+  }): Promise<Record<string, any>> {
+    const { zipcode, listing_type, min_beds, max_beds, min_price, max_price, property_type, min_sqft, max_sqft } = params;
+
+    // Build filter string (for_rent uses a different path segment, not a filter param)
+    const isRent = listing_type === 'for_rent';
+    const filters: string[] = [];
+    if (min_beds != null) filters.push(`min-beds=${min_beds}`);
+    if (max_beds != null) filters.push(`max-beds=${max_beds}`);
+    if (min_price != null) filters.push(`min-price=${min_price}`);
+    if (max_price != null) filters.push(`max-price=${max_price}`);
+    if (property_type) {
+      const typeMap: Record<string, string> = { house: 'house', condo: 'condo', townhouse: 'townhouse', 'multi-family': 'multifamily' };
+      const mapped = property_type.split(',').map(t => typeMap[t.trim()] ?? t.trim()).join(',');
+      filters.push(`property-type=${mapped}`);
+    }
+    if (min_sqft != null) filters.push(`min-sqft=${min_sqft}`);
+    if (max_sqft != null) filters.push(`max-sqft=${max_sqft}`);
+
+    // Redfin URL structure:
+    //   For sale:  /zipcode/{zip}[/filter/{filters}]
+    //   For rent:  /zipcode/{zip}/apartments-for-rent[/filter/{filters}]
+    const rentSegment = isRent ? '/apartments-for-rent' : '';
+    const filterSegment = filters.length ? `/filter/${filters.join(',')}` : '';
+    const url = `https://www.redfin.com/zipcode/${zipcode}${rentSegment}${filterSegment}`;
+
     const result = await fetchHtml(url);
     if ('error' in result) return { error: result.error, url };
 
     const { html, finalUrl } = result;
+
+    // Detect when Redfin stripped filters (redirected to base zipcode URL)
+    const filtersWereStripped = filters.length > 0 && !finalUrl.includes('/filter/');
 
     // Parse server-rendered home cards
     // Cards: [data-rf-test-name="basicNode-homeCard"] with aria-label="Property at {addr}, {n} beds, {n} baths"
@@ -361,9 +398,12 @@ export class Redfin {
     $('[data-rf-test-name="basicNode-homeCard"]').each((_i, el) => {
       const card = $(el);
       const label = card.attr('aria-label') ?? '';
-      // aria-label: "Property at 123 Main St, City, ST ZIP, 2 beds, 2 baths"
-      const labelMatch = label.match(/^Property at (.+),\s*(\d+)\s*beds?,\s*([\d.]+)\s*baths?$/i);
-      const address = labelMatch?.[1] ?? card.attr('title') ?? '';
+      // aria-label formats vary by page type:
+      //   "Property at 123 Main St, City, ST ZIP, 2 beds, 2 baths"
+      //   "Apartment at 123 Main St, City, ST ZIP, 2 beds, 2 baths"
+      //   "For rent at 123 Main St, City, ST ZIP, 2 beds, 2 baths"
+      const labelMatch = label.match(/(?:^|\bat\s+)(.+),\s*(\d+)\s*beds?,\s*([\d.]+)\s*baths?$/i);
+      const address = labelMatch?.[1]?.replace(/^.+?\bat\s+/i, '').trim() ?? card.attr('title') ?? '';
       const beds = labelMatch?.[2] ?? '';
       const baths = labelMatch?.[3] ?? '';
 
@@ -401,10 +441,34 @@ export class Redfin {
     }
 
     if (properties.length === 0) {
-      return { error: 'Could not extract search results. Try a zipcode URL: redfin.com/zipcode/{zip}', url: finalUrl };
+      return { error: 'No listings found. The search may have returned zero results, or Redfin is rendering the page client-side for this query.', url: finalUrl };
     }
 
-    return { url: finalUrl, count: properties.length, properties };
+    // Post-filter by min_beds client-side (Redfin may have stripped the filter on redirect)
+    let filtered = properties;
+    if (min_beds != null) {
+      filtered = properties.filter(p => {
+        const b = parseInt(p.beds, 10);
+        return !isNaN(b) && b >= min_beds!;
+      });
+    }
+    if (max_beds != null) {
+      filtered = filtered.filter(p => {
+        const b = parseInt(p.beds, 10);
+        return !isNaN(b) && b <= max_beds!;
+      });
+    }
+
+    const warnings: string[] = [];
+    if (filtersWereStripped) warnings.push(`Some filters were not applied by Redfin (redirected to ${finalUrl}) — bed/bath counts post-filtered client-side where possible.`);
+    if (filtered.length < properties.length) warnings.push(`Showing ${filtered.length} of ${properties.length} listings after bed count filter.`);
+
+    return {
+      url: finalUrl,
+      count: filtered.length,
+      properties: filtered,
+      ...(warnings.length ? { warnings } : {}),
+    };
   }
 
   async propertyReport(address: string): Promise<Record<string, any>> {

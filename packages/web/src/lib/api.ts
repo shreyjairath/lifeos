@@ -70,6 +70,18 @@ export async function fetchFeed(): Promise<FeedEntry[]> {
   return res.json();
 }
 
+export async function fetchTopics(): Promise<{ name: string; count: number; lastActivity: string | null }[]> {
+  const res = await fetch('/api/agents/topics');
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchTopicEntries(topic: string): Promise<FeedEntry[]> {
+  const res = await fetch(`/api/agents/topics/${encodeURIComponent(topic)}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function fetchTasks(): Promise<Task[]> {
   const res = await fetch('/api/agents/tasks');
   if (!res.ok) return [];
