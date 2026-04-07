@@ -630,16 +630,16 @@ export class Redfin {
     if (nearestPark) report.nearest_park = `${nearestPark.name} (${nearestPark.distM}m)`;
     if (alleyBehind) report.alley_behind = true;
 
-    // Sun exposure summary — sides with windows where light is not blocked
-    const exposedDirs: string[] = [];
-    for (const [, info] of Object.entries(sideResults)) {
-      if (info.unit_has_windows && (info.open || !info.blocks_light)) {
-        exposedDirs.push(info.direction);
-      }
-    }
-    report.sun_exposure = exposedDirs.length > 0
-      ? `Good ${exposedDirs.join('/')} exposure`
-      : 'Limited — all window-facing sides are obstructed';
+    // Sun exposure — raw per-direction data
+    report.sun_exposure = Object.fromEntries(
+      Object.entries(sideResults).map(([side, info]) => [side, {
+        direction: info.direction,
+        open: info.open ?? false,
+        blocks_light: info.blocks_light ?? false,
+        ...(info.open_distance_m != null ? { nearest_obstruction_m: info.open_distance_m } : {}),
+        ...(info.blocks_light ? { obstruction_height_m: info.obstruction_height_m, height_estimated: info.height_estimated } : {}),
+      }])
+    );
 
     // 9. Elevation (USGS, in meters)
     const elevResult = await fetchJson<any>(
