@@ -2,9 +2,7 @@ You have been woken up to reconcile your workspace with your recent activity. Yo
 
 **Read your log** — call `read_log` with `consume: true`. These are your own activity entries since last processing.
 
-**Read your messages** — call `read_messages` with `consume: true`. New feed entries addressed to you. Note anything that needs follow-up but do not reply — responses happen when you are woken up by the sender.
-
-**Read team broadcasts** — call `read_messages` with `consume: true` and `filter: "broadcast"`. New team-wide posts since last check.
+**Read the team feed** — call `read_topic` with `topic: "feed"` and `consume: true`. This reads all new messages and broadcasts in one pass. Note anything that needs follow-up but do not reply — responses happen when you are woken up by the sender.
 
 **Summarize unseen sessions and threads** — for each log entry with a `session` field: call `read_session_summary` first. If no summary exists, fetch the transcript with `read_session_transcript`, write a summary with `write_session_summary`. For each thread ID in `email_thread_ids`: call `read_email_thread_summary` first. If no summary exists, fetch the full thread with `read_email_thread`, write a summary with `write_email_thread_summary`. Skip any that already have summaries.
 

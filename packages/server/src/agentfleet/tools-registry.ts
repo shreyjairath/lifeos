@@ -274,6 +274,8 @@ export class ToolsRegistry {
         return this.agentTools.postMessage(agentName, input.message as string, Array.isArray(input.to) ? input.to.map(String) : []);
       case 'read_messages':
         return this.topics.readTopic(agentName, 'feed', input.consume as boolean ?? true, (input.filter as string | undefined) ?? `@${agentName}`, input.page as number ?? 1, input.page_size as number ?? 20);
+      case 'read_topic':
+        return this.topics.readTopic(agentName, input.topic as string, input.consume as boolean ?? true, input.filter as string | undefined, input.page as number ?? 1, input.page_size as number ?? 20);
       case 'read_agent_definition':
         return this.agentTools.readAgentDefinition(input.agent as string);
       case 'update_agent':
@@ -584,6 +586,20 @@ const TOOLS: ToolDefinition[] = [
       prop('page_size', 'number', 'Entries per page when browsing history (default: 20)'),
     ),
     []),
+
+  tool('read_topic',
+    'Read all new entries from a named topic since your last check. ' +
+    'Use topic: "feed" to read the full team feed — all messages and broadcasts in one call, no implicit filtering. ' +
+    'Use topic: "{agentname}_log" to read another agent\'s log (read-only, no cursor advance for you). ' +
+    'Set consume: false to browse history without advancing the cursor.',
+    props(
+      prop('topic', 'string', 'Topic name, e.g. "feed", "cos_log", "system_feedback"'),
+      prop('consume', 'boolean', 'Advance cursor after reading (default: true).'),
+      prop('filter', 'string', 'Optional: return only entries containing this string.'),
+      prop('page', 'number', 'Page number when browsing history (consume: false only). 1 = most recent (default: 1)'),
+      prop('page_size', 'number', 'Entries per page when browsing history (default: 20)'),
+    ),
+    ['topic']),
 
   tool('read_agent_workspace',
     'Read-only access to another agent\'s workspace. Write operations are blocked.',
