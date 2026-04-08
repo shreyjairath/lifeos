@@ -7,3 +7,8 @@ dist/
 .env.local
 .env*.local
 .user-data/
+.gradle/
+build/
+.turbo/
+*.lock
+.claude/settings.local.json

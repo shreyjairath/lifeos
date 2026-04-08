@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git commit:*)",
-      "mcp__ide__getDiagnostics",
-      "Skill(schedule)"
-    ]
-  }
-}
