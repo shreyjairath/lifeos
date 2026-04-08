@@ -1598,6 +1598,74 @@ input, textarea, select {
     inset: 0;
     z-index: 50;
   }
+
+  /* Agent Monitor — mobile layout */
+  .monitor-header {
+    flex-wrap: wrap;
+    padding: 10px 14px 8px;
+    gap: 8px;
+  }
+
+  .monitor-header h2 {
+    flex: none;
+  }
+
+  .monitor-tabs {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .monitor-tab {
+    padding: 5px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .monitor-body {
+    flex-direction: column;
+  }
+
+  .monitor-body.has-sidebar .monitor-content {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .monitor-sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    gap: 4px;
+    flex-shrink: 0;
+    max-height: none;
+  }
+
+  .monitor-sidebar-label {
+    display: none;
+  }
+
+  .monitor-sidebar-item {
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 5px 10px;
+  }
+
+  .monitor-content {
+    padding: 12px 14px;
+  }
+
+  .run-card-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .run-card-time {
+    order: -1;
+    margin-left: auto;
+  }
 }
 
 /* Scrollable monitor content when tabs are used */
