@@ -20,13 +20,9 @@ tools:
     - delete_task
     # team
     - message_agent
-    - message_agent_async
-    - read_agent_message_history
     - read_messages
     - post_message
-    - write_to_topic
     - read_topic
-    - list_topics
     - list_agents
     - list_tools
     - system_feedback

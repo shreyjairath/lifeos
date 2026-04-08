@@ -346,7 +346,7 @@ export class AgentFleet {
         const description = loadPrompt(def.promptBase, rt.promptFile);
         tasks.upsert(
           'platform',
-          `${def.name}.${rt.name}`,
+          rt.name,
           description,
           rt.cadenceHours,
           new Date().toISOString(),

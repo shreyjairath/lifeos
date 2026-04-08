@@ -121,25 +121,24 @@ export class AgentTools {
     try {
       const currentYaml = yaml.load(readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8')) as Record<string, any>;
 
-      const newTitle = title ?? (currentYaml.title as string) ?? name;
-      const newDesc = description ?? (currentYaml.description as string) ?? '';
-      const newGoal = goal ?? (currentYaml.goal as string) ?? null;
-      const newManager = manager ?? (currentYaml.manager as string) ?? null;
-
-      const identityPath = resolve(agentDir, 'identity.md');
-      const newIdentity = identity ?? (existsSync(identityPath) ? readFileSync(identityPath, 'utf-8') : '');
-
-      let newTools: string[];
+      // Merge: start from existing YAML, only overwrite fields that were explicitly passed.
+      // This preserves any keys not known to buildAgentYaml (recurring-tasks, disabled-modes, etc.)
+      const merged = { ...currentYaml };
+      if (title != null) merged.title = title.trim() || name;
+      if (description != null) merged.description = description.trim();
+      if (goal != null) merged.goal = goal.trim() || null;
+      if (manager != null) merged.manager = manager.trim() || null;
       if (tools != null) {
-        newTools = tools;
-      } else {
-        const toolsMap = currentYaml.tools as Record<string, any> | undefined;
-        newTools = toolsMap ? ((toolsMap.names ?? []) as string[]) : [];
+        const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
+        merged.tools = { mode: 'include', names: allTools };
       }
 
-      writeFileSync(identityPath, newIdentity ?? '', 'utf-8');
+      const identityPath = resolve(agentDir, 'identity.md');
+      if (identity != null) {
+        writeFileSync(identityPath, identity, 'utf-8');
+      }
 
-      const yamlContent = buildAgentYaml(name, newTitle, newDesc, newGoal, newManager, newTools);
+      const yamlContent = yaml.dump(merged, { lineWidth: -1 });
       writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
 
       this.getRegistry().register(yamlContent, agentDir);

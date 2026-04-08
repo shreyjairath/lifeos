@@ -378,6 +378,7 @@ export class Redfin {
     // Redfin URL structure:
     //   For sale:  /zipcode/{zip}[/filter/{filters}]
     //   For rent:  /zipcode/{zip}/apartments-for-rent[/filter/{filters}]
+    //   Rental fallback (suburban ZIPs): /city/{slug}-{state}/apartments-for-rent
     const rentSegment = isRent ? '/apartments-for-rent' : '';
     const filterSegment = filters.length ? `/filter/${filters.join(',')}` : '';
     const url = `https://www.redfin.com/zipcode/${zipcode}${rentSegment}${filterSegment}`;
@@ -441,6 +442,64 @@ export class Redfin {
     }
 
     if (properties.length === 0) {
+      // For rental searches, Redfin often returns 0 results for suburban ZIPs because
+      // the /zipcode/{zip}/apartments-for-rent path redirects to a non-structured page.
+      // Try resolving the city name via Nominatim and constructing a city-level fallback URL.
+      if (isRent) {
+        let cityFallbackUrl: string | undefined;
+        try {
+          const geo = await fetchJson<any[]>(
+            `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(zipcode)}&country=us&format=json&limit=1`
+          );
+          if (!('error' in geo) && Array.isArray(geo) && geo.length > 0) {
+            const display = geo[0].display_name as string ?? '';
+            // Extract city and state abbreviation from Nominatim display_name
+            const parts = display.split(',').map((s: string) => s.trim());
+            const city = parts[0] ?? '';
+            const state = parts.find((p: string) => /^[A-Z]{2}$/.test(p)) ?? '';
+            if (city && state) {
+              const slug = `${city.replace(/\s+/g, '-')}-${state}`;
+              cityFallbackUrl = `https://www.redfin.com/city/${encodeURIComponent(slug)}/apartments-for-rent`;
+              const fallbackResult = await fetchHtml(cityFallbackUrl);
+              if (!('error' in fallbackResult)) {
+                const $2 = cheerio.load(fallbackResult.html);
+                const fallbackProps: any[] = [];
+                $2('[data-rf-test-name="basicNode-homeCard"]').each((_i, el) => {
+                  const card = $2(el);
+                  const label = card.attr('aria-label') ?? '';
+                  const labelMatch = label.match(/(?:^|\bat\s+)(.+),\s*(\d+)\s*beds?,\s*([\d.]+)\s*baths?$/i);
+                  const address = labelMatch?.[1]?.replace(/^.+?\bat\s+/i, '').trim() ?? '';
+                  if (address) {
+                    fallbackProps.push({
+                      address,
+                      price: card.find('.bp-Homecard__Price').first().text().trim(),
+                      beds: labelMatch?.[2] ?? '',
+                      baths: labelMatch?.[3] ?? '',
+                      sqft: (card.text().match(/([\d,]+)\s*sq\s*ft/i) ?? [])[1] ?? '',
+                      url: (() => {
+                        const href = card.find('a[href*="/home/"]').first().attr('href') ?? card.closest('a').attr('href');
+                        return href ? (href.startsWith('http') ? href : `https://www.redfin.com${href}`) : undefined;
+                      })(),
+                    });
+                  }
+                });
+                if (fallbackProps.length > 0) {
+                  return { properties: fallbackProps, count: fallbackProps.length, url: cityFallbackUrl, note: `ZIP-level rental search returned 0 results; used city-level fallback for ${city}, ${state}.` };
+                }
+              }
+            }
+          }
+        } catch {
+          // Nominatim or fallback fetch failed — fall through to error
+        }
+        return {
+          error: 'No rental listings found. Redfin may not support structured rental search for this ZIP code.',
+          tried_url: finalUrl,
+          suggestion: cityFallbackUrl
+            ? `Try browse_page on: ${cityFallbackUrl}`
+            : `Try browse_page on: https://www.redfin.com/zipcode/${zipcode}/apartments-for-rent or search by city name.`,
+        };
+      }
       return { error: 'No listings found. The search may have returned zero results, or Redfin is rendering the page client-side for this query.', url: finalUrl };
     }
 

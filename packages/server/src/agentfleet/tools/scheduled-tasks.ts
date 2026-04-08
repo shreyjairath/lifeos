@@ -39,12 +39,15 @@ export class ScheduledTasks {
       let task: Task;
       if (existing) {
         task = existing as Task;
+        // Preserve due_at for existing tasks — do not reset on upsert (e.g. server restart).
+        // Only update scheduling metadata and description.
       } else {
         task = {
           id: randomUUID().slice(0, 8),
           created_by: createdBy,
           created_at: epochNow(),
           last_run: null,
+          due_at: dueAtEpoch,
         } as any;
         list.push(task);
       }
@@ -52,7 +55,6 @@ export class ScheduledTasks {
       task.name = name;
       task.description = description;
       task.cadence_hours = cadenceHours ?? null;
-      task.due_at = dueAtEpoch;
       task.assignee = assignee?.trim() || createdBy;
       task.last_modified_at = epochNow();
       task.last_modified_by = createdBy;
