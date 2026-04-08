@@ -128,22 +128,25 @@ if not never_run: print('  (none)')
 " 2>/dev/null || echo "(error)"`
 
 **5. Agent-submitted system feedback**
-!`python3 -c "
-import re, os
-f = '.user-data/topics/system_feedback.md'
-if not os.path.exists(f):
-    print('  (no system_feedback entries yet)')
-else:
-    content = open(f).read()
-    entries = [e.strip() for e in content.split('\n---\n') if e.strip()]
-    for entry in entries[-20:]:
-        lines = entry.strip().split('\n')
-        header = lines[0] if lines else ''
-        body = '\n'.join(lines[2:]).strip()[:200] if len(lines) > 2 else ''
-        print(f'{header}')
-        if body: print(f'  {body[:150]}')
-        print()
-" 2>/dev/null || echo "(error)"`
+!`bun -e "
+import { AgentTopics } from './packages/server/src/agentfleet/tools/agent-topics.js';
+const topics = new AgentTopics();
+const result = topics.readTopic('analyze_fleet_skill', 'system_feedback', true);
+if (!result.messages || result.messages.length === 0) {
+  console.log('  (no new system_feedback since last fleet run)');
+} else {
+  for (const m of result.messages) {
+    console.log('## ' + m.timestamp + ' | ' + m.from);
+    console.log('');
+    const lines = m.message.split('\n');
+    for (const line of lines) {
+      if (line === '---') break;
+      console.log(line);
+    }
+    console.log('');
+  }
+}
+" 2>/dev/null || echo "(error reading system_feedback)"`
 
 **7. Workspace reconciliation health**
 !`python3 -c "
