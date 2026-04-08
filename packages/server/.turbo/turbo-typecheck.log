@@ -1,0 +1,2 @@
+$ tsc --noEmit
+src/agent/executor/llm-client.ts(106,40): error TS2353: Object literal may only specify known properties, and 'id' does not exist in type '{ type: "llm_tool_call"; name: string; input: Record<string, any>; }'.

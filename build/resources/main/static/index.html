@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>chief</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Mobile header -->
+    <div id="mobile-header">
+      <button id="hamburger" aria-label="Menu">☰</button>
+      <span>chief</span>
+      <button id="new-chat-mobile" aria-label="New chat">＋</button>
+    </div>
+    <div id="sidebar-overlay"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>chief</h1>
+      </div>
+
+      <!-- Chat sidebar content -->
+      <div id="chat-sidebar-content">
+        <div id="agent-toggle"></div>
+        <hr class="agent-separator" id="agent-separator">
+        <div id="sub-agent-toggle"></div>
+        <div id="model-selector-section">
+          <input id="model-input" list="model-suggestions" placeholder="Model override…" autocomplete="off" spellcheck="false">
+          <datalist id="model-suggestions">
+            <option value="xiaomi/mimo-v2-pro">
+            <option value="stepfun/step-3.5-flash:free">
+            <option value="minimax/minimax-m2.5">
+            <option value="deepseek/deepseek-v3.2">
+            <option value="z-ai/glm-5-turbo">
+            <option value="anthropic/claude-4.6-sonnet">
+            <option value="anthropic/claude-4.6-opus">
+            <option value="google/gemini-3-flash-preview">
+            <option value="openrouter/hunter-alpha">
+            <option value="google/gemini-2.5-flash">
+          </datalist>
+        </div>
+      </div>
+
+      <!-- Monitor sidebar content -->
+      <nav id="monitor-sidebar-content" class="hidden">
+        <div class="monitor-section-header">Agents</div>
+        <div id="monitor-agent-list"></div>
+        <button class="monitor-nav-btn" data-tab="channels">Channels</button>
+        <button class="monitor-nav-btn" data-tab="cc">Claude Code</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="agent-monitor-btn" class="agent-monitor-link">Agent Monitor</button>
+      </div>
+
+    </aside>
+
+    <!-- Main chat view -->
+    <main id="main">
+      <div id="messages"></div>
+      <div id="input-area">
+        <textarea id="input" placeholder="Ask your agent anything…" rows="1"></textarea>
+        <button id="mic-btn" title="Tap to speak" aria-label="Microphone">🎤</button>
+        <button id="voice-mode-btn" title="Voice mode — auto-listen after agent responds" aria-label="Voice mode">🔊</button>
+        <button id="stop-btn" style="display:none">Stop</button>
+        <button id="send-btn">Send</button>
+        <button id="artifacts-btn" title="Artifacts">⊞</button>
+      </div>
+    </main>
+
+    <!-- Artifact panel — slides open when agent renders an artifact -->
+    <div id="artifact-panel">
+      <div id="artifact-header">
+        <span id="artifact-title">Artifact</span>
+        <div id="artifact-header-actions">
+          <button id="artifact-browse" title="Browse artifacts">☰</button>
+          <button id="artifact-close" title="Close artifact">✕</button>
+        </div>
+      </div>
+      <div id="artifact-browser" class="hidden">
+        <div id="artifact-browser-list"></div>
+      </div>
+      <iframe id="artifact-iframe" sandbox="allow-scripts allow-forms allow-same-origin" loading="lazy"></iframe>
+    </div>
+
+    <!-- Agent Monitor — full-width overlay view -->
+    <div id="agent-monitor" class="hidden">
+      <div id="agents-runs-panel" class="agents-tab-panel">
+        <div id="agent-debug-panel"></div>
+      </div>
+      <div id="agents-channels-panel" class="agents-tab-panel hidden">
+        <div id="agent-channels-panel"></div>
+      </div>
+      <div id="agents-cc-panel" class="agents-tab-panel hidden">
+        <div id="cc-messages"></div>
+        <div id="cc-input-area">
+          <textarea id="cc-input" placeholder="Ask Claude Code about chief…" rows="1"></textarea>
+          <button id="cc-send">Send</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
