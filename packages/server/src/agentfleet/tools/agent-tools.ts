@@ -188,13 +188,12 @@ function buildAgentYaml(
   tools: string[],
 ): string {
   const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
-  let s = `name: ${name}\n`;
-  s += `title: ${title?.trim() || name}\n`;
-  if (description?.trim()) s += `description: ${description.trim()}\n`;
-  if (goal?.trim()) s += `goal: ${goal.trim()}\n`;
-  if (manager?.trim()) s += `manager: ${manager.trim()}\n`;
-  s += `identity:\n  - identity.md\n`;
-  s += `tools:\n  mode: include\n  names:\n`;
-  for (const tool of allTools) s += `    - ${tool}\n`;
-  return s;
+  const doc: Record<string, any> = { name };
+  doc.title = title?.trim() || name;
+  if (description?.trim()) doc.description = description.trim();
+  if (goal?.trim()) doc.goal = goal.trim();
+  if (manager?.trim()) doc.manager = manager.trim();
+  doc.identity = ['identity.md'];
+  doc.tools = { mode: 'include', names: allTools };
+  return yaml.dump(doc, { lineWidth: -1 });
 }

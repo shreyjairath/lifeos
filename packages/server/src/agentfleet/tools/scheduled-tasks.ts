@@ -33,7 +33,8 @@ export class ScheduledTasks {
       if (isNaN(dueAtEpoch)) return { error: `Invalid due_at: ${dueAtIso}` };
 
       const list = this.load();
-      const existing = list.find((t) => t.created_by === createdBy && t.name === name);
+      const effectiveAssignee = assignee?.trim() || createdBy;
+      const existing = list.find((t) => t.assignee === effectiveAssignee && t.name === name);
 
       let task: Task;
       if (existing) {
@@ -107,6 +108,7 @@ export class ScheduledTasks {
           task.last_run = now;
           task.last_modified_at = now;
           task.last_modified_by = calledBy;
+          if (task.cadence_hours) task.due_at = (task.due_at as number) + (task.cadence_hours as number) * 3600;
         }
       }
       this.save(list);
@@ -124,6 +126,7 @@ export class ScheduledTasks {
       task.last_run = now;
       task.last_modified_at = now;
       task.last_modified_by = calledBy;
+      if (task.cadence_hours) task.due_at = (task.due_at as number) + (task.cadence_hours as number) * 3600;
       this.save(list);
       return { ok: true, id, next_due: nextDueIso(task) };
     } catch (err: any) {
@@ -166,27 +169,17 @@ function epochNow(): number {
 }
 
 function isOverdue(task: Record<string, any>, now: number): boolean {
-  const lastRun = task.last_run as number | null;
-  const cadenceHours = task.cadence_hours as number | null;
   const dueAt = (task.due_at ?? task.run_at) as number | undefined;
   if (dueAt == null) return false;
-
-  if (lastRun == null) return dueAt <= now;
-  if (cadenceHours == null) return false; // one-off, already run
-  return lastRun + cadenceHours * 3600 <= now;
+  if (!task.cadence_hours && task.last_run) return false; // one-off already run
+  return dueAt <= now;
 }
 
 function nextDueIso(task: Record<string, any>): string {
-  const cadenceHours = task.cadence_hours as number | null;
   const dueAt = (task.due_at ?? task.run_at) as number | undefined;
-  const lastRun = task.last_run as number | null;
-
-  if (lastRun == null) {
-    if (dueAt == null) return 'unknown';
-    return new Date(dueAt * 1000).toISOString();
-  }
-  if (cadenceHours == null) return 'completed';
-  return new Date((lastRun + cadenceHours * 3600) * 1000).toISOString();
+  if (dueAt == null) return 'unknown';
+  if (!task.cadence_hours && task.last_run) return 'completed';
+  return new Date((dueAt as number) * 1000).toISOString();
 }
 
 function withNextDue(task: Record<string, any>): Record<string, any> {

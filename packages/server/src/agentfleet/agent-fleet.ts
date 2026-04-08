@@ -20,6 +20,7 @@ export class AgentFleet {
   readonly eventBus: EventBus;
   private readonly registry: AgentRegistry;
   private readonly router: AgentRouter;
+  private readonly inFlightTaskIds = new Set<string>();
 
   constructor(
     registry: AgentRegistry,
@@ -293,7 +294,8 @@ export class AgentFleet {
 
   async triggerTaskCheck(): Promise<void> {
     const tasks = this.toolsRegistry.getScheduledTasks();
-    const overdue = tasks.getAllOverdue();
+    const overdue = tasks.getAllOverdue()
+      .filter((t) => !this.inFlightTaskIds.has(t.id as string));
 
     if (!overdue.length) {
       console.log('[TaskCheck] no overdue tasks');
@@ -320,7 +322,9 @@ export class AgentFleet {
     console.log(`[TaskCheck] dispatching to ${buckets.size} agent(s): ${[...buckets.keys()].join(', ')}`);
     for (const { agent, tasks: agentTasks } of buckets.values()) {
       for (const task of agentTasks) {
+        this.inFlightTaskIds.add(task.id as string);
         agent.handleOverdueTask(task, () => {
+          this.inFlightTaskIds.delete(task.id as string);
           tasks.markComplete(task.id as string, 'platform');
           console.log(`[TaskCheck] marked task "${task.name as string}" complete after ${agent.getName()} run`);
         });
