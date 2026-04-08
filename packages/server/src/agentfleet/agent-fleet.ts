@@ -185,7 +185,7 @@ export class AgentFleet {
       for (const agent of involved) {
         const lastSeen = agent.emailThreadStore.getLastSeen(rawThread.threadId);
         const lastSeenIdx = lastSeen ? allMsgs.findIndex((m) => m.id === lastSeen) : -1;
-        const newMsgs = allMsgs.slice(lastSeenIdx + 1);
+        const newMsgs = allMsgs.slice(lastSeenIdx + 1).filter((m) => !m.labelIds.includes('SENT'));
         if (newMsgs.length === 0) continue; // agent is up to date
 
         // Build EmailMessage[] from newMsgs with prior context
