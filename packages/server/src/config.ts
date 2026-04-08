@@ -24,6 +24,7 @@ export interface AppConfig {
   apiKey: string;
   model: string;
   backgroundModel: string;
+  clientName: string;
   clientEmail: string;
   mailboxEmail: string;
   contacts: Contact[];
@@ -60,6 +61,7 @@ export function loadConfig(configPath?: string): AppConfig {
     apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     model: lifeos.model,
     backgroundModel: lifeos['background-model'],
+    clientName: lifeos['client-name'] ?? '',
     clientEmail: lifeos['client-email'] ?? '',
     mailboxEmail: lifeos['mailbox-email'] ?? '',
     contacts: ((lifeos.contacts ?? []) as Record<string, any>[]).map((c) => ({

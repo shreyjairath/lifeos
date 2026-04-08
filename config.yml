@@ -2,6 +2,7 @@ server:
   port: 8000
 
 lifeos:
+  client-name: Shrey
   client-email: shreyjairath@gmail.com
   mailbox-email: sjairath.cos@gmail.com
   contacts:

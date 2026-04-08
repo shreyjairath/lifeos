@@ -177,6 +177,10 @@ export class ToolsRegistry {
         if (!emailQuery.includes('is:unread') && !emailQuery.includes('is:read')) {
           emailQuery += ' is:unread';
         }
+        // Restrict to threads where this agent is mentioned
+        if (!emailQuery.includes(`@${agentName}`)) {
+          emailQuery += ` "@${agentName}"`;
+        }
         const emails = await this.gmailClient.fetchRecent(
           emailQuery,
           input.max_results != null ? Number(input.max_results) : undefined,

@@ -1,6 +1,9 @@
 You have been woken up to process email. Your client is not present. This is a focused email pass — do not perform any other work.
 
-Start by reading `_memory.md` to orient yourself.
+Start by orienting yourself:
+- Read `_memory.md`
+- Call `read_log` with `consume: false` — catch up on any activity since last reconcile
+- Call `read_topic` with `topic: "feed"` and `consume: false` — check for team messages or broadcasts
 
 **Triage each email.** Skip automated emails, newsletters, and notifications. For each real email, decide if it falls within your domain.
 

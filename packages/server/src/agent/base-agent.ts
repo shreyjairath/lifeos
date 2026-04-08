@@ -345,6 +345,11 @@ export class BaseAgent implements Agent {
   ): string {
     const parts: string[] = [LIFEOS_PROMPT];
 
+    const clientLines: string[] = [];
+    if (this.config.clientName) clientLines.push(`**Name:** ${this.config.clientName}`);
+    if (this.config.clientEmail) clientLines.push(`**Email:** ${this.config.clientEmail}`);
+    if (clientLines.length) parts.push('\n\n## The Client\n\n' + clientLines.join('\n'));
+
     parts.push('\n\n# Your Identity\n\n' + this.identityWithName());
 
     if (this.def.goal) parts.push('\n\n# Your Goal\n\n' + this.def.goal);
