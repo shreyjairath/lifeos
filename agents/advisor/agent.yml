@@ -22,6 +22,8 @@ tools:
     - message_agent
     - message_agent_async
     - read_agent_message_history
+    - read_messages
+    - post_message
     - write_to_topic
     - read_topic
     - list_topics
@@ -40,11 +42,15 @@ tools:
     # session history
     - list_sessions
     - read_session_summary
+    - write_session_summary
     - read_session_transcript
     # time & reminders
     - get_current_datetime
     # email
     - read_emails
+    - read_email_thread
+    - read_email_thread_summary
+    - write_email_thread_summary
     - send_email
     - send_file_email
 
