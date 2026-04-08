@@ -1,12 +1,12 @@
 ---
-description: Analyze recent agent runs across the fleet — tool errors, missed tasks, cadence issues, token bloat, thrashing, workspace reconciliation health, information flow
+description: System health check for the agent fleet — tools, triggers, prompts, thrashing, information flow
 ---
 
-Analyze the agent fleet for health issues. Gather the data below, then produce a structured report.
+System health check for the agent fleet. Collect the data below, then produce a structured diagnostic report. Every finding should be framed as a system issue with a probable cause and a concrete fix — not a behavioral observation.
 
 ## Data collection
 
-**1. Recent run volume per agent (last 48h)**
+**1. Run volume per agent (last 48h)**
 !`python3 -c "
 import json, glob, time, os
 from collections import Counter
@@ -32,21 +32,22 @@ for agent in agents:
     print(f'{agent:<28} {len(recent):>3} runs  [{mode_str}]')
 " 2>/dev/null || echo "(no runs found)"`
 
-**2. Tool errors across recent runs (last 5 per agent)**
+**2. Tool errors (last 10 runs per agent)**
 !`python3 -c "
-import json, glob, os, re
+import json, glob, os
 agents_dir = '.user-data/agents'
 agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
 found = False
 for agent in agents:
     runs_dir = f'{agents_dir}/{agent}/runs'
     if not os.path.isdir(runs_dir): continue
-    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)[:5]
+    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)[:10]
     for f in files:
         try:
             r = json.load(open(f))
         except: continue
-        for turn in r.get('turns', []):
+        turns = r.get('turns', [])
+        for i, turn in enumerate(turns):
             content = turn.get('content')
             if not isinstance(content, list): continue
             for block in content:
@@ -55,18 +56,18 @@ for agent in agents:
                 rc = block.get('content', '')
                 text = rc if isinstance(rc, str) else json.dumps(rc)
                 if 'error' in text.lower():
-                    # Find the tool name from previous block
                     tool_name = '?'
-                    prev = [b for b in content if b.get('type') == 'tool_use']
-                    if prev: tool_name = prev[-1].get('name', '?')
-                    snippet = text[:120].replace('\n', ' ')
-                    print(f'  [{agent}] {tool_name}: {snippet}')
+                    for b in content:
+                        if isinstance(b, dict) and b.get('type') == 'tool_use':
+                            tool_name = b.get('name', '?')
+                    snippet = text[:150].replace('\n', ' ')
+                    print(f'  [{agent}] {r[\"mode\"]} / {tool_name}: {snippet}')
                     found = True
 if not found:
     print('  (no tool errors detected)')
 " 2>/dev/null || echo "(error scanning runs)"`
 
-**3. Background run token spend (last 48h, non-chat)**
+**3. Token spend — non-chat runs (last 48h)**
 !`python3 -c "
 import json, glob, time, os
 now = time.time()
@@ -86,9 +87,10 @@ for agent in agents:
         except: continue
         if r.get('mode') == 'chat': continue
         tok = (r.get('inputTokens') or 0) + (r.get('outputTokens') or 0)
+        turns = len(r.get('turns', []))
         if tok == 0: continue
         flag = '  *** BLOATED' if tok > 15000 else ''
-        rows.append((tok, f'  {agent:<28} {r[\"mode\"]:<30} {tok:>6} tokens{flag}'))
+        rows.append((tok, f'  {agent:<28} {r[\"mode\"]:<30} {tok:>7} tokens  {turns} turns{flag}'))
 rows.sort(reverse=True)
 for _, line in rows[:30]:
     print(line)
@@ -96,7 +98,65 @@ if not rows:
     print('  (no token data available)')
 " 2>/dev/null || echo "(error)"`
 
-**4. Task health**
+**4. Thrashing — high-turn runs with no state change (last 48h)**
+!`python3 -c "
+import json, glob, os, time
+from collections import Counter
+now = time.time()
+cutoff = now - 48 * 3600
+agents_dir = '.user-data/agents'
+agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
+found = False
+state_keywords = ['updated', 'wrote', 'created', 'sent', 'logged', 'saved', 'deleted', 'completed', 'scheduled']
+for agent in agents:
+    runs_dir = f'{agents_dir}/{agent}/runs'
+    if not os.path.isdir(runs_dir): continue
+    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)
+    for f in files:
+        ts = int(os.path.basename(f).split('_')[0]) / 1000
+        if ts < cutoff: break
+        try:
+            r = json.load(open(f))
+        except: continue
+        turns = r.get('turns', [])
+        if len(turns) < 8: continue
+        result = (r.get('result') or '').lower()
+        if not any(kw in result for kw in state_keywords):
+            all_tool_calls = [tc.get('name','?') for t in turns for tc in (t.get('tool_calls') or [])]
+            tool_counts = Counter(all_tool_calls)
+            top_tools = ', '.join(f'{n}x{t}' for t,n in tool_counts.most_common(5))
+            print(f'  [{agent}] {r[\"mode\"]} — {len(turns)} turns, no state change')
+            print(f'    tools: {top_tools}')
+            print(f'    result: {result[:120]}')
+            found = True
+if not found:
+    print('  (no thrashing detected)')
+" 2>/dev/null || echo "(error)"`
+
+**5. Per-agent tool usage (last 10 runs)**
+!`python3 -c "
+import json, glob, os
+from collections import Counter
+agents_dir = '.user-data/agents'
+agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
+for agent in agents:
+    runs_dir = f'{agents_dir}/{agent}/runs'
+    if not os.path.isdir(runs_dir): continue
+    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)[:10]
+    counts = Counter()
+    for f in files:
+        try:
+            r = json.load(open(f))
+        except: continue
+        for turn in r.get('turns', []):
+            for tc in (turn.get('tool_calls') or []):
+                counts[tc.get('name','?')] += 1
+    if not counts: continue
+    top = ', '.join(f'{n}x{t}' for t,n in counts.most_common(10))
+    print(f'  {agent}: {top}')
+" 2>/dev/null || echo "(error)"`
+
+**6. Task health**
 !`python3 -c "
 import json, time, datetime
 try:
@@ -127,28 +187,7 @@ for t in never_run:
 if not never_run: print('  (none)')
 " 2>/dev/null || echo "(error)"`
 
-**5. Agent-submitted system feedback**
-!`bun -e "
-import { AgentTopics } from './packages/server/src/agentfleet/tools/agent-topics.js';
-const topics = new AgentTopics();
-const result = topics.readTopic('analyze_fleet_skill', 'system_feedback', true);
-if (!result.messages || result.messages.length === 0) {
-  console.log('  (no new system_feedback since last fleet run)');
-} else {
-  for (const m of result.messages) {
-    console.log('## ' + m.timestamp + ' | ' + m.from);
-    console.log('');
-    const lines = m.message.split('\n');
-    for (const line of lines) {
-      if (line === '---') break;
-      console.log(line);
-    }
-    console.log('');
-  }
-}
-" 2>/dev/null || echo "(error reading system_feedback)"`
-
-**7. Workspace reconciliation health**
+**7. Workspace & reconciliation health**
 !`python3 -c "
 import json, glob, os, time, datetime
 now = time.time()
@@ -191,7 +230,7 @@ for agent in agents:
 
 **8. Information flow (feed cursors and inbox health)**
 !`python3 -c "
-import os, re, time, datetime, glob
+import os, time, glob
 now = time.time()
 topics_dir = '.user-data/topics'
 cursors_dir = f'{topics_dir}/.cursors'
@@ -200,29 +239,24 @@ feed_path = f'{topics_dir}/feed.md'
 feed_entries = 0
 if os.path.exists(feed_path):
     content = open(feed_path).read()
-    feed_entries = len([e for e in content.split('\n---\n') if e.strip()])
+    feed_entries = len([e for e in content.split('\n---\n\n') if e.strip()])
 
 print(f'--- FEED TOPIC ---')
 print(f'  Total entries: {feed_entries}')
-
 print()
-print('--- CURSOR ADVANCEMENT PER AGENT ---')
+print('--- CURSOR PER AGENT ---')
 if not os.path.isdir(cursors_dir):
     print('  (no cursors directory)')
 else:
-    for cursor_file in sorted(glob.glob(f'{cursors_dir}/*.json')):
-        try:
-            import json
-            c = json.load(open(cursor_file))
-            agent = os.path.basename(cursor_file).replace('.json','')
-            feed_pos = c.get('feed', 0)
-            broadcast_pos = c.get('broadcast', 0)
-            total = max(feed_pos, 1)
-            pct = int(100 * feed_pos / max(feed_entries, 1))
-            flag = '  *** BEHIND' if feed_entries > 0 and pct < 50 else ''
-            print(f'  {agent:<28} feed={feed_pos}/{feed_entries} ({pct}%)  broadcast={broadcast_pos}{flag}')
-        except Exception as e:
-            print(f'  {os.path.basename(cursor_file)}: error reading cursor')
+    for agent_dir in sorted(os.listdir(cursors_dir)):
+        agent_cursor_path = os.path.join(cursors_dir, agent_dir)
+        if not os.path.isdir(agent_cursor_path): continue
+        feed_cursor_file = os.path.join(agent_cursor_path, 'feed')
+        if os.path.exists(feed_cursor_file):
+            ts = open(feed_cursor_file).read().strip()
+            print(f'  {agent_dir:<28} feed cursor: {ts}')
+        else:
+            print(f'  {agent_dir:<28} feed cursor: (none — never read)')
 
 print()
 print('--- UNREAD BROADCASTS ---')
@@ -231,46 +265,14 @@ if not os.path.exists(broadcast_path):
     print('  (no broadcast topic)')
 else:
     content = open(broadcast_path).read()
-    entries = [e for e in content.split('\n---\n') if e.strip()]
-    total_broadcasts = len(entries)
-    print(f'  Total broadcast entries: {total_broadcasts}')
-    # Last 3
+    entries = [e for e in content.split('\n---\n\n') if e.strip()]
+    print(f'  Total broadcast entries: {len(entries)}')
     for entry in entries[-3:]:
         lines = entry.strip().split('\n')
         print(f'    {lines[0][:80]}')
 " 2>/dev/null || echo "(error)"`
 
-**6. Thrashing detection (many turns, no apparent output)**
-!`python3 -c "
-import json, glob, os, time
-now = time.time()
-cutoff = now - 48 * 3600
-agents_dir = '.user-data/agents'
-agents = sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []
-found = False
-state_keywords = ['updated', 'wrote', 'created', 'sent', 'logged', 'saved', 'deleted', 'completed', 'scheduled']
-for agent in agents:
-    runs_dir = f'{agents_dir}/{agent}/runs'
-    if not os.path.isdir(runs_dir): continue
-    files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)
-    for f in files:
-        ts = int(os.path.basename(f).split('_')[0]) / 1000
-        if ts < cutoff: break
-        try:
-            r = json.load(open(f))
-        except: continue
-        turns = r.get('turns', [])
-        if len(turns) < 8: continue
-        result = (r.get('result') or '').lower()
-        if not any(kw in result for kw in state_keywords):
-            print(f'  [{agent}] {r[\"mode\"]} — {len(turns)} turns, result appears stateless')
-            print(f'    result snippet: {result[:120]}')
-            found = True
-if not found:
-    print('  (no thrashing detected)')
-" 2>/dev/null || echo "(error)"`
-
-**9. Log entry trail coverage (last 48h)**
+**9. Log trail coverage (last 48h)**
 !`python3 -c "
 import json, glob, os, time
 now = time.time()
@@ -282,10 +284,7 @@ for agent in agents:
     runs_dir = f'{agents_dir}/{agent}/runs'
     if not os.path.isdir(runs_dir): continue
     files = sorted(glob.glob(f'{runs_dir}/*.json'), reverse=True)
-
-    chat_logged = chat_total = 0
-    bg_logged = bg_total = 0
-
+    chat_logged = chat_total = bg_logged = bg_total = 0
     for f in files:
         ts = int(os.path.basename(f).split('_')[0]) / 1000
         if ts < cutoff: break
@@ -293,16 +292,14 @@ for agent in agents:
             r = json.load(open(f))
         except: continue
         mode = r.get('mode', '')
-        turns = r.get('turns', [])
-        tool_calls = [tc.get('name') for t in turns if t.get('role') == 'assistant' for tc in (t.get('tool_calls') or [])]
-        logged = 'log_entry' in tool_calls
+        all_tool_calls = [tc.get('name') for t in r.get('turns',[]) for tc in (t.get('tool_calls') or [])]
+        logged = 'log_entry' in all_tool_calls
         if mode == 'chat':
             chat_total += 1
             if logged: chat_logged += 1
         else:
             bg_total += 1
             if logged: bg_logged += 1
-
     if chat_total == 0 and bg_total == 0: continue
     chat_pct = int(100 * chat_logged / chat_total) if chat_total else 0
     bg_pct = int(100 * bg_logged / bg_total) if bg_total else 0
@@ -311,38 +308,56 @@ for agent in agents:
     print(f'  {agent:<28} chat={chat_logged}/{chat_total} ({chat_pct}%){chat_flag}   bg={bg_logged}/{bg_total} ({bg_pct}%){bg_flag}')
 " 2>/dev/null || echo "(error)"`
 
+**10. Agent system feedback (new since last check)**
+!`bun -e "
+import { AgentTopics } from './packages/server/src/agentfleet/tools/agent-topics.js';
+const topics = new AgentTopics();
+const result = topics.readTopic('analyze_fleet_skill', 'system_feedback', true);
+if (!result.messages || result.messages.length === 0) {
+  console.log('  (no new system_feedback since last fleet check)');
+} else {
+  for (const m of result.messages) {
+    console.log('## ' + m.timestamp + ' | ' + m.from);
+    console.log('');
+    const lines = m.message.split('\n');
+    for (const line of lines) {
+      if (line === '---') break;
+      console.log(line);
+    }
+    console.log('');
+  }
+}
+" 2>/dev/null || echo "(error reading system_feedback)"`
+
 ---
 
 ## Analysis
 
-Using the data above, produce a structured fleet health report with these sections:
+Using the data above, produce a structured system diagnostic. Every section is a system check — objective, factual, with a probable cause and concrete fix for each issue found. No behavioral judgments.
 
-### Tool Errors
-Which tools are failing, what errors are they returning, and which agents are affected? Is any agent working around a broken tool (repeated retries, skipping tool use)?
-
-### Overdue / Missed Tasks
-Which tasks are past due and never executed? Is this a scheduling bug, or did the agent never get triggered?
-
-### Cadence Issues
-Any tasks running too often (wasteful) or cadences that seem mismatched with the agent's role?
-
-### Token Bloat
-Which background runs are spending disproportionate tokens? What's causing it — long system prompts, excessive tool calls, reading large files?
+### Tool Errors & Missing Tools
+Which tools are erroring and why? Is any agent attempting to call a tool not in its tool list (prompt/config mismatch)? Cross-reference the tool usage data (section 5) with errors (section 2) — if a tool appears in errors but not in usage, the agent is being blocked before it can call it. If a tool is in errors but does appear in usage, the tool implementation is broken.
 
 ### Thrashing
-Any agents looping through many turns without producing observable state change? What's the likely cause?
+For each thrashing run (section 4), identify the probable system cause: missing tool forcing retry loops, over-frequent trigger producing no-op runs, broken prompt instructing impossible actions, or message history growing too large. The tool usage breakdown (section 4's tool list + section 5) is the primary signal — repeated calls to the same tool with no state change points to a specific broken tool or missing capability.
 
-### Workspace Reconciliation Health
-Is `reconcile_workspace` running on the expected 4h cadence for each agent? Are workspace files being updated (modification timestamps within the last 12h)? Flag any agents with stale workspaces or missed reconciliation runs.
+### Trigger & Cadence Issues
+Are triggers firing at the right frequency? Any duplicate fires (same task dispatched twice)? Any tasks never running despite being created? Reconcile task cadence against actual run volume from section 1.
+
+### Token Bloat
+Which runs are spending disproportionate tokens? Cross-reference turn count (section 3) with thrashing (section 4) — bloat caused by thrashing has a system fix. Bloat from high turn counts with real output may indicate prompt verbosity or large file reads.
+
+### Workspace Health
+Is reconcile running on cadence? Are workspace files being updated? Stale workspaces (>12h) combined with low log trail coverage suggests the reconcile prompt is broken or the agent is consistently finding nothing to do (trigger frequency issue).
 
 ### Information Flow
-Are feed cursors advancing for all agents? Any agents significantly behind on the feed (reading <50% of entries)? Are broadcasts being picked up? Identify agents that appear to be ignoring their inbox or whose cursors haven't moved.
+Are agents reading the feed? Any agent with no cursor or a stale cursor is missing inter-agent coordination signals. Flag agents that have never consumed the feed.
 
-### Log Entry Trail
-For non-chat runs: are agents consistently calling `log_entry`? Flag any agent below 70% coverage — background runs should always leave a trail. For chat runs: flag agents below 30% — the bar is lower since agents should skip if nothing substantive surfaced, but zero over many sessions is a red flag.
+### Log Trail Gaps
+Agents below 70% background coverage have a system issue — either the prompt doesn't instruct logging, or runs are erroring before the log_entry call. Chat coverage below 30% over many sessions suggests the chat prompt isn't instructing substantive logging.
 
 ### Agent Feedback
-Summarize what agents themselves have flagged via `system_feedback`. Group by severity and category. Highlight anything actionable.
+Summarize new feedback from section 10. Group by category (tool / trigger / prompt / capability). Each item should map to a specific system fix.
 
-### Recommended Actions
-Up to 5 specific, concrete fixes — ranked by impact. Examples: "fix X tool's Y parameter", "reduce Z agent's reconcile cadence from 2h to 4h", "add N to agent's tool list". Be specific enough to act on immediately.
+### System Fixes Required
+Up to 5 concrete fixes, ranked by impact. Be specific: name the file, the tool, the agent, the line. Examples: "add `read_messages` to advisor's tool list in agents/advisor/agent.yml", "reduce relocation reconcile cadence from 4h to 12h in tasks.json", "fix reconcile-workspace.md prompt reference to nonexistent `write_session_summary`".
