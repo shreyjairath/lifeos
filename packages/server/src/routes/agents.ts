@@ -1,16 +1,14 @@
 import { Hono } from 'hono';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { AgentFleet } from '../agentfleet/agent-fleet.js';
 import { getRecentRuns } from '../agent/agent-run-logs.js';
-import { ScheduledTasks } from '../agentfleet/tools/scheduled-tasks.js';
-import { MONOREPO_ROOT } from '../root.js';
-
-const TOPICS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'topics');
-const FEED_FILE = resolve(TOPICS_DIR, 'feed.md');
-const TASKS_FILE = resolve(MONOREPO_ROOT, '.user-data', 'tasks.json');
 
 export function agentRoutes(fleet: AgentFleet) {
+  const topicsDir = fleet.getTopicsDir();
+  const feedFile = resolve(topicsDir, 'feed.md');
+  const tasks = fleet.getScheduledTasks();
+  const agentsDir = fleet.getAgentsDir();
   const app = new Hono();
 
   // GET /api/agents — list all agents
@@ -29,18 +27,16 @@ export function agentRoutes(fleet: AgentFleet) {
   app.get('/agents/:name/runs', (c) => {
     const { name } = c.req.param();
     const limit = Math.min(Number(c.req.query('limit') ?? '20'), 100);
-    return c.json(getRecentRuns(name, limit));
+    return c.json(getRecentRuns(name, agentsDir, limit));
   });
 
   // GET /api/agents/tasks — all tasks
   app.get('/agents/tasks', (c) => {
-    const tasks = new ScheduledTasks(TASKS_FILE);
     return c.json(tasks.list(null));
   });
 
   // GET /api/agents/:name/tasks
   app.get('/agents/:name/tasks', (c) => {
-    const tasks = new ScheduledTasks(TASKS_FILE);
     return c.json(tasks.list(null));
   });
 
@@ -58,9 +54,9 @@ export function agentRoutes(fleet: AgentFleet) {
 
   // GET /api/agents/feed — inter-agent message feed (legacy, kept for compat)
   app.get('/agents/feed', (c) => {
-    if (!existsSync(FEED_FILE)) return c.json([]);
+    if (!existsSync(feedFile)) return c.json([]);
     try {
-      const raw = readFileSync(FEED_FILE, 'utf-8');
+      const raw = readFileSync(feedFile, 'utf-8');
       const entries = raw
         .split('\n---\n')
         .filter((e) => e.trim())
@@ -75,13 +71,13 @@ export function agentRoutes(fleet: AgentFleet) {
 
   // GET /api/agents/topics — list all topic names with metadata
   app.get('/agents/topics', (c) => {
-    if (!existsSync(TOPICS_DIR)) return c.json([]);
+    if (!existsSync(topicsDir)) return c.json([]);
     try {
-      const files = readdirSync(TOPICS_DIR)
+      const files = readdirSync(topicsDir)
         .filter((f) => f.endsWith('.md') && !f.startsWith('.'));
       const topics = files.map((f) => {
         const name = basename(f, '.md');
-        const file = resolve(TOPICS_DIR, f);
+        const file = resolve(topicsDir, f);
         try {
           const raw = readFileSync(file, 'utf-8');
           const entries = parseTopicEntries(raw);
@@ -107,7 +103,7 @@ export function agentRoutes(fleet: AgentFleet) {
   app.get('/agents/topics/:name', (c) => {
     const { name } = c.req.param();
     if (!/^[a-z0-9_-]+$/.test(name)) return c.json({ error: 'Invalid topic name' }, 400);
-    const file = resolve(TOPICS_DIR, `${name}.md`);
+    const file = resolve(topicsDir, `${name}.md`);
     if (!existsSync(file)) return c.json([]);
     try {
       const raw = readFileSync(file, 'utf-8');

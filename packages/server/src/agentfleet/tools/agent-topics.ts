@@ -19,6 +19,8 @@ export class AgentTopics {
     mkdirSync(this.cursorsDir, { recursive: true });
   }
 
+  getTopicsDir(): string { return this.topicsDir; }
+
   writeTopic(fromAgent: string, topic: string, message: string, to?: string[], threadId?: string): Record<string, any> {
     if (!topic || !/^[a-z0-9_-]+$/.test(topic)) {
       return { error: 'topic must only contain lowercase letters, digits, underscores, or hyphens' };

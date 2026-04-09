@@ -53,6 +53,7 @@ export class BaseAgent implements Agent {
   private readonly confirmations: Confirmations;
   private readonly config: AppConfig;
   private readonly clientConfig: ClientConfig;
+  private readonly agentsDir: string;
   private readonly eventBus: EventBusLike;
   private readonly hiresProvider: () => string[];
   readonly session: SessionHandler;
@@ -78,6 +79,7 @@ export class BaseAgent implements Agent {
     this.confirmations = confirmations;
     this.config = config;
     this.clientConfig = clientConfig;
+    this.agentsDir = agentsDir;
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
     this.emailThreadStore = new EmailThreadStore(agentsDir, def.name);
@@ -157,7 +159,7 @@ export class BaseAgent implements Agent {
       this.activeRuns.delete(sessionId);
       const result = resultAccum.join('');
       finishRunRecord(record, result);
-      saveRunRecord(record);
+      saveRunRecord(record, this.agentsDir);
       this.eventBus.publish({
         type: 'agent_run_end',
         agent: this.def.name,
@@ -260,7 +262,7 @@ export class BaseAgent implements Agent {
       finishRunRecord(record, result);
     }
 
-    saveRunRecord(record);
+    saveRunRecord(record, this.agentsDir);
     this.eventBus.publish({
       type: 'agent_run_end',
       agent: this.def.name,
@@ -318,7 +320,7 @@ export class BaseAgent implements Agent {
       finishRunRecord(record, result);
     }
 
-    saveRunRecord(record);
+    saveRunRecord(record, this.agentsDir);
     this.eventBus.publish({
       type: 'agent_run_end',
       agent: this.def.name,

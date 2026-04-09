@@ -29,10 +29,18 @@ export class AgentFleet {
     this.router = router;
   }
 
-  // ── Directory access ──────────────────────────────────────────────────────────
+  // ── Directory / resource access ───────────────────────────────────────────────
 
   getAgentsDir(): string {
     return this.toolsRegistry.getAgentsDir();
+  }
+
+  getTopicsDir(): string {
+    return this.toolsRegistry.topics.getTopicsDir();
+  }
+
+  getScheduledTasks() {
+    return this.toolsRegistry.getScheduledTasks();
   }
 
   // ── Chat routing ─────────────────────────────────────────────────────────────

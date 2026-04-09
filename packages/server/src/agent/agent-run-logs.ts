@@ -1,9 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { randomUUID } from 'crypto';
-import { MONOREPO_ROOT } from '../root.js';
-
-const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
 const MAX_TEXT_LEN = 5_000;
 const MAX_TOOL_INPUT_LEN = 1_000;
@@ -88,15 +85,15 @@ export function setInitialMessages(record: RunRecord, messages: Record<string, a
   });
 }
 
-export function saveRunRecord(record: RunRecord): void {
-  const runsDir = resolve(AGENTS_DIR, record.agent, 'runs');
+export function saveRunRecord(record: RunRecord, agentsDir: string): void {
+  const runsDir = resolve(agentsDir, record.agent, 'runs');
   mkdirSync(runsDir, { recursive: true });
   const filename = `${record.startedAt}_${record.id}.json`;
   writeFileSync(resolve(runsDir, filename), JSON.stringify(record, null, 2), 'utf-8');
 }
 
-export function getRecentRuns(agent: string, limit: number = 20): Record<string, any>[] {
-  const runsDir = resolve(AGENTS_DIR, agent, 'runs');
+export function getRecentRuns(agent: string, agentsDir: string, limit: number = 20): Record<string, any>[] {
+  const runsDir = resolve(agentsDir, agent, 'runs');
   if (!existsSync(runsDir)) return [];
 
   const files = readdirSync(runsDir)
