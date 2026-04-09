@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import yaml from 'js-yaml';
-import { AGENTS_DIR } from '../tools-registry.js';
 import type { AgentRegistry } from '../agent-registry.js';
 import type { EventBus } from '../event-bus.js';
 import type { AgentTopics } from './agent-topics.js';
@@ -12,6 +11,7 @@ function randomId(): string {
 
 export class AgentTools {
   constructor(
+    private readonly agentsDir: string,
     private readonly getRegistry: () => AgentRegistry,
     private readonly eventBus: EventBus,
     private readonly topics: AgentTopics,
@@ -87,7 +87,7 @@ export class AgentTools {
   }
 
   readAgentDefinition(name: string): Record<string, any> {
-    const agentDir = resolve(AGENTS_DIR, name);
+    const agentDir = resolve(this.agentsDir, name);
     if (!existsSync(agentDir)) {
       return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
     }
@@ -114,7 +114,7 @@ export class AgentTools {
     identity: string | null,
     tools: string[] | null,
   ): Record<string, any> {
-    const agentDir = resolve(AGENTS_DIR, name);
+    const agentDir = resolve(this.agentsDir, name);
     if (!existsSync(agentDir)) {
       return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
     }
@@ -161,7 +161,7 @@ export class AgentTools {
     if (!name || !/^[a-z][a-z0-9_]*$/.test(name)) {
       return { error: 'Agent name must be lowercase alphanumeric + underscore, starting with a letter (e.g. "pm_coach")' };
     }
-    const agentDir = resolve(AGENTS_DIR, name);
+    const agentDir = resolve(this.agentsDir, name);
     try {
       mkdirSync(agentDir, { recursive: true });
       writeFileSync(resolve(agentDir, 'identity.md'), identity, 'utf-8');

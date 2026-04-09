@@ -6,8 +6,10 @@ const DATE_FMT = new Intl.DateTimeFormat('en-US', {
 });
 
 export class SessionToolsImpl {
+  constructor(private readonly agentsDir: string) {}
+
   dispatch(toolName: string, input: Record<string, any>, agentName: string): Record<string, any> | null {
-    const store = new SessionStore(agentName);
+    const store = new SessionStore(this.agentsDir, agentName);
     switch (toolName) {
       case 'list_sessions':           return this.listSessions(store);
       case 'read_session_summary':    return this.readSessionSummary(store, input.session_id as string);

@@ -31,61 +31,80 @@ import { artifactsRoutes } from './routes/artifacts.js';
 import { ccRoutes } from './routes/cc.js';
 
 // Gmail
-import { GmailClient, GMAIL_CREDENTIALS_PATH } from './agentfleet/tools/gmail.js';
+import { GmailClient } from './agentfleet/tools/gmail.js';
+import { clientDataDir } from './root.js';
 
 async function createApp() {
   const config = loadConfig();
   console.log(`[config] apiKey: ${config.apiKey ? config.apiKey.slice(0, 8) + '...' : '(empty)'}`);
+  console.log(`[config] clients: ${config.clients.map((c) => c.id).join(', ')}`);
 
-  // ── Core dependencies ──────────────────────────────────────────────────────
+  // ── Core dependencies (shared across all clients) ──────────────────────────
 
   const confirmations = new Confirmations();
   const eventBus = new EventBus();
   const webPush = new WebPushService();
   webPush.init();
 
-  // ── Tool implementations ───────────────────────────────────────────────────
-
-  const toolsRegistry = new ToolsRegistry();
-  toolsRegistry.init();
-
   const webSearch = new WebSearch();
   const browse = new Browse();
 
-  // ── Agent registry (must be before AgentTools — lazy ref) ─────────────────
+  // ── Per-client fleet construction ──────────────────────────────────────────
 
-  const registry = new AgentRegistry(toolsRegistry, eventBus, confirmations, config);
+  const fleets = new Map<string, AgentFleet>();
 
-  // Tools that need lazy registry reference (circular dep)
-  const agentTools = new AgentTools(() => registry, eventBus, toolsRegistry.topics);
-  const notifications = new Notifications(() => registry, eventBus, webPush);
+  function buildFleet(clientId: string): AgentFleet {
+    const clientConfig = config.clients.find((c) => c.id === clientId);
+    if (!clientConfig) throw new Error(`Unknown client: ${clientId}`);
 
-  // Wire injectable deps into ToolsRegistry
-  toolsRegistry.agentTools = agentTools;
-  toolsRegistry.webSearch = webSearch;
-  toolsRegistry.browse = browse;
-  toolsRegistry.notifications = notifications;
-  toolsRegistry.eventBusPublish = (e) => eventBus.publish(e);
-  toolsRegistry.clientEmail = config.clientEmail;
+    const dataDir = clientDataDir(clientId);
 
-  registry.load();
+    const toolsRegistry = new ToolsRegistry(dataDir, clientConfig);
+    toolsRegistry.init(dataDir);
 
-  // ── Platform layer ─────────────────────────────────────────────────────────
+    const registry = new AgentRegistry(toolsRegistry, eventBus, confirmations, config, clientConfig, dataDir);
 
-  const router = new AgentRouter(registry, eventBus);
-  const fleet = new AgentFleet(registry, eventBus, router, config, toolsRegistry);
+    // Tools that need lazy registry reference (circular dep)
+    const agentTools = new AgentTools(toolsRegistry.getAgentsDir(), () => registry, eventBus, toolsRegistry.topics);
+    const notifications = new Notifications(() => registry, eventBus, webPush);
 
-  // Upsert recurring tasks defined in agent.yml
-  fleet.initBackgroundTasks();
+    // Wire injectable deps into ToolsRegistry
+    toolsRegistry.agentTools = agentTools;
+    toolsRegistry.webSearch = webSearch;
+    toolsRegistry.browse = browse;
+    toolsRegistry.notifications = notifications;
+    toolsRegistry.eventBusPublish = (e) => eventBus.publish(e);
 
-  // Start background listeners on all agents
-  for (const agent of registry.all()) {
-    (agent as any).initListeners?.();
+    registry.load();
+
+    // Wire Gmail tools if credentials exist (per-client)
+    const credentialsPath = `${dataDir}/system/gmail-credentials.json`;
+    const gmail = new GmailClient(credentialsPath);
+    if (gmail.isConfigured()) {
+      toolsRegistry.setGmailClient(gmail);
+      console.log(`[gmail:${clientId}] tools enabled`);
+    }
+
+    const router = new AgentRouter(registry, eventBus);
+    const fleet = new AgentFleet(registry, eventBus, router, config, clientConfig, toolsRegistry);
+
+    fleet.initBackgroundTasks();
+
+    fleets.set(clientId, fleet);
+    return fleet;
   }
+
+  // Eager-init all configured clients
+  for (const client of config.clients) {
+    buildFleet(client.id);
+  }
+
+  // Default fleet (first client) for routes that don't specify clientId
+  const defaultFleet = fleets.get(config.clients[0]!.id)!;
 
   // ── Schedulers ─────────────────────────────────────────────────────────────
 
-  const fleetScheduler = new AgentFleetScheduler(fleet);
+  const fleetScheduler = new AgentFleetScheduler([...fleets.values()]);
   fleetScheduler.start();
 
   // ── Hono app ───────────────────────────────────────────────────────────────
@@ -96,22 +115,15 @@ async function createApp() {
   // Health
   app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
-  // API routes
-  app.route('/api', chatRoutes(fleet, confirmations));
-  app.route('/api', sessionRoutes(fleet));
-  app.route('/api', agentRoutes(fleet));
+  // API routes — pass defaultFleet for single-client compat; future: resolve per request
+  app.route('/api', chatRoutes(defaultFleet, confirmations));
+  app.route('/api', sessionRoutes(defaultFleet));
+  app.route('/api', agentRoutes(defaultFleet));
   app.route('/api', eventRoutes(eventBus));
   app.route('/api', pushRoutes(webPush));
-  app.route('/api', toolsRoutes(fleet));
-  app.route('/api', artifactsRoutes());
+  app.route('/api', toolsRoutes(defaultFleet));
+  app.route('/api', artifactsRoutes(defaultFleet));
   app.route('/api', ccRoutes(config));
-
-  // Wire Gmail tools if credentials exist
-  const gmail = new GmailClient(GMAIL_CREDENTIALS_PATH);
-  if (gmail.isConfigured()) {
-    toolsRegistry.setGmailClient(gmail);
-    console.log('[gmail] tools enabled');
-  }
 
   console.log(`lifeos-ts server starting on port ${config.port}`);
   return { port: config.port, fetch: app.fetch, idleTimeout: 0 };

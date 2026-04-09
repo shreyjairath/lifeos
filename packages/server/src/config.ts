@@ -19,19 +19,53 @@ export interface Contact {
   fallback: string;
 }
 
+export interface ClientConfig {
+  id: string;
+  name: string;
+  email: string;
+  mailboxAddress: string;
+  contacts: Contact[];
+}
+
 export interface AppConfig {
   port: number;
   apiKey: string;
   model: string;
   backgroundModel: string;
-  clientName: string;
-  clientEmail: string;
-  mailboxEmail: string;
-  contacts: Contact[];
+  clients: ClientConfig[];
   reasoning: ReasoningConfig | null;
   session: SessionConfig;
   heartbeatCron: string;
   sessionExpiryCheckCron: string;
+}
+
+function parseContacts(raw: Record<string, any>[]): Contact[] {
+  return raw.map((c) => ({
+    email: (c.email as string).toLowerCase(),
+    agents: (c.agents ?? []) as string[],
+    fallback: c.fallback as string,
+  }));
+}
+
+function parseClients(lifeos: Record<string, any>): ClientConfig[] {
+  // New multi-client format: clients: [{ id, name, email, mailbox-address, contacts }]
+  if (Array.isArray(lifeos.clients)) {
+    return (lifeos.clients as Record<string, any>[]).map((c) => ({
+      id: c.id as string,
+      name: c.name as string,
+      email: (c.email as string) ?? '',
+      mailboxAddress: (c['mailbox-address'] as string) ?? '',
+      contacts: parseContacts((c.contacts ?? []) as Record<string, any>[]),
+    }));
+  }
+  // Legacy single-client format: client-name, client-email, mailbox-email, contacts
+  return [{
+    id: 'default',
+    name: lifeos['client-name'] ?? '',
+    email: lifeos['client-email'] ?? '',
+    mailboxAddress: lifeos['mailbox-email'] ?? '',
+    contacts: parseContacts((lifeos.contacts ?? []) as Record<string, any>[]),
+  }];
 }
 
 function envReplace(value: string): string {
@@ -61,14 +95,7 @@ export function loadConfig(configPath?: string): AppConfig {
     apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     model: lifeos.model,
     backgroundModel: lifeos['background-model'],
-    clientName: lifeos['client-name'] ?? '',
-    clientEmail: lifeos['client-email'] ?? '',
-    mailboxEmail: lifeos['mailbox-email'] ?? '',
-    contacts: ((lifeos.contacts ?? []) as Record<string, any>[]).map((c) => ({
-      email: (c.email as string).toLowerCase(),
-      agents: (c.agents ?? []) as string[],
-      fallback: c.fallback as string,
-    })),
+    clients: parseClients(lifeos),
     reasoning: reasoning
       ? {
           effort: reasoning.effort ?? undefined,

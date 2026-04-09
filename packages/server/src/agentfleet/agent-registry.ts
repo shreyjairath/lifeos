@@ -5,10 +5,9 @@ import { BaseAgent } from '../agent/base-agent.js';
 import { parseAgentDefinition } from '../agent/agent-definition.js';
 import { Confirmations } from '../agent/executor/confirmations.js';
 import type { Agent } from '../agent/types.js';
-import type { AppConfig } from '../config.js';
+import type { AppConfig, ClientConfig } from '../config.js';
 import type { EventBus } from './event-bus.js';
 import type { ToolsRegistry } from './tools-registry.js';
-import { AGENTS_DIR } from './tools-registry.js';
 import { loadPrompt } from '../agent/prompt-parts.js';
 import { MONOREPO_ROOT } from '../root.js';
 
@@ -25,20 +24,25 @@ const BUILTIN_AGENTS_DIR = resolve(MONOREPO_ROOT, 'agents');
  */
 export class AgentRegistry {
   private readonly agentsMap = new Map<string, Agent>();
+  private readonly dynamicAgentsDir: string;
 
   constructor(
     private readonly toolsRegistry: ToolsRegistry,
     private readonly eventBus: EventBus,
     private readonly confirmations: Confirmations,
     private readonly config: AppConfig,
-  ) {}
+    private readonly clientConfig: ClientConfig,
+    clientDataDir: string,
+  ) {
+    this.dynamicAgentsDir = resolve(clientDataDir, 'agents');
+  }
 
   load(): void {
     // 1. Built-in agents
     this.loadDir(BUILTIN_AGENTS_DIR);
 
-    // 2. Dynamic agents from .user-data/agents/
-    this.loadDir(AGENTS_DIR);
+    // 2. Dynamic agents from {clientDataDir}/agents/
+    this.loadDir(this.dynamicAgentsDir);
 
     if (this.agentsMap.size === 0) {
       console.warn('[AgentRegistry] No agents loaded — check agents/*/agent.yml');
@@ -89,8 +93,8 @@ export class AgentRegistry {
   private loadAgent(map: Record<string, any>, promptBase: string): Agent {
     const def = parseAgentDefinition(map, promptBase);
 
-    // Provision workspace
-    const workspace = resolve(AGENTS_DIR, def.name, 'workspace');
+    // Provision workspace in the per-client agents directory
+    const workspace = resolve(this.dynamicAgentsDir, def.name, 'workspace');
     try {
       mkdirSync(workspace, { recursive: true });
       this.toolsRegistry.registerAgentWorkspace(def.name, workspace, def.title);
@@ -129,6 +133,8 @@ export class AgentRegistry {
       invoker,
       this.confirmations,
       this.config,
+      this.clientConfig,
+      this.dynamicAgentsDir,
       this.eventBus,
       hiresProvider,
     );

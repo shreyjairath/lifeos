@@ -1,20 +1,22 @@
-import { MONOREPO_ROOT } from '../../root.js';
 import {
   existsSync, mkdirSync, readdirSync,
   readFileSync, appendFileSync, writeFileSync,
 } from 'fs';
 import { resolve, dirname } from 'path';
 
-const TOPICS_DIR = resolve(MONOREPO_ROOT, '.user-data', 'topics');
-const CURSORS_DIR = resolve(TOPICS_DIR, '.cursors');
 const MAX_ENTRIES = 100;
 const DEFAULT_PAGE_SIZE = 20;
 const HEADER_RE = /^## (\S+) \| (.+)$/;
 
 export class AgentTopics {
-  constructor() {
-    mkdirSync(TOPICS_DIR, { recursive: true });
-    mkdirSync(CURSORS_DIR, { recursive: true });
+  private readonly topicsDir: string;
+  private readonly cursorsDir: string;
+
+  constructor(topicsDir: string) {
+    this.topicsDir = topicsDir;
+    this.cursorsDir = resolve(topicsDir, '.cursors');
+    mkdirSync(this.topicsDir, { recursive: true });
+    mkdirSync(this.cursorsDir, { recursive: true });
   }
 
   writeTopic(fromAgent: string, topic: string, message: string, to?: string[], threadId?: string): Record<string, any> {
@@ -33,7 +35,7 @@ export class AgentTopics {
       header = `## ${ts} | ${fromAgent}`;
     }
     const entry = `${header}\n\n${message.trim()}\n\n---\n\n`;
-    const file = resolve(TOPICS_DIR, `${topic}.md`);
+    const file = resolve(this.topicsDir, `${topic}.md`);
     try {
       appendFileSync(file, entry, 'utf-8');
       pruneFile(file);
@@ -46,7 +48,7 @@ export class AgentTopics {
   readTopic(agentName: string, topic: string, consume = true, filter?: string, page = 1, pageSize = DEFAULT_PAGE_SIZE): Record<string, any> {
     if (!topic?.trim()) return { error: 'topic is required' };
 
-    const file = resolve(TOPICS_DIR, `${topic}.md`);
+    const file = resolve(this.topicsDir, `${topic}.md`);
     if (!existsSync(file)) return { topic, messages: [], count: 0 };
 
     try {
@@ -88,8 +90,8 @@ export class AgentTopics {
 
   listTopics(callerAgent: string): Record<string, any> {
     try {
-      if (!existsSync(TOPICS_DIR)) return { topics: [] };
-      const files = readdirSync(TOPICS_DIR)
+      if (!existsSync(this.topicsDir)) return { topics: [] };
+      const files = readdirSync(this.topicsDir)
         .filter((f) => f.endsWith('.md'))
         .sort();
       const topics = files.map((f) => ({
@@ -104,7 +106,7 @@ export class AgentTopics {
   // ── Private ──────────────────────────────────────────────────────────────────
 
   private readCursor(agentName: string, topic: string): string | null {
-    const file = resolve(CURSORS_DIR, agentName, topic);
+    const file = resolve(this.cursorsDir, agentName, topic);
     if (!existsSync(file)) return null;
     try {
       return readFileSync(file, 'utf-8').trim();
@@ -114,7 +116,7 @@ export class AgentTopics {
   }
 
   private writeCursor(agentName: string, topic: string, ts: string): void {
-    const file = resolve(CURSORS_DIR, agentName, topic);
+    const file = resolve(this.cursorsDir, agentName, topic);
     try {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, ts, 'utf-8');

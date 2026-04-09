@@ -12,3 +12,8 @@ import { fileURLToPath } from 'url';
 // resolve(file, '../../..') = packages/
 // resolve(file, '../../../..') = project root  ← .user-data lives here
 export const MONOREPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../../..');
+
+/** Absolute path to a client's data directory. */
+export function clientDataDir(clientId: string): string {
+  return resolve(MONOREPO_ROOT, '.user-data', 'clients', clientId);
+}

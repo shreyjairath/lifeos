@@ -1,16 +1,13 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
-import { MONOREPO_ROOT } from '../../root.js';
-
-const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
 type Store = Record<string, { lastSeenMessageId: string | null; summary?: string }>;
 
 export class EmailThreadStore {
   private readonly path: string;
 
-  constructor(agentName: string) {
-    const dir = resolve(AGENTS_DIR, agentName);
+  constructor(agentsDir: string, agentName: string) {
+    const dir = resolve(agentsDir, agentName);
     mkdirSync(dir, { recursive: true });
     this.path = resolve(dir, 'email-threads.json');
   }

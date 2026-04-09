@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, extname, basename } from 'path';
 import type { ToolDefinition, ToolInvoker } from '../agent/types.js';
-import { MONOREPO_ROOT } from '../root.js';
+import type { ClientConfig } from '../config.js';
 
-// Tool implementations — filled in Phase 5
+// Tool implementations
 import { Bash } from './tools/bash.js';
 import type { GmailClient } from './tools/gmail.js';
 import { ScheduledTasks } from './tools/scheduled-tasks.js';
@@ -19,24 +19,34 @@ type BrowseImpl = import('./tools/browse.js').Browse;
 import { BrowseJs } from './tools/browse-js.js';
 type NotificationsImpl = import('./tools/notifications.js').Notifications;
 
-const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
-export const AGENTS_DIR = resolve(USER_DATA, 'agents');
-const SHARED_DIR = resolve(USER_DATA, 'shared');
-const DISABLED_FILE = resolve(USER_DATA, 'disabled-tools.json');
-
 // ── ToolsRegistry ─────────────────────────────────────────────────────────────
 
 export class ToolsRegistry {
+  private readonly agentsDir: string;
+  private readonly sharedDir: string;
+  private readonly disabledFile: string;
   private readonly agentBash = new Map<string, Bash>();
   private readonly agentBashReadonly = new Map<string, Bash>();
   private readonly agentTitles = new Map<string, string>();
-  private readonly sharedTasks = new ScheduledTasks(resolve(USER_DATA, 'tasks.json'));
-  private readonly sessionTools = new SessionToolsImpl();
-  readonly topics: AgentTopics = new AgentTopics();
-  private readonly sharedBash = new Bash(SHARED_DIR, false);
+  private readonly sharedTasks: ScheduledTasks;
+  private readonly sessionTools: SessionToolsImpl;
+  readonly topics: AgentTopics;
+  private readonly sharedBash: Bash;
   private readonly redfin = new Redfin();
   private readonly browseJs = new BrowseJs();
   private gmailClient: GmailClient | null = null;
+  clientEmail: string;
+
+  constructor(clientDataDir: string, clientConfig: ClientConfig) {
+    this.agentsDir = resolve(clientDataDir, 'agents');
+    this.sharedDir = resolve(clientDataDir, 'shared');
+    this.disabledFile = resolve(clientDataDir, 'disabled-tools.json');
+    this.sharedTasks = new ScheduledTasks(resolve(clientDataDir, 'tasks.json'));
+    this.sessionTools = new SessionToolsImpl(this.agentsDir);
+    this.topics = new AgentTopics(resolve(clientDataDir, 'topics'));
+    this.sharedBash = new Bash(this.sharedDir, false);
+    this.clientEmail = clientConfig.email;
+  }
 
   setGmailClient(client: GmailClient): void {
     this.gmailClient = client;
@@ -50,17 +60,20 @@ export class ToolsRegistry {
     return this.sharedTasks;
   }
 
+  getAgentsDir(): string {
+    return this.agentsDir;
+  }
+
   // Injected by createApp() after construction
-  clientEmail = '';
   agentTools!: AgentToolsImpl;
   webSearch!: WebSearchImpl;
   browse!: BrowseImpl;
   notifications!: NotificationsImpl;
   eventBusPublish!: (event: Record<string, any>) => void;
 
-  init(): void {
-    mkdirSync(resolve(USER_DATA, 'system'), { recursive: true });
-    mkdirSync(SHARED_DIR, { recursive: true });
+  init(clientDataDir: string): void {
+    mkdirSync(resolve(clientDataDir, 'system'), { recursive: true });
+    mkdirSync(this.sharedDir, { recursive: true });
   }
 
   registerAgentWorkspace(name: string, workspacePath: string, title?: string): void {
@@ -83,9 +96,9 @@ export class ToolsRegistry {
   }
 
   loadDisabledTools(): Set<string> {
-    if (!existsSync(DISABLED_FILE)) return new Set();
+    if (!existsSync(this.disabledFile)) return new Set();
     try {
-      const arr = JSON.parse(readFileSync(DISABLED_FILE, 'utf-8')) as string[];
+      const arr = JSON.parse(readFileSync(this.disabledFile, 'utf-8')) as string[];
       return new Set(arr);
     } catch {
       return new Set();
@@ -93,8 +106,7 @@ export class ToolsRegistry {
   }
 
   saveDisabledTools(names: Set<string>): void {
-    mkdirSync(resolve(USER_DATA), { recursive: true });
-    writeFileSync(DISABLED_FILE, JSON.stringify([...names], null, 2), 'utf-8');
+    writeFileSync(this.disabledFile, JSON.stringify([...names], null, 2), 'utf-8');
   }
 
   // ── Dispatch ────────────────────────────────────────────────────────────────
@@ -121,7 +133,7 @@ export class ToolsRegistry {
         return this.sharedBash.run(input.command as string);
       case 'send_file_email': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
-        const workspace = resolve(AGENTS_DIR, agentName, 'workspace');
+        const workspace = resolve(this.agentsDir, agentName, 'workspace');
         const filePath = resolve(workspace, input.file_path as string);
         if (!filePath.startsWith(workspace)) return { error: 'Path outside workspace' };
         if (!existsSync(filePath)) return { error: `File not found: ${input.file_path}` };
@@ -144,7 +156,7 @@ export class ToolsRegistry {
         if (!sendTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
         let attachments: { filename: string; mimeType: string; data: Buffer }[] | undefined;
         if (Array.isArray(input.attachments) && input.attachments.length > 0) {
-          const workspace = resolve(AGENTS_DIR, agentName, 'workspace');
+          const workspace = resolve(this.agentsDir, agentName, 'workspace');
           attachments = [];
           for (const rel of input.attachments as string[]) {
             const filePath = resolve(workspace, rel);
@@ -194,13 +206,13 @@ export class ToolsRegistry {
         return { thread };
       }
       case 'read_email_thread_summary': {
-        const store = new EmailThreadStore(agentName);
+        const store = new EmailThreadStore(this.agentsDir, agentName);
         const summary = store.readSummary(input.thread_id as string);
         if (!summary) return { error: `No summary found for thread ${input.thread_id as string}` };
         return { thread_id: input.thread_id, summary };
       }
       case 'write_email_thread_summary': {
-        const store = new EmailThreadStore(agentName);
+        const store = new EmailThreadStore(this.agentsDir, agentName);
         store.writeSummary(input.thread_id as string, input.summary as string);
         return { status: 'written', thread_id: input.thread_id };
       }
@@ -315,7 +327,7 @@ export class ToolsRegistry {
         if (path.startsWith('https://') || path.startsWith('http://')) {
           return { url: path, title, path };
         }
-        const artifactsDir = resolve(AGENTS_DIR, agentName, 'workspace', '_artifacts');
+        const artifactsDir = resolve(this.agentsDir, agentName, 'workspace', '_artifacts');
         const file = resolve(artifactsDir, path);
         if (!file.startsWith(artifactsDir)) return { error: `Path outside _artifacts folder: ${path}` };
         if (!existsSync(file)) return { error: `File not found in _artifacts/: ${path}` };

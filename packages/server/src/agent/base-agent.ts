@@ -16,7 +16,7 @@ import {
 import { loadPrompt, loadGenericPrompt } from './prompt-parts.js';
 import type { AgentDefinition } from './agent-definition.js';
 import type { Agent, ToolInvoker, ExecutorEvent } from './types.js';
-import type { AppConfig } from '../config.js';
+import type { AppConfig, ClientConfig } from '../config.js';
 
 
 // Shared prompt scaffolding — loaded once at module init
@@ -52,6 +52,7 @@ export class BaseAgent implements Agent {
   private readonly toolInvoker: ToolInvoker;
   private readonly confirmations: Confirmations;
   private readonly config: AppConfig;
+  private readonly clientConfig: ClientConfig;
   private readonly eventBus: EventBusLike;
   private readonly hiresProvider: () => string[];
   readonly session: SessionHandler;
@@ -67,6 +68,8 @@ export class BaseAgent implements Agent {
     toolInvoker: ToolInvoker,
     confirmations: Confirmations,
     config: AppConfig,
+    clientConfig: ClientConfig,
+    agentsDir: string,
     eventBus: EventBusLike,
     hiresProvider: () => string[],
   ) {
@@ -74,10 +77,11 @@ export class BaseAgent implements Agent {
     this.toolInvoker = toolInvoker;
     this.confirmations = confirmations;
     this.config = config;
+    this.clientConfig = clientConfig;
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
-    this.emailThreadStore = new EmailThreadStore(def.name);
-    this.session = new SessionHandler(config, def.name);
+    this.emailThreadStore = new EmailThreadStore(agentsDir, def.name);
+    this.session = new SessionHandler(config, agentsDir, def.name);
     this.session.setLlmClientFactory(() => new LlmClient(config.apiKey));
     this.initListeners();
   }
@@ -346,8 +350,8 @@ export class BaseAgent implements Agent {
     const parts: string[] = [LIFEOS_PROMPT];
 
     const clientLines: string[] = [];
-    if (this.config.clientName) clientLines.push(`**Name:** ${this.config.clientName}`);
-    if (this.config.clientEmail) clientLines.push(`**Email:** ${this.config.clientEmail}`);
+    if (this.clientConfig.name) clientLines.push(`**Name:** ${this.clientConfig.name}`);
+    if (this.clientConfig.email) clientLines.push(`**Email:** ${this.clientConfig.email}`);
     if (clientLines.length) parts.push('\n\n## The Client\n\n' + clientLines.join('\n'));
 
     parts.push('\n\n# Your Identity\n\n' + this.identityWithName());
@@ -391,9 +395,9 @@ export class BaseAgent implements Agent {
             `\n\n**You are processing ${opts.emailThreadMeta.length === 1 ? 'this thread' : 'these threads'} — use the fields below when calling \`send_email\` or \`send_file_email\` to reply, and pass all thread_ids to \`email_thread_ids\` in \`log_entry\`:**\n\n${threadLines.join('\n')}`,
           );
         }
-        if (this.config.mailboxEmail) {
+        if (this.clientConfig.mailboxAddress) {
           parts.push(
-            `\n\n**Shared mailbox:** \`${this.config.mailboxEmail}\` — all agents share this address. ` +
+            `\n\n**Shared mailbox:** \`${this.clientConfig.mailboxAddress}\` — all agents share this address. ` +
             `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
             `— ${this.def.title} (@${this.def.name})`,
           );

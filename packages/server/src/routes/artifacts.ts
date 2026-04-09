@@ -1,10 +1,7 @@
 import { Hono } from 'hono';
 import { resolve, normalize } from 'path';
 import { existsSync, readdirSync, statSync, readFileSync } from 'fs';
-import { MONOREPO_ROOT } from '../root.js';
-
-const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
-const AGENTS_DIR = resolve(USER_DATA, 'agents');
+import type { AgentFleet } from '../agentfleet/agent-fleet.js';
 
 // Simple MIME type lookup for common artifact types
 function mimeType(filename: string): string {
@@ -43,13 +40,14 @@ function walkDir(dir: string, base: string): string[] {
   return results;
 }
 
-export function artifactsRoutes() {
+export function artifactsRoutes(fleet: AgentFleet) {
+  const agentsDir = fleet.getAgentsDir();
   const app = new Hono();
 
   // GET /api/artifacts/:agentName — list artifact files
   app.get('/artifacts/:agentName', (c) => {
     const { agentName } = c.req.param();
-    const artifactsDir = normalize(resolve(AGENTS_DIR, agentName, 'workspace', '_artifacts'));
+    const artifactsDir = normalize(resolve(agentsDir, agentName, 'workspace', '_artifacts'));
 
     if (!existsSync(artifactsDir) || !statSync(artifactsDir).isDirectory()) {
       return c.json([]);
@@ -72,7 +70,7 @@ export function artifactsRoutes() {
     }
     const relativePath = decodeURIComponent(url.pathname.slice(prefix.length));
 
-    const artifactsDir = normalize(resolve(AGENTS_DIR, agentName, 'workspace', '_artifacts'));
+    const artifactsDir = normalize(resolve(agentsDir, agentName, 'workspace', '_artifacts'));
     const file = normalize(resolve(artifactsDir, relativePath));
 
     // Path traversal guard

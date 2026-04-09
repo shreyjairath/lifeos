@@ -1,12 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve } from 'path';
-import { MONOREPO_ROOT } from '../../root.js';
-
-const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 
 /**
  * Raw file I/O for one agent's sessions subtree:
- *   .user-data/agents/{agent}/sessions/{sessionId}/
+ *   {agentsDir}/{agent}/sessions/{sessionId}/
  *     meta.json       — { title, created_at, last_message_at, last_input_tokens, parent_session_id, agent, closed }
  *     messages.json   — OpenAI message array
  *     summary.md      — written at rotation time
@@ -14,8 +11,8 @@ const AGENTS_DIR = resolve(MONOREPO_ROOT, '.user-data/agents');
 export class SessionStore {
   private root: string;
 
-  constructor(agentName: string) {
-    this.root = resolve(AGENTS_DIR, agentName, 'sessions');
+  constructor(agentsDir: string, agentName: string) {
+    this.root = resolve(agentsDir, agentName, 'sessions');
   }
 
   // ── Meta ──────────────────────────────────────────────────────────────────

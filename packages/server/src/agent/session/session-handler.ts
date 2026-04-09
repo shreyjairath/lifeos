@@ -69,11 +69,12 @@ export class SessionHandler {
 
   constructor(
     config: AppConfig,
+    agentsDir: string,
     agentName: string,
   ) {
     this.config = config;
     this.agentName = agentName;
-    this.store = new SessionStore(agentName);
+    this.store = new SessionStore(agentsDir, agentName);
   }
 
   /** Inject LlmClient after construction to avoid circular dependency */
