@@ -3,7 +3,7 @@ server:
 
 lifeos:
   clients:
-    - id: default
+    - id: shrey
       name: Shrey
       email: shreyjairath@gmail.com
       mailbox-address: sjairath.cos@gmail.com
