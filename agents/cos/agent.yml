@@ -11,6 +11,12 @@ tools:
     - parse_redfin_search
     - property_report
 recurring-tasks:
+  - name: onboarding
+    prompt: onboarding.md
+    cadence-hours: 0
+  - name: daily_contact
+    prompt: daily-contact.md
+    cadence-hours: 24
   - name: heartbeat
     prompt: heartbeat.md
     cadence-hours: 6

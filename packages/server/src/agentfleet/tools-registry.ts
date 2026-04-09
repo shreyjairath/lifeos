@@ -299,7 +299,6 @@ export class ToolsRegistry {
           input.description as string ?? null,
           input.goal as string ?? null,
           input.manager as string ?? null,
-          input.identity as string ?? null,
           Array.isArray(input.tools) ? input.tools.map(String) : null,
         );
       case 'list_agents':
@@ -630,15 +629,13 @@ const TOOLS: ToolDefinition[] = [
 
   tool('update_agent',
     'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first. ' +
-    'Identity should describe who the agent is and their standing capabilities — keep it stable, general, and non-restrictive. ' +
-    'Do not encode current project state, deadlines, or situational context in identity — that belongs in the agent\'s workspace (_memory.md, plans, etc.).',
+    'Identity is managed by the system and cannot be updated via this tool.',
     props(
       prop('name', 'string', 'Agent slug to update'),
       prop('title', 'string', 'New display name'),
       prop('description', 'string', 'New one-sentence description'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager (e.g. "cos", "advisor")'),
-      prop('identity', 'string', 'Who the agent is and their standing capabilities. Keep stable and general — no project state, deadlines, or situational context.'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'New tool list (replaces current list)' }],
     ),
     ['name']),

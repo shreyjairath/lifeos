@@ -111,7 +111,6 @@ export class AgentTools {
     description: string | null,
     goal: string | null,
     manager: string | null,
-    identity: string | null,
     tools: string[] | null,
   ): Record<string, any> {
     const agentDir = resolve(this.agentsDir, name);
@@ -131,11 +130,6 @@ export class AgentTools {
       if (tools != null) {
         const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
         merged.tools = { mode: 'include', names: allTools };
-      }
-
-      const identityPath = resolve(agentDir, 'identity.md');
-      if (identity != null) {
-        writeFileSync(identityPath, identity, 'utf-8');
       }
 
       const yamlContent = yaml.dump(merged, { lineWidth: -1 });

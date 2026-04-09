@@ -14,6 +14,18 @@ lifeos:
         - email: akanksha.khanna28@gmail.com
           agents: [relocation, chicago_childcare, chicago_realestate]
           fallback: relocation
+    - id: nishant
+      name: Nishant
+      email: shreyjairath@gmail.com
+      mailbox-address: sjairath.cos+nishant@gmail.com
+    - id: akanksha
+      name: Akanksha
+      email: akanksha.khanna28@gmail.com
+      mailbox-address: sjairath.cos+akanksha@gmail.com
+    - id: tita
+      name: Tita
+      email: shrey1490@gmail.com
+      mailbox-address: sjairath.cos+tita@gmail.com
   model: xiaomi/mimo-v2-pro
   background-model: xiaomi/mimo-v2-pro
   reasoning:
