@@ -2,16 +2,18 @@ server:
   port: 8000
 
 lifeos:
-  client-name: Shrey
-  client-email: shreyjairath@gmail.com
-  mailbox-email: sjairath.cos@gmail.com
-  contacts:
-    - email: jairath.nishant@gmail.com
-      agents: [relocation, chicago_childcare, chicago_realestate]
-      fallback: relocation
-    - email: akanksha.khanna28@gmail.com
-      agents: [relocation, chicago_childcare, chicago_realestate]
-      fallback: relocation
+  clients:
+    - id: default
+      name: Shrey
+      email: shreyjairath@gmail.com
+      mailbox-address: sjairath.cos@gmail.com
+      contacts:
+        - email: jairath.nishant@gmail.com
+          agents: [relocation, chicago_childcare, chicago_realestate]
+          fallback: relocation
+        - email: akanksha.khanna28@gmail.com
+          agents: [relocation, chicago_childcare, chicago_realestate]
+          fallback: relocation
   model: xiaomi/mimo-v2-pro
   background-model: xiaomi/mimo-v2-pro
   reasoning:
