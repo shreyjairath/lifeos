@@ -195,9 +195,9 @@ export class ToolsRegistry {
         if (!emailQuery.includes(`@${agentName}`)) {
           emailQuery += ` "@${agentName}"`;
         }
-        // Restrict to this client's mailbox address
-        if (this.mailboxAddress && !emailQuery.includes('to:')) {
-          emailQuery += ` to:${this.mailboxAddress}`;
+        // Restrict to this client's mailbox address (inbound or outbound)
+        if (this.mailboxAddress && !emailQuery.includes('to:') && !emailQuery.includes('from:')) {
+          emailQuery += ` {to:${this.mailboxAddress} from:${this.mailboxAddress}}`;
         }
         const emails = await this.gmailClient.fetchRecent(
           emailQuery,
