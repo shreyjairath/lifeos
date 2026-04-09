@@ -17,7 +17,6 @@ type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
 type WebSearchImpl = import('./tools/web-search.js').WebSearch;
 type BrowseImpl = import('./tools/browse.js').Browse;
 import { BrowseJs } from './tools/browse-js.js';
-type NotificationsImpl = import('./tools/notifications.js').Notifications;
 
 // ── ToolsRegistry ─────────────────────────────────────────────────────────────
 
@@ -68,7 +67,6 @@ export class ToolsRegistry {
   agentTools!: AgentToolsImpl;
   webSearch!: WebSearchImpl;
   browse!: BrowseImpl;
-  notifications!: NotificationsImpl;
   eventBusPublish!: (event: Record<string, any>) => void;
 
   init(clientDataDir: string): void {

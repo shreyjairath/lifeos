@@ -11,21 +11,18 @@ import { ToolsRegistry } from './agentfleet/tools-registry.js';
 import { AgentRegistry } from './agentfleet/agent-registry.js';
 import { AgentRouter } from './agentfleet/agent-router.js';
 import { AgentFleet } from './agentfleet/agent-fleet.js';
-import { WebPushService } from './agentfleet/web-push-service.js';
 import { AgentFleetScheduler } from './agentfleet/schedulers/agent-fleet-scheduler.js';
 
 // Tool implementations
 import { AgentTools } from './agentfleet/tools/agent-tools.js';
 import { WebSearch } from './agentfleet/tools/web-search.js';
 import { Browse } from './agentfleet/tools/browse.js';
-import { Notifications } from './agentfleet/tools/notifications.js';
 
 // Routes
 import { chatRoutes } from './routes/chat.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { agentRoutes } from './routes/agents.js';
 import { eventRoutes } from './routes/events.js';
-import { pushRoutes } from './routes/push.js';
 import { toolsRoutes } from './routes/tools.js';
 import { artifactsRoutes } from './routes/artifacts.js';
 import { ccRoutes } from './routes/cc.js';
@@ -43,8 +40,6 @@ async function createApp() {
 
   const confirmations = new Confirmations();
   const eventBus = new EventBus();
-  const webPush = new WebPushService();
-  webPush.init();
 
   const webSearch = new WebSearch();
   const browse = new Browse();
@@ -66,13 +61,11 @@ async function createApp() {
 
     // Tools that need lazy registry reference (circular dep)
     const agentTools = new AgentTools(toolsRegistry.getAgentsDir(), () => registry, eventBus, toolsRegistry.topics);
-    const notifications = new Notifications(() => registry, eventBus, webPush);
 
     // Wire injectable deps into ToolsRegistry
     toolsRegistry.agentTools = agentTools;
     toolsRegistry.webSearch = webSearch;
     toolsRegistry.browse = browse;
-    toolsRegistry.notifications = notifications;
     toolsRegistry.eventBusPublish = (e) => eventBus.publish(e);
 
     registry.load();
@@ -120,7 +113,6 @@ async function createApp() {
   app.route('/api', sessionRoutes(defaultFleet));
   app.route('/api', agentRoutes(defaultFleet));
   app.route('/api', eventRoutes(eventBus));
-  app.route('/api', pushRoutes(webPush));
   app.route('/api', toolsRoutes(defaultFleet));
   app.route('/api', artifactsRoutes(defaultFleet));
   app.route('/api', ccRoutes(config));

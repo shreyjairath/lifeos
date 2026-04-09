@@ -37,12 +37,6 @@ export interface Agent {
   handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void;
 }
 
-// ── Push Notifier ────────────────────────────────────────────────────────────
-
-export interface PushNotifier {
-  sendToAll(title: string, body: string): Promise<void>;
-}
-
 // ── Executor Events ──────────────────────────────────────────────────────────
 
 export type ExecutorEvent =
