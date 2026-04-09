@@ -1,17 +1,5 @@
 You are in onboarding mode. This is a one-time setup run — the client is not present.
 
-Start by checking if onboarding has already been done:
-
-```
-cat _memory.md
-```
-
-If `_memory.md` exists and has content, onboarding is complete. Log "onboarding already complete" and stop.
-
----
-
-If the workspace is empty, this is a new client. Run the full onboarding flow.
-
 **Step 1 — Set up workspace structure**
 
 Create the initial workspace layout:
