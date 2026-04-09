@@ -124,10 +124,11 @@ export class GmailClient {
     fromName?: string,
     cc?: string,
     attachments?: { filename: string; mimeType: string; data: Buffer }[],
+    fromEmail?: string,
   ): Promise<void> {
-    const accountEmail = fromName ? await this.getAccountEmail() : null;
-    const fromHeader = fromName && accountEmail
-      ? `From: ${fromName} <${accountEmail}>\r\n`
+    const effectiveFromEmail = fromEmail ?? (fromName ? await this.getAccountEmail() : null);
+    const fromHeader = fromName && effectiveFromEmail
+      ? `From: ${fromName} <${effectiveFromEmail}>\r\n`
       : '';
 
     const encodedSubject = /[^\x00-\x7F]/.test(subject)
@@ -216,9 +217,9 @@ export class GmailClient {
     );
   }
 
-  async sendFile(to: string, subject: string, filePath: string, threadId?: string, inReplyTo?: string, fromName?: string, cc?: string): Promise<void> {
+  async sendFile(to: string, subject: string, filePath: string, threadId?: string, inReplyTo?: string, fromName?: string, cc?: string, fromEmail?: string): Promise<void> {
     const html = readFileSync(filePath, 'utf-8');
-    await this.send(to, subject, undefined, threadId, html, inReplyTo, fromName, cc);
+    await this.send(to, subject, undefined, threadId, html, inReplyTo, fromName, cc, undefined, fromEmail);
   }
 
   /** Returns the most recent sent message in the thread sent after `afterMs`, or null if none. */

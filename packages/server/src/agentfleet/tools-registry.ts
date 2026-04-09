@@ -35,6 +35,7 @@ export class ToolsRegistry {
   private readonly browseJs = new BrowseJs();
   private gmailClient: GmailClient | null = null;
   clientEmail: string;
+  private readonly mailboxAddress: string;
 
   constructor(clientDataDir: string, clientConfig: ClientConfig) {
     this.agentsDir = resolve(clientDataDir, 'agents');
@@ -45,6 +46,7 @@ export class ToolsRegistry {
     this.topics = new AgentTopics(resolve(clientDataDir, 'topics'));
     this.sharedBash = new Bash(this.sharedDir, false);
     this.clientEmail = clientConfig.email;
+    this.mailboxAddress = clientConfig.mailboxAddress;
   }
 
   setGmailClient(client: GmailClient): void {
@@ -145,6 +147,7 @@ export class ToolsRegistry {
           input.in_reply_to as string | undefined,
           this.agentTitles.get(agentName),
           input.cc as string | undefined,
+          this.mailboxAddress || undefined,
         );
         return { sent: true };
       }
@@ -177,6 +180,7 @@ export class ToolsRegistry {
           this.agentTitles.get(agentName),
           input.cc as string | undefined,
           attachments,
+          this.mailboxAddress || undefined,
         );
         return { sent: true };
       }
