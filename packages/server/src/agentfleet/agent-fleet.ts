@@ -146,7 +146,10 @@ export class AgentFleet {
 
   async triggerEmailCheck(): Promise<void> {
     const gmail = this.toolsRegistry.getGmailClient();
-    if (!gmail) return;
+    if (!gmail) {
+      console.log(`[EmailCheck:${this.clientConfig.id}] skipped — Gmail not configured`);
+      return;
+    }
     await this.router.handleEmailCheck(gmail, this.clientConfig.contacts, this.clientConfig.mailboxAddress, this.clientConfig.email);
   }
 
