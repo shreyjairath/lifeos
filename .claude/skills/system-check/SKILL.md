@@ -4,6 +4,8 @@ description: System health check for the agent fleet — tools, triggers, prompt
 
 System health check for the agent fleet. Collect the data below, then produce a structured diagnostic report. Every finding should be framed as a system issue with a probable cause and a concrete fix — not a behavioral observation.
 
+The expectations this check must satisfy are defined in `SPEC.md` alongside this file.
+
 ## Data collection
 
 **1. Run volume per agent (last 48h)**
@@ -167,8 +169,6 @@ now = int(time.time())
 
 overdue = [t for t in tasks if t.get('due_at', now+1) < now and not t.get('last_run')]
 frequent = [t for t in tasks if (t.get('cadence_hours') or 999) <= 2]
-never_run = [t for t in tasks if not t.get('last_run') and t.get('created_at', now) < now - 48*3600]
-
 print('--- OVERDUE (due passed, never run) ---')
 for t in sorted(overdue, key=lambda x: x.get('due_at',0)):
     due = datetime.datetime.fromtimestamp(t['due_at']).strftime('%b %d %H:%M')
@@ -179,12 +179,6 @@ print('--- VERY FREQUENT (cadence <= 2h) ---')
 for t in frequent:
     print(f'  [{t.get(\"assignee\",\"?\")}] {t[\"name\"][:50]}  every {t[\"cadence_hours\"]}h')
 if not frequent: print('  (none)')
-
-print('--- NEVER RUN (created > 48h ago) ---')
-for t in never_run:
-    created = datetime.datetime.fromtimestamp(t['created_at']).strftime('%b %d')
-    print(f'  [{t.get(\"assignee\",\"?\")}] {t[\"name\"][:50]}  created {created}')
-if not never_run: print('  (none)')
 " 2>/dev/null || echo "(error)"`
 
 **7. Workspace & reconciliation health**

@@ -3,7 +3,20 @@ import { resolve } from 'path';
 import { randomUUID } from 'crypto';
 import { google } from 'googleapis';
 import * as cheerio from 'cheerio';
+import { marked } from 'marked';
 import { MONOREPO_ROOT } from '../../root.js';
+
+/** Returns true if the string contains HTML tags (agent passed proper HTML). */
+function looksLikeHtml(s: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(s);
+}
+
+/** Convert markdown to a basic HTML email body. Passes through existing HTML unchanged. */
+function markdownToEmailHtml(md: string): string {
+  if (looksLikeHtml(md)) return md;
+  const body = marked.parse(md, { async: false }) as string;
+  return `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#222;max-width:680px">${body}</div>`;
+}
 
 const USER_DATA = resolve(MONOREPO_ROOT, '.user-data');
 export const GMAIL_CREDENTIALS_PATH = resolve(USER_DATA, 'system/gmail-credentials.json');
@@ -149,20 +162,27 @@ export class GmailClient {
       : '';
     const ccHeader = cc ? `CC: ${cc}\r\n` : '';
 
+    // Normalize html: convert markdown → HTML if the agent passed markdown instead of HTML tags.
+    const htmlBody = html ? markdownToEmailHtml(html) : undefined;
+    // If body (plain text) looks like markdown, upgrade to HTML to avoid raw syntax in email.
+    const bodyIsMarkdown = body && !looksLikeHtml(body) && /[*_#`\[\]]/.test(body);
+    const effectiveHtml = htmlBody ?? (bodyIsMarkdown ? markdownToEmailHtml(body!) : undefined);
+    const effectivePlain = effectiveHtml ? undefined : body;
+
     let mime: string;
     if (attachments && attachments.length > 0) {
       const boundary = randomUUID().replace(/-/g, '');
-      const bodyPart = html
-        ? `--${boundary}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`
-        : `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(body ?? '')}`;
+      const bodyPart = effectiveHtml
+        ? `--${boundary}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${effectiveHtml}`
+        : `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(effectivePlain ?? '')}`;
       const attachmentParts = attachments.map((a) =>
         `--${boundary}\r\nContent-Type: ${a.mimeType}\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${a.filename}"\r\n\r\n${a.data.toString('base64')}`,
       );
       mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n${bodyPart}\r\n${attachmentParts.join('\r\n')}\r\n--${boundary}--`;
-    } else if (html) {
-      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    } else if (effectiveHtml) {
+      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/html; charset=utf-8\r\n\r\n${effectiveHtml}`;
     } else {
-      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(body ?? '')}`;
+      mime = `${fromHeader}To: ${to}\r\n${ccHeader}Subject: ${encodedSubject}\r\n${replyHeaders}Content-Type: text/plain; charset=utf-8\r\n\r\n${normalizeTextBody(effectivePlain ?? '')}`;
     }
 
     const raw = Buffer.from(mime).toString('base64url');

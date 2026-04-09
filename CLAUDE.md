@@ -29,6 +29,16 @@ export ANTHROPIC_API_KEY=your_key_here
 # Open http://localhost:8000
 ```
 
+## Gmail Token Refresh
+
+If email processing fails with `invalid_grant`, the Gmail OAuth refresh token has expired. Re-authenticate:
+
+```bash
+cd packages/server && bun reauth-gmail.mjs
+```
+
+This opens a browser, completes the OAuth flow, and overwrites the `refreshToken` in `.user-data/system/gmail-credentials.json`. No server restart needed.
+
 ## Project Structure
 
 ```
