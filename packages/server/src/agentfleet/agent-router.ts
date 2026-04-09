@@ -42,7 +42,7 @@ export class AgentRouter {
 
   // ── Email routing ─────────────────────────────────────────────────────────────
 
-  async handleEmailCheck(gmail: GmailClient, contacts: Contact[], mailboxAddress?: string): Promise<void> {
+  async handleEmailCheck(gmail: GmailClient, contacts: Contact[], mailboxAddress?: string, clientEmail?: string): Promise<void> {
     console.log('[EmailCheck] starting poll');
 
     let rawThreads: RawThread[];
@@ -75,20 +75,27 @@ export class AgentRouter {
     const cosAgent = this.registry.get('cos');
     const checkStartTime = Date.now();
 
-    const resolveInvolved = (rawThread: RawThread): Agent[] => {
+    const resolveInvolved = (rawThread: RawThread): Agent[] | null => {
       const fullThreadText = rawThread.messages.map((m) => m.mentionText).join('\n');
       const latestInbox = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
       const senderEmail = extractEmail(latestInbox ? latestInbox.from : rawThread.messages[rawThread.messages.length - 1]!.from);
-      const contact = contacts.find((c) => c.email === senderEmail);
 
+      // Client (owner) — defaults to cos
+      if (clientEmail && senderEmail === clientEmail.toLowerCase()) {
+        return [cosAgent];
+      }
+
+      // Known contact — restricted to their allowed agents
+      const contact = contacts.find((c) => c.email === senderEmail);
       if (contact) {
         const allowed = allAgents.filter((a) => contact.agents.includes(a.getName()));
         const involved = allowed.filter((a) => fullThreadText.includes(`@${a.getName()}`));
         return involved.length > 0 ? involved : [this.registry.get(contact.fallback)];
       }
 
-      const involved = allAgents.filter((a) => fullThreadText.includes(`@${a.getName()}`));
-      return involved.length > 0 ? involved : [cosAgent];
+      // Unknown sender — drop
+      console.log(`[EmailCheck] dropping thread from unknown sender: ${senderEmail}`);
+      return null;
     };
 
     // Build per-agent delivery buckets
@@ -98,6 +105,7 @@ export class AgentRouter {
     for (const rawThread of rawThreads) {
       const allMsgs = rawThread.messages;
       const involved = resolveInvolved(rawThread);
+      if (!involved) continue;
 
       for (const agent of involved) {
         const lastSeen = agent.emailThreadStore.getLastSeen(rawThread.threadId);
@@ -126,7 +134,7 @@ export class AgentRouter {
       const latestInboxMsg = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
       if (!latestInboxMsg) continue;
       threadMeta.set(rawThread.threadId, {
-        involvedAgents: resolveInvolved(rawThread),
+        involvedAgents: resolveInvolved(rawThread) ?? [],
         latestInboxMsgId: latestInboxMsg.id,
         latestMsgId: rawThread.messages[rawThread.messages.length - 1]!.id,
       });

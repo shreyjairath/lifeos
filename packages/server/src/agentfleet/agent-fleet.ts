@@ -142,7 +142,7 @@ export class AgentFleet {
   async triggerEmailCheck(): Promise<void> {
     const gmail = this.toolsRegistry.getGmailClient();
     if (!gmail) return;
-    await this.router.handleEmailCheck(gmail, this.clientConfig.contacts, this.clientConfig.mailboxAddress);
+    await this.router.handleEmailCheck(gmail, this.clientConfig.contacts, this.clientConfig.mailboxAddress, this.clientConfig.email);
   }
 
   async triggerTaskCheck(): Promise<void> {
