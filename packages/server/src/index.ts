@@ -36,10 +36,7 @@ async function createApp() {
   console.log(`[config] apiKey: ${config.apiKey ? config.apiKey.slice(0, 8) + '...' : '(empty)'}`);
   console.log(`[config] clients: ${config.clients.map((c) => c.id).join(', ')}`);
 
-  // ── Core dependencies (shared across all clients) ──────────────────────────
-
-  const confirmations = new Confirmations();
-  const eventBus = new EventBus();
+  // ── Shared stateless tools ────────────────────────────────────────────────
 
   const webSearch = new WebSearch();
   const browse = new Browse();
@@ -53,6 +50,10 @@ async function createApp() {
     if (!clientConfig) throw new Error(`Unknown client: ${clientId}`);
 
     const dataDir = clientDataDir(clientId);
+
+    // Per-client: confirmations and event bus are fully isolated
+    const confirmations = new Confirmations();
+    const eventBus = new EventBus();
 
     const toolsRegistry = new ToolsRegistry(dataDir, clientConfig);
     toolsRegistry.init(dataDir);
@@ -79,7 +80,7 @@ async function createApp() {
     }
 
     const router = new AgentRouter(registry, eventBus);
-    const fleet = new AgentFleet(registry, eventBus, router, config, clientConfig, toolsRegistry);
+    const fleet = new AgentFleet(registry, eventBus, router, config, clientConfig, toolsRegistry, confirmations);
 
     fleet.initBackgroundTasks();
 
@@ -109,10 +110,10 @@ async function createApp() {
   app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
   // API routes — pass defaultFleet for single-client compat; future: resolve per request
-  app.route('/api', chatRoutes(defaultFleet, confirmations));
+  app.route('/api', chatRoutes(defaultFleet, defaultFleet.getConfirmations()));
   app.route('/api', sessionRoutes(defaultFleet));
   app.route('/api', agentRoutes(defaultFleet));
-  app.route('/api', eventRoutes(eventBus));
+  app.route('/api', eventRoutes(defaultFleet.getEventBus()));
   app.route('/api', toolsRoutes(defaultFleet));
   app.route('/api', artifactsRoutes(defaultFleet));
   app.route('/api', ccRoutes(config));

@@ -4,6 +4,7 @@ import { EventBus } from './event-bus.js';
 import type { ToolsRegistry } from './tools-registry.js';
 import { loadPrompt } from '../agent/prompt-parts.js';
 import type { AppConfig, ClientConfig } from '../config.js';
+import type { Confirmations } from '../agent/executor/confirmations.js';
 
 /**
  * Public surface of the platform layer.
@@ -23,11 +24,15 @@ export class AgentFleet {
     private readonly config: AppConfig,
     private readonly clientConfig: ClientConfig,
     private readonly toolsRegistry: ToolsRegistry,
+    private readonly confirmations: Confirmations,
   ) {
     this.registry = registry;
     this.eventBus = eventBus;
     this.router = router;
   }
+
+  getEventBus(): EventBus { return this.eventBus; }
+  getConfirmations(): Confirmations { return this.confirmations; }
 
   // ── Directory / resource access ───────────────────────────────────────────────
 
