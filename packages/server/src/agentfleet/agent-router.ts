@@ -55,14 +55,15 @@ export class AgentRouter {
     console.log(`[EmailCheck] fetched ${rawThreads.length} inbox thread(s)`);
 
     // Filter by To: address if mailboxAddress is set (multi-client isolation)
+    // Check any message in the thread — not just the latest, which may be an outbound reply
     if (mailboxAddress) {
       const addr = mailboxAddress.toLowerCase();
-      rawThreads = rawThreads.filter((t) => {
-        const latest = t.messages[t.messages.length - 1]!;
-        const to = (latest.to ?? '').toLowerCase();
-        const cc = (latest.cc ?? '').toLowerCase();
-        return to.includes(addr) || cc.includes(addr);
-      });
+      rawThreads = rawThreads.filter((t) =>
+        t.messages.some((m) =>
+          (m.to ?? '').toLowerCase().includes(addr) ||
+          (m.cc ?? '').toLowerCase().includes(addr),
+        ),
+      );
       if (rawThreads.length === 0) {
         console.log(`[EmailCheck] no threads addressed to ${mailboxAddress}`);
         return;
