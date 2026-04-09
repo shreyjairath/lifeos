@@ -204,6 +204,7 @@ export class AgentFleet {
     for (const agent of this.registry.all()) {
       const def = agent.getDefinition();
       for (const rt of def.recurringTasks) {
+        if (rt.disabled) continue;
         const description = loadPrompt(def.promptBase, rt.promptFile);
         tasks.upsert(
           'platform',

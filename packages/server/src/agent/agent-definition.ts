@@ -7,6 +7,7 @@ export interface RecurringTask {
   name: string;
   promptFile: string;
   cadenceHours: number;
+  disabled: boolean;
 }
 
 export interface AgentReasoning {
@@ -53,6 +54,7 @@ export function parseAgentDefinition(
     name: m.name as string,
     promptFile: m.prompt as string,
     cadenceHours: Number(m['cadence-hours']),
+    disabled: (m.disabled as boolean | undefined) ?? false,
   }));
 
   const subscribedTopics = (map['subscribed-topics'] ?? []) as string[];

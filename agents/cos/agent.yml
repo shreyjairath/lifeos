@@ -17,6 +17,7 @@ recurring-tasks:
   - name: daily_contact
     prompt: daily-contact.md
     cadence-hours: 24
+    disabled: true
   - name: heartbeat
     prompt: heartbeat.md
     cadence-hours: 6
