@@ -24,6 +24,7 @@ export interface ClientConfig {
   name: string;
   email: string;
   mailboxAddress: string;
+  timezone: string;
   contacts: Contact[];
 }
 
@@ -55,6 +56,7 @@ function parseClients(lifeos: Record<string, any>): ClientConfig[] {
       name: c.name as string,
       email: (c.email as string) ?? '',
       mailboxAddress: (c['mailbox-address'] as string) ?? '',
+      timezone: (c.timezone as string) ?? 'America/New_York',
       contacts: parseContacts((c.contacts ?? []) as Record<string, any>[]),
     }));
   }
@@ -64,6 +66,7 @@ function parseClients(lifeos: Record<string, any>): ClientConfig[] {
     name: lifeos['client-name'] ?? '',
     email: lifeos['client-email'] ?? '',
     mailboxAddress: lifeos['mailbox-email'] ?? '',
+    timezone: (lifeos.timezone as string) ?? 'America/New_York',
     contacts: parseContacts((lifeos.contacts ?? []) as Record<string, any>[]),
   }];
 }

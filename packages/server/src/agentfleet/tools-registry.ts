@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, extname, basename } from 'path';
 import type { ToolDefinition, ToolInvoker } from '../agent/types.js';
 import type { ClientConfig } from '../config.js';
@@ -17,6 +17,7 @@ type AgentToolsImpl = import('./tools/agent-tools.js').AgentTools;
 type WebSearchImpl = import('./tools/web-search.js').WebSearch;
 type BrowseImpl = import('./tools/browse.js').Browse;
 import { BrowseJs } from './tools/browse-js.js';
+import type { Verifier as VerifierImpl } from './tools/verifier.js';
 
 // ── ToolsRegistry ─────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ export class ToolsRegistry {
   readonly topics: AgentTopics;
   private readonly sharedBash: Bash;
   private readonly redfin = new Redfin();
-  private readonly browseJs = new BrowseJs();
+  private browseJs!: BrowseJs;
   private gmailClient: GmailClient | null = null;
   clientEmail: string;
   private readonly mailboxAddress: string;
@@ -69,6 +70,7 @@ export class ToolsRegistry {
   agentTools!: AgentToolsImpl;
   webSearch!: WebSearchImpl;
   browse!: BrowseImpl;
+  set verifier(v: VerifierImpl) { this.browseJs = new BrowseJs(v); }
   eventBusPublish!: (event: Record<string, any>) => void;
 
   init(clientDataDir: string): void {
@@ -139,7 +141,7 @@ export class ToolsRegistry {
         if (!existsSync(filePath)) return { error: `File not found: ${input.file_path}` };
         const sendFileTo = (input.to as string | undefined)?.trim() || this.clientEmail;
         if (!sendFileTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
-        await this.gmailClient.sendFile(
+        const sendFileResult = await this.gmailClient.sendFile(
           sendFileTo,
           input.subject as string,
           filePath,
@@ -149,7 +151,7 @@ export class ToolsRegistry {
           input.cc as string | undefined,
           this.mailboxAddress || undefined,
         );
-        return { sent: true };
+        return { sent: true, thread_id: sendFileResult.threadId, message_id: sendFileResult.messageId };
       }
       case 'send_email': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
@@ -170,7 +172,7 @@ export class ToolsRegistry {
             });
           }
         }
-        await this.gmailClient.send(
+        const sendResult = await this.gmailClient.send(
           sendTo,
           input.subject as string,
           input.body as string | undefined,
@@ -182,7 +184,7 @@ export class ToolsRegistry {
           attachments,
           this.mailboxAddress || undefined,
         );
-        return { sent: true };
+        return { sent: true, thread_id: sendResult.threadId, message_id: sendResult.messageId };
       }
       case 'read_emails': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
@@ -199,17 +201,44 @@ export class ToolsRegistry {
         if (this.mailboxAddress && !emailQuery.includes('to:') && !emailQuery.includes('from:')) {
           emailQuery += ` {to:${this.mailboxAddress} from:${this.mailboxAddress}}`;
         }
-        const emails = await this.gmailClient.fetchRecent(
+        const threadMetas = await this.gmailClient.fetchThreadsMeta(
           emailQuery,
           input.max_results != null ? Number(input.max_results) : undefined,
         );
-        return { emails };
+        const store = new EmailThreadStore(this.agentsDir, agentName);
+        const threads = threadMetas.map((meta) => ({
+          thread_id: meta.threadId,
+          subject: meta.subject,
+          from: meta.from,
+          date: meta.date,
+          message_count: meta.messageCount,
+          summary: store.readSummary(meta.threadId) || null,
+        }));
+        return { threads };
       }
       case 'read_email_thread': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
-        const thread = await this.gmailClient.fetchThread(input.thread_id as string);
+        const threadWorkspace = resolve(this.agentsDir, agentName, 'workspace');
+        const thread = await this.gmailClient.fetchThreadFull(input.thread_id as string, threadWorkspace);
         if (!thread) return { error: `Thread '${input.thread_id as string}' not found or empty` };
         return { thread };
+      }
+      case 'read_email_message': {
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const msg = await this.gmailClient.fetchMessage(input.message_id as string);
+        if (!msg) return { error: `Message '${input.message_id as string}' not found` };
+        return { message: msg };
+      }
+      case 'fetch_email_attachment': {
+        if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const workspace = resolve(this.agentsDir, agentName, 'workspace');
+        const savedPath = await this.gmailClient.fetchAttachment(
+          input.message_id as string,
+          input.attachment_id as string,
+          input.filename as string,
+          workspace,
+        );
+        return { saved_to: savedPath };
       }
       case 'read_email_thread_summary': {
         const store = new EmailThreadStore(this.agentsDir, agentName);
@@ -232,12 +261,52 @@ export class ToolsRegistry {
           iso8601: now.toISOString(),
         };
       }
+      case 'format_timestamp': {
+        const epoch = Number(input.timestamp);
+        if (isNaN(epoch)) return { error: 'Invalid timestamp' };
+        const d = new Date(epoch * 1000);
+        return {
+          datetime: new Intl.DateTimeFormat('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+          }).format(d),
+          iso8601: d.toISOString(),
+        };
+      }
+      case 'time_diff': {
+        const from = Number(input.from);
+        if (isNaN(from)) return { error: 'Invalid from timestamp' };
+        const to = input.to != null ? Number(input.to) : Math.floor(Date.now() / 1000);
+        const diff = to - from;
+        const abs = Math.abs(diff);
+        const days = Math.floor(abs / 86400);
+        const hours = Math.floor((abs % 86400) / 3600);
+        const mins = Math.floor((abs % 3600) / 60);
+        const parts = [days && `${days}d`, hours && `${hours}h`, mins && `${mins}m`].filter(Boolean);
+        const human = parts.length ? parts.join(' ') : 'just now';
+        return {
+          human: diff >= 0 ? `${human} ago` : `in ${human}`,
+          seconds: diff,
+        };
+      }
+      case 'parse_datetime': {
+        const d = new Date(input.datetime as string);
+        if (isNaN(d.getTime())) return { error: `Could not parse: ${input.datetime as string}` };
+        return {
+          epoch: Math.floor(d.getTime() / 1000),
+          iso8601: d.toISOString(),
+          datetime: new Intl.DateTimeFormat('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+          }).format(d),
+        };
+      }
       case 'web_search':
-        return this.webSearch.search(input.query as string);
+        return this.webSearch.search(input.query as string, 5, input.verify === true);
       case 'browse_page':
-        return this.browse.fetch(input.url as string);
+        return this.browse.fetch(input.url as string, input.verify === true);
       case 'browse_page_js':
-        return this.browseJs.fetch(input.url as string);
+        return this.browseJs.fetch(input.url as string, input.verify === true);
       case 'system_feedback': {
         const { category, subject, detail, severity = 'medium' } = input as any;
         const message = `**[${String(severity).toUpperCase()}] ${subject}**\n- Category: ${category}\n\n${detail}`;
@@ -257,7 +326,7 @@ export class ToolsRegistry {
           input.name as string,
           input.description as string,
           input.cadence_hours != null ? Number(input.cadence_hours) : null,
-          input.due_at as string,
+          input.run_at as string,
           input.assignee as string ?? null,
         );
       case 'get_my_tasks':
@@ -308,6 +377,7 @@ export class ToolsRegistry {
           input.goal as string ?? null,
           input.manager as string ?? null,
           Array.isArray(input.tools) ? input.tools.map(String) : null,
+          input.identity as string ?? null,
         );
       case 'list_agents':
         return this.agentTools.listAgents(agentName);
@@ -339,6 +409,39 @@ export class ToolsRegistry {
         const url = `/api/artifacts/${agentName}/${path}`;
         this.eventBusPublish({ type: 'artifact_updated', agent: agentName, url, title, path });
         return { url, title, path };
+      }
+      case 'save_plan': {
+        const plansDir = resolve(this.agentsDir, agentName, 'workspace', '_plans');
+        mkdirSync(plansDir, { recursive: true });
+        const title = input.title as string;
+        const steps = Array.isArray(input.steps) ? (input.steps as string[]) : [];
+        const now = new Date();
+        const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+        const planId = `${now.toISOString().slice(0, 19).replace(/:/g, '').replace('T', '-')}-${slug}`;
+        const lines = [
+          `# ${title}`,
+          '',
+          `**Created:** ${now.toISOString()}`,
+          `**Plan ID:** ${planId}`,
+          '',
+          '## Steps',
+          '',
+          ...steps.map((s) => `- [ ] ${s}`),
+        ];
+        writeFileSync(resolve(plansDir, `${planId}.md`), lines.join('\n'), 'utf-8');
+        return { plan_id: planId, path: `_plans/${planId}.md`, step_count: steps.length };
+      }
+      case 'get_plan': {
+        const plansDir = resolve(this.agentsDir, agentName, 'workspace', '_plans');
+        if (!existsSync(plansDir)) return { plans: [] };
+        const planId = input.plan_id as string | undefined;
+        if (planId) {
+          const file = resolve(plansDir, `${planId}.md`);
+          if (!existsSync(file)) return { error: `Plan not found: ${planId}` };
+          return { plan_id: planId, content: readFileSync(file, 'utf-8') };
+        }
+        const files = readdirSync(plansDir).filter((f) => f.endsWith('.md')).sort().reverse();
+        return { plans: files.map((f) => ({ plan_id: f.slice(0, -3), path: `_plans/${f}` })) };
       }
       default:
         return { error: `Unknown tool: ${toolName}` };
@@ -383,24 +486,52 @@ const TOOLS: ToolDefinition[] = [
     'Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.',
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
 
+  tool('save_plan',
+    'Save a structured plan to your workspace before starting a complex multi-step task. ' +
+    'Writes a markdown checklist to _plans/ that you can reference and edit throughout execution via agent_bash. ' +
+    'Call this before taking any actions on multi-step tasks — commit the plan first, then execute. ' +
+    'Returns a plan_id you can pass to get_plan to retrieve it.',
+    props(
+      prop('title', 'string', 'Short descriptive title for the plan (e.g. "Research Chicago neighborhoods").'),
+      ['steps', { type: 'array', items: { type: 'string' }, description: 'Ordered list of steps to execute. Each step is a short action statement.' }],
+    ),
+    ['title', 'steps']),
+
+  tool('get_plan',
+    'Read a saved plan from _plans/. Pass plan_id to read a specific plan; omit to list all plans.',
+    props(
+      prop('plan_id', 'string', 'Plan ID returned by save_plan. Omit to list all plans.'),
+    ),
+    []),
+
   tool('read_emails',
-    'Read emails from the shared mailbox. ' +
-    'Returns an array of emails, each with: messageId, rfcMessageId, threadId, from, to, cc, subject, body (truncated to 10,000 chars), and thread (prior messages in the thread, oldest first). ' +
-    'Pass rfcMessageId as in_reply_to when replying — this is the RFC 2822 Message-ID required for proper thread linking. ' +
+    'List email threads from the shared mailbox. ' +
+    'Returns { threads } — each with thread_id, subject, from, date, message_count, and summary (if one has been written). ' +
+    'Use this to get an overview of active threads. Call read_email_thread with a thread_id to read the full content. ' +
     'Note: queries that do not specify is:unread or is:read will have is:unread appended automatically.',
     props(
       prop('query', 'string', 'Gmail search query (default: "in:inbox is:unread"). Examples: "in:inbox is:unread", "in:inbox is:read", "from:someone@example.com".'),
-      prop('max_results', 'number', 'Max number of emails to return (default: 10)'),
+      prop('max_results', 'number', 'Max number of threads to return (default: 10)'),
     ),
     []),
 
   tool('read_email_thread',
-    'Fetch a Gmail thread by thread ID. Returns the full thread including all prior messages and the latest message with reply metadata. ' +
+    'Fetch a Gmail thread by thread ID. Returns { thread_id, subject, messages[] } — messages are sorted oldest-first, ' +
+    'each with message_id, rfc_message_id, from, to, cc, date, body, and attachments if present. ' +
     'Use this during log processing only when no summary exists yet — prefer read_email_thread_summary first.',
     props(
       prop('thread_id', 'string', 'Gmail thread ID from a previous log entry email_thread_ids field.'),
     ),
     ['thread_id']),
+
+  tool('read_email_message',
+    'Fetch a single email message by message_id with no body truncation. ' +
+    'Use this when read_email_thread returns a truncated body (10k char limit) and you need the full content. ' +
+    'Returns { message_id, rfc_message_id, from, to, cc, date, body, attachments? }.',
+    props(
+      prop('message_id', 'string', 'Gmail message ID from a read_email_thread response.'),
+    ),
+    ['message_id']),
 
   tool('read_email_thread_summary',
     'Read the locally stored summary of an email thread. No Gmail API call. ' +
@@ -419,10 +550,23 @@ const TOOLS: ToolDefinition[] = [
     ),
     ['thread_id', 'summary']),
 
+  tool('fetch_email_attachment',
+    'Download an email attachment to your workspace. ' +
+    'Use this when read_emails or read_email_thread returns an attachments[] field and the file was not auto-downloaded. ' +
+    'PDFs are automatically extracted to a .txt file — the saved_to path will point to the text file. ' +
+    'All other types are saved as-is to _downloads/.',
+    props(
+      prop('message_id', 'string', 'Gmail message ID from the email (messageId field).'),
+      prop('attachment_id', 'string', 'Attachment ID from the attachments[] array (attachmentId field).'),
+      prop('filename', 'string', 'Filename from the attachments[] array — used as the saved filename.'),
+    ),
+    ['message_id', 'attachment_id', 'filename']),
+
   tool('send_file_email',
     'Send an HTML file from your workspace as the email body. The file content becomes the email body — this is NOT an attachment. ' +
     'Use this when you have an HTML report already saved in _artifacts/ and want to avoid reading it into a tool call. ' +
     'For inline HTML content you are constructing now, use send_email with html_body instead. ' +
+    'Returns { sent, thread_id, message_id } — save thread_id so you can track replies and pass it as thread_id on future replies. ' +
     'For files recipients should download (PDFs, CSVs), use send_email with attachments instead. ' +
     'The From header is automatically set to your agent title and the shared mailbox address. ' +
     'Always include a signature line in the HTML file: "@{your agent name}" (e.g. "@chicago_childcare"). This is used to route future replies back to you. ' +
@@ -446,7 +590,8 @@ const TOOLS: ToolDefinition[] = [
     'Do not provide both body and html_body. ' +
     'Attachments can be included alongside either body option — use for large, durable artifacts that will be referenced repeatedly (PDFs, CSVs, PPTs, interactive web pages). ' +
     'Always end your email with a signature line: "@{your agent name}" (e.g. "@cos", "@chicago_childcare"). This is used to route future replies back to you. ' +
-    'When replying, you MUST set thread_id and in_reply_to — both required for the reply to stay in the correct thread.',
+    'When replying, you MUST set thread_id and in_reply_to — both required for the reply to stay in the correct thread. ' +
+    'Returns { sent, thread_id, message_id } — save thread_id so you can track replies and pass it as thread_id on future replies.',
     props(
       prop('to', 'string', 'Recipient email address. Omit when emailing the client — the configured client address is used by default. Required for all other recipients. When replying, set this to the sender\'s address (the From field of the incoming email).'),
       prop('cc', 'string', 'CC recipients — comma-separated. When replying to a group thread, include the To and CC participants from the original email to reply-all.'),
@@ -469,11 +614,17 @@ const TOOLS: ToolDefinition[] = [
   tool('browse_page',
     'Fetch and read the content of a web page. ' +
     'Use to read a specific URL in full. For discovery, use web_search first.',
-    props(prop('url', 'string', 'Full URL to fetch')), ['url']),
+    props(
+      prop('url', 'string', 'Full URL to fetch'),
+      prop('verify', 'boolean', 'If true, run a credibility assessment on the page and return source_quality, published date, flags, and a reliability summary alongside the content.'),
+    ), ['url']),
 
   tool('browse_page_js',
     'Fetch a web page using a real browser (JS rendered). Use when browse_page returns empty or incomplete content because the page relies on JavaScript to render. Slower than browse_page — only use when needed.',
-    props(prop('url', 'string', 'Full URL to fetch')), ['url']),
+    props(
+      prop('url', 'string', 'Full URL to fetch'),
+      prop('verify', 'boolean', 'If true, run a credibility assessment on the page and return source_quality, published date, flags, and a reliability summary alongside the content.'),
+    ), ['url']),
 
   tool('parse_redfin_listing',
     'Parse a Redfin listing URL and return structured property data: price, beds/baths, sq ft, HOA, year built, amenities, coordinates, MLS number, description, and photo URLs.',
@@ -501,7 +652,10 @@ const TOOLS: ToolDefinition[] = [
   tool('web_search',
     'Search the web for information. ' +
     'Use for discovery and finding URLs. Follow up with browse_page to read specific pages in full.',
-    props(prop('query', 'string', 'Search query')), ['query']),
+    props(
+      prop('query', 'string', 'Search query'),
+      prop('verify', 'boolean', 'If true, annotate each result with source_quality (high/medium/low based on domain) and published date extracted from the snippet.'),
+    ), ['query']),
 
   tool('show_image', 'Display an image inline in the chat.',
     props(prop('url', 'string', 'Image URL'), prop('caption', 'string', 'Optional caption')),
@@ -509,21 +663,42 @@ const TOOLS: ToolDefinition[] = [
 
   tool('get_current_datetime',
     'Get the current date and time. ' +
-    'Call before create_task with due_at or any time-relative calculation.',
+    'Call before create_task with run_at or any time-relative calculation.',
     props(), []),
+
+  tool('format_timestamp',
+    'Convert a Unix epoch timestamp (seconds) to a human-readable date and ISO8601 string. ' +
+    'Use when reading raw timestamps from tasks (run_at, last_run) or run filenames.',
+    props(prop('timestamp', 'number', 'Unix epoch seconds.')),
+    ['timestamp']),
+
+  tool('time_diff',
+    'Compute the human-readable difference between two Unix epoch timestamps. ' +
+    '"to" defaults to now if omitted. Returns e.g. "2h 15m ago" or "in 3d 4h".',
+    props(
+      prop('from', 'number', 'Start Unix epoch seconds.'),
+      prop('to', 'number', 'End Unix epoch seconds. Defaults to now.'),
+    ),
+    ['from']),
+
+  tool('parse_datetime',
+    'Parse an ISO8601 or common date string into a Unix epoch timestamp. ' +
+    'Use before create_task when the due date comes from user input or a natural language date.',
+    props(prop('datetime', 'string', 'Date string to parse (e.g. "2026-04-15T09:00:00-07:00", "April 15 2026 9am PDT").')),
+    ['datetime']),
 
   tool('create_task',
     'Create or update a task on the shared task board. ' +
     'Upserts by name within your namespace (same name + you = update). ' +
-    'due_at is always required. Add cadence_hours to make it recurring.',
+    'run_at is always required. Add cadence_hours to make it recurring.',
     props(
       prop('name', 'string', 'Short task name (unique per creator — upsert)'),
-      prop('description', 'string', 'What needs to be done'),
+      prop('description', 'string', 'What needs to be done. Write this as a self-contained brief — the executing agent will have no memory of why this task was created. Include: what to do, why it matters, any key facts needed to act, and workspace file paths where full context lives (e.g. "See plan/resume.md for current draft").'),
       prop('assignee', 'string', 'Who is responsible: "user", an agent name, or omit for self'),
-      prop('due_at', 'string', 'ISO-8601 due datetime (e.g. 2026-04-01T09:00:00-05:00). Required.'),
+      prop('run_at', 'string', 'ISO-8601 datetime when the task should execute (e.g. 2026-04-01T09:00:00-05:00). Use now for immediate execution. Required.'),
       prop('cadence_hours', 'number', 'Recurring interval in hours (e.g. 24, 168). Omit for one-off.'),
     ),
-    ['name', 'description', 'due_at']),
+    ['name', 'description', 'run_at']),
 
   tool('get_my_tasks',
     'List tasks assigned to you on the shared board.',
@@ -636,14 +811,14 @@ const TOOLS: ToolDefinition[] = [
     ['agent']),
 
   tool('update_agent',
-    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first. ' +
-    'Identity is managed by the system and cannot be updated via this tool.',
+    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first to read the current state before making changes.',
     props(
       prop('name', 'string', 'Agent slug to update'),
       prop('title', 'string', 'New display name'),
       prop('description', 'string', 'New one-sentence description'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager (e.g. "cos", "advisor")'),
+      prop('identity', 'string', 'Replaces identity.md entirely — whatever you pass here becomes the full file. Read the current identity first via read_agent_definition, then incorporate your changes and pass the complete updated content. Partial updates will erase the rest. Identity covers: who the agent is, what they own, how they operate, guiding principles, and standing rules. Write it as a direct operational brief, not a job description.'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'New tool list (replaces current list)' }],
     ),
     ['name']),
@@ -693,7 +868,7 @@ const TOOLS: ToolDefinition[] = [
 
 const SESSION_TOOLS: ToolDefinition[] = [
   tool('list_sessions',
-    'List past sessions with their date and title. Start here. Find the session_id, then call read_session_summary or read_session_transcript.',
+    'List past sessions with their date, title, and summary. Use this to get an overview of all sessions. Call read_session_transcript only if you need the full conversation.',
     props(), []),
 
   tool('read_session_summary',

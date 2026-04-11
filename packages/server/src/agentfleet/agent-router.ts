@@ -115,11 +115,12 @@ export class AgentRouter {
         if (newMsgs.length === 0) continue;
 
         const prior: ThreadMessage[] = allMsgs.slice(0, lastSeenIdx + 1).map((m) => ({
-          from: m.from, date: new Date(m.internalDate).toUTCString(), body: m.body,
+          messageId: m.id, from: m.from, date: new Date(m.internalDate).toUTCString(), body: m.body,
         }));
-        const emailMsgs: EmailMessage[] = newMsgs.map((m) => ({
-          messageId: m.id, rfcMessageId: m.rfcMessageId, threadId: rawThread.threadId,
-          from: m.from, to: m.to, cc: m.cc, subject: m.subject, body: m.body, thread: prior,
+        const workspaceDir = agent.getWorkspaceDir();
+        const emailMsgs: EmailMessage[] = await Promise.all(newMsgs.map(async (m) => {
+          const body = await gmail.downloadTextAttachments(m.id, m.payload, m.body, workspaceDir);
+          return { messageId: m.id, rfcMessageId: m.rfcMessageId, threadId: rawThread.threadId, from: m.from, to: m.to, cc: m.cc, subject: m.subject, body, thread: prior };
         }));
 
         const latestMsg = allMsgs[allMsgs.length - 1]!;
@@ -149,20 +150,21 @@ export class AgentRouter {
         agent.handleEmailCheck(agentEmails, async () => {
           const latestNewMsg = agentEmails[agentEmails.length - 1]!;
 
+          const threadSubject = agentEmails[0]!.subject;
           const sent = await gmail.getLatestSentMessage(thread.threadId, checkStartTime);
           if (sent) {
             const tagged = allAgents.find((a) => a !== agent && sent.body.includes(`@${a.getName()}`));
             if (tagged) {
               const sentIdx = thread.messages.findIndex((m) => m.id === sent.id);
               const prevMsgId = sentIdx > 0 ? thread.messages[sentIdx - 1]!.id : null;
-              if (prevMsgId) tagged.emailThreadStore.markSeen(thread.threadId, prevMsgId);
-              agent.emailThreadStore.markSeen(thread.threadId, sent.id);
+              if (prevMsgId) tagged.emailThreadStore.markSeen(thread.threadId, prevMsgId, threadSubject);
+              agent.emailThreadStore.markSeen(thread.threadId, sent.id, threadSubject);
               console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — cursor set to ${prevMsgId ?? 'start'}`);
               return;
             }
           }
 
-          agent.emailThreadStore.markSeen(thread.threadId, latestNewMsg.messageId);
+          agent.emailThreadStore.markSeen(thread.threadId, latestNewMsg.messageId, threadSubject);
           console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestNewMsg.messageId} on thread ${thread.threadId}`);
 
           const meta = threadMeta.get(thread.threadId);

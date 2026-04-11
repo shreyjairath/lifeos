@@ -9,7 +9,7 @@ interface Task extends Record<string, any> {
   created_by: string;
   created_at: number;
   last_run: number | null;
-  due_at: number;
+  run_at: number;
   cadence_hours: number | null;
   assignee: string;
   last_modified_at: number;
@@ -27,10 +27,10 @@ export class ScheduledTasks {
     dueAtIso: string,
     assignee: string | null,
   ): Record<string, any> {
-    if (!dueAtIso) return { error: 'due_at is required.' };
+    if (!dueAtIso) return { error: 'run_at is required.' };
     try {
       const dueAtEpoch = Math.floor(new Date(dueAtIso).getTime() / 1000);
-      if (isNaN(dueAtEpoch)) return { error: `Invalid due_at: ${dueAtIso}` };
+      if (isNaN(dueAtEpoch)) return { error: `Invalid run_at: ${dueAtIso}` };
 
       const list = this.load();
       const effectiveAssignee = assignee?.trim() || createdBy;
@@ -39,7 +39,7 @@ export class ScheduledTasks {
       let task: Task;
       if (existing) {
         task = existing as Task;
-        // Preserve due_at for existing tasks — do not reset on upsert (e.g. server restart).
+        // Preserve run_at for existing tasks — do not reset on upsert (e.g. server restart).
         // Only update scheduling metadata and description.
       } else {
         task = {
@@ -47,7 +47,7 @@ export class ScheduledTasks {
           created_by: createdBy,
           created_at: epochNow(),
           last_run: null,
-          due_at: dueAtEpoch,
+          run_at: dueAtEpoch,
         } as any;
         list.push(task);
       }
@@ -110,7 +110,7 @@ export class ScheduledTasks {
           task.last_run = now;
           task.last_modified_at = now;
           task.last_modified_by = calledBy;
-          if (task.cadence_hours) task.due_at = (task.due_at as number) + (task.cadence_hours as number) * 3600;
+          if (task.cadence_hours) task.run_at = (task.run_at as number) + (task.cadence_hours as number) * 3600;
         }
       }
       this.save(list);
@@ -128,7 +128,7 @@ export class ScheduledTasks {
       task.last_run = now;
       task.last_modified_at = now;
       task.last_modified_by = calledBy;
-      if (task.cadence_hours) task.due_at = (task.due_at as number) + (task.cadence_hours as number) * 3600;
+      if (task.cadence_hours) task.run_at = (task.run_at as number) + (task.cadence_hours as number) * 3600;
       this.save(list);
       return { ok: true, id, next_due: nextDueIso(task) };
     } catch (err: any) {
@@ -171,14 +171,14 @@ function epochNow(): number {
 }
 
 function isOverdue(task: Record<string, any>, now: number): boolean {
-  const dueAt = (task.due_at ?? task.run_at) as number | undefined;
+  const dueAt = (task.run_at) as number | undefined;
   if (dueAt == null) return false;
   if (!task.cadence_hours && task.last_run) return false; // one-off already run
   return dueAt <= now;
 }
 
 function nextDueIso(task: Record<string, any>): string {
-  const dueAt = (task.due_at ?? task.run_at) as number | undefined;
+  const dueAt = (task.run_at) as number | undefined;
   if (dueAt == null) return 'unknown';
   if (!task.cadence_hours && task.last_run) return 'completed';
   return new Date((dueAt as number) * 1000).toISOString();

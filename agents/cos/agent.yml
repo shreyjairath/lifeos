@@ -18,9 +18,6 @@ recurring-tasks:
     prompt: daily-contact.md
     cadence-hours: 24
     disabled: true
-  - name: heartbeat
-    prompt: heartbeat.md
-    cadence-hours: 6
   - name: reconcile_workspace
     prompt: reconcile-workspace.md
     cadence-hours: 4

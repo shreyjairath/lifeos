@@ -7,6 +7,7 @@ lifeos:
       name: Shrey
       email: shreyjairath@gmail.com
       mailbox-address: sjairath.cos@gmail.com
+      timezone: America/Los_Angeles
       contacts:
         - email: jairath.nishant@gmail.com
           agents: [relocation, chicago_childcare, chicago_realestate]
@@ -16,16 +17,14 @@ lifeos:
           fallback: relocation
     - id: nishant
       name: Nishant
-      email: shreyjairath@gmail.com
+      email: jairath.nishant@gmail.com
       mailbox-address: sjairath.cos+nishant@gmail.com
+      timezone: Asia/Kolkata
     - id: akanksha
       name: Akanksha
       email: akanksha.khanna28@gmail.com
       mailbox-address: sjairath.cos+akanksha@gmail.com
-    - id: tita
-      name: Tita
-      email: shrey1490@gmail.com
-      mailbox-address: sjairath.cos+tita@gmail.com
+      timezone: Asia/Kolkata
   model: xiaomi/mimo-v2-pro
   background-model: xiaomi/mimo-v2-pro
   reasoning:

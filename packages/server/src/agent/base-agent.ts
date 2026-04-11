@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { Executor, prepareMessages } from './executor/executor.js';
 import { LlmClient } from './executor/llm-client.js';
 import { Confirmations } from './executor/confirmations.js';
@@ -95,6 +96,7 @@ export class BaseAgent implements Agent {
   getDescription(): string { return this.def.description; }
   getDefinition(): AgentDefinition { return this.def; }
   getSessionHandler(): SessionHandler { return this.session; }
+  getWorkspaceDir(): string { return resolve(this.agentsDir, this.def.name, 'workspace'); }
 
   cancel(sessionId: string): void {
     this.activeRuns.get(sessionId)?.cancel();
@@ -285,17 +287,7 @@ export class BaseAgent implements Agent {
     const record = createRunRecord(this.def.name, mode, system, userMsg, bgModel);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode });
 
-    const invoker = mode === 'check_email_trigger'
-      ? {
-          definitions: () => this.toolInvoker.definitions(),
-          invoke: (name: string, input: Record<string, any>, agent: string) => {
-            if (name === 'message_agent' || name === 'post_message') {
-              return { error: 'message_agent and post_message are not allowed in check_email_trigger — tag the agent in your email reply instead.' };
-            }
-            return this.toolInvoker.invoke(name, input, agent);
-          },
-        }
-      : this.toolInvoker;
+    const invoker = this.toolInvoker;
 
     let result = '';
     try {
@@ -354,7 +346,8 @@ export class BaseAgent implements Agent {
     const clientLines: string[] = [];
     if (this.clientConfig.name) clientLines.push(`**Name:** ${this.clientConfig.name}`);
     if (this.clientConfig.email) clientLines.push(`**Email:** ${this.clientConfig.email}`);
-    if (clientLines.length) parts.push('\n\n## The Client\n\n' + clientLines.join('\n'));
+    if (this.clientConfig.timezone) clientLines.push(`**Timezone:** ${this.clientConfig.timezone}`);
+    if (clientLines.length) parts.push('\n\n# The Client\n\n' + clientLines.join('\n'));
 
     parts.push('\n\n# Your Identity\n\n' + this.identityWithName());
 

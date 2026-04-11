@@ -33,6 +33,7 @@ export interface Agent {
   ): AsyncGenerator<ExecutorEvent>;
   handleAgentMessage(fromAgent: string, content: string): Promise<string>;
   handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void;
+  getWorkspaceDir(): string;
   handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void;
   handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void;
 }

@@ -17,6 +17,7 @@ import { AgentFleetScheduler } from './agentfleet/schedulers/agent-fleet-schedul
 import { AgentTools } from './agentfleet/tools/agent-tools.js';
 import { WebSearch } from './agentfleet/tools/web-search.js';
 import { Browse } from './agentfleet/tools/browse.js';
+import { Verifier } from './agentfleet/tools/verifier.js';
 
 // Routes
 import { chatRoutes } from './routes/chat.js';
@@ -38,8 +39,9 @@ async function createApp() {
 
   // ── Shared stateless tools ────────────────────────────────────────────────
 
-  const webSearch = new WebSearch();
-  const browse = new Browse();
+  const verifier = new Verifier(config.apiKey, config.backgroundModel);
+  const webSearch = new WebSearch(verifier);
+  const browse = new Browse(verifier);
 
   // ── Per-client fleet construction ──────────────────────────────────────────
 
@@ -67,6 +69,7 @@ async function createApp() {
     toolsRegistry.agentTools = agentTools;
     toolsRegistry.webSearch = webSearch;
     toolsRegistry.browse = browse;
+    toolsRegistry.verifier = verifier;
     toolsRegistry.eventBusPublish = (e) => eventBus.publish(e);
 
     registry.load();

@@ -1,9 +1,10 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { randomUUID } from 'crypto';
 import { google } from 'googleapis';
 import * as cheerio from 'cheerio';
 import { marked } from 'marked';
+import { PDFParse } from 'pdf-parse';
 import { MONOREPO_ROOT } from '../../root.js';
 
 /** Returns true if the string contains HTML tags (agent passed proper HTML). */
@@ -23,6 +24,19 @@ export const GMAIL_CREDENTIALS_PATH = resolve(USER_DATA, 'system/gmail-credentia
 
 const MAX_BODY_LEN = 10_000;
 
+const DATE_FMT = new Intl.DateTimeFormat('en-US', {
+  month: 'short', day: '2-digit', year: 'numeric',
+  hour: '2-digit', minute: '2-digit',
+});
+
+export interface EmailThreadMeta {
+  threadId: string;
+  subject: string;
+  from: string;
+  date: string;
+  messageCount: number;
+}
+
 export interface RawThreadMessage {
   id: string;
   internalDate: number;
@@ -32,6 +46,8 @@ export interface RawThreadMessage {
   cc: string;
   subject: string;
   body: string;
+  /** Raw Gmail message payload — used post-routing to download attachments into agent workspace */
+  payload: any;
   /** All text extracted from every part (plain + HTML) — used for @mention routing scans */
   mentionText: string;
   labelIds: string[];
@@ -43,9 +59,36 @@ export interface RawThread {
 }
 
 export interface ThreadMessage {
+  messageId: string;
   from: string;
   date: string;
   body: string;
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+  filename: string;
+  mimeType: string;
+  attachmentId: string;
+  size: number;
+}
+
+export interface NormalizedMessage {
+  message_id: string;
+  rfc_message_id: string;
+  thread_id?: string;
+  from: string;
+  to: string;
+  cc: string;
+  date: string;
+  body: string;
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailThreadFull {
+  thread_id: string;
+  subject: string;
+  messages: NormalizedMessage[]; // sorted oldest-first by internalDate
 }
 
 export interface EmailMessage {
@@ -58,6 +101,8 @@ export interface EmailMessage {
   cc: string;
   subject: string;
   body: string;
+  /** Attachments on this message, if any. Use fetch_email_attachment to download. */
+  attachments?: EmailAttachment[];
   /** Prior messages in the thread, oldest first. Empty for new threads. */
   thread: ThreadMessage[];
 }
@@ -125,7 +170,7 @@ export class GmailClient {
     cc?: string,
     attachments?: { filename: string; mimeType: string; data: Buffer }[],
     fromEmail?: string,
-  ): Promise<void> {
+  ): Promise<{ threadId: string; messageId: string }> {
     const effectiveFromEmail = fromEmail ?? (fromName ? await this.getAccountEmail() : null);
     const fromHeader = fromName && effectiveFromEmail
       ? `From: ${fromName} <${effectiveFromEmail}>\r\n`
@@ -200,6 +245,7 @@ export class GmailClient {
         requestBody: { addLabelIds: ['INBOX'] },
       })).catch(() => { /* best-effort */ });
     }
+    return { threadId: res.data.threadId ?? '', messageId: res.data.id ?? '' };
   }
 
   async markAsRead(messageIds: string[]): Promise<void> {
@@ -217,9 +263,9 @@ export class GmailClient {
     );
   }
 
-  async sendFile(to: string, subject: string, filePath: string, threadId?: string, inReplyTo?: string, fromName?: string, cc?: string, fromEmail?: string): Promise<void> {
+  async sendFile(to: string, subject: string, filePath: string, threadId?: string, inReplyTo?: string, fromName?: string, cc?: string, fromEmail?: string): Promise<{ threadId: string; messageId: string }> {
     const html = readFileSync(filePath, 'utf-8');
-    await this.send(to, subject, undefined, threadId, html, inReplyTo, fromName, cc, undefined, fromEmail);
+    return this.send(to, subject, undefined, threadId, html, inReplyTo, fromName, cc, undefined, fromEmail);
   }
 
   /** Returns the most recent sent message in the thread sent after `afterMs`, or null if none. */
@@ -250,7 +296,75 @@ export class GmailClient {
     );
   }
 
-  async fetchRecent(query: string = 'in:inbox', maxResults: number = 10): Promise<EmailMessage[]> {
+  /** Download a single attachment by ID and save it to {downloadDir}/_downloads/{filename}. Returns the saved path. */
+  async fetchAttachment(messageId: string, attachmentId: string, filename: string, downloadDir: string): Promise<string> {
+    const gm = this.gmail();
+    const res = await this.withTimeout(
+      gm.users.messages.attachments.get({ userId: 'me', messageId, id: attachmentId }),
+    );
+    const data = Buffer.from(res.data.data ?? '', 'base64url');
+    const destDir = resolve(downloadDir, '_downloads');
+    mkdirSync(destDir, { recursive: true });
+    const dest = resolve(destDir, filename);
+    writeFileSync(dest, data);
+    console.log(`[Gmail] fetchAttachment: saved "${filename}" (${data.length} bytes) → ${dest}`);
+
+    if (filename.toLowerCase().endsWith('.pdf')) {
+      try {
+        const parser = new PDFParse({ data });
+        const parsed = await parser.getText();
+        const txtFilename = filename.replace(/\.pdf$/i, '.txt');
+        writeFileSync(resolve(destDir, txtFilename), parsed.text, 'utf-8');
+        console.log(`[Gmail] fetchAttachment: extracted PDF text → "${txtFilename}" (${parsed.text.length} chars)`);
+        return `_downloads/${txtFilename}`;
+      } catch (err: any) {
+        console.warn(`[Gmail] fetchAttachment: PDF extraction failed for "${filename}":`, err?.message);
+      }
+    }
+    return `_downloads/${filename}`;
+  }
+
+  /** Download text/* attachments to {downloadDir}/_downloads/ and append filename references to the body. */
+  async downloadTextAttachments(messageId: string, payload: any, body: string, downloadDir: string): Promise<string> {
+    const attachments = extractTextAttachmentParts(payload);
+    if (!attachments.length) return body;
+    const gm = this.gmail();
+    const destDir = resolve(downloadDir, '_downloads');
+    mkdirSync(destDir, { recursive: true });
+    const refs: string[] = [];
+    for (const att of attachments) {
+      try {
+        const res = await this.withTimeout(
+          gm.users.messages.attachments.get({ userId: 'me', messageId, id: att.attachmentId }),
+        );
+        const data = Buffer.from(res.data.data ?? '', 'base64url');
+        const dest = resolve(destDir, att.filename);
+        writeFileSync(dest, data);
+        console.log(`[Gmail] saved attachment "${att.filename}" (${data.length} bytes) → ${dest}`);
+        if (att.filename.toLowerCase().endsWith('.pdf')) {
+          try {
+            const parser = new PDFParse({ data });
+            const parsed = await parser.getText();
+            const txtFilename = att.filename.replace(/\.pdf$/i, '.txt');
+            writeFileSync(resolve(destDir, txtFilename), parsed.text, 'utf-8');
+            console.log(`[Gmail] extracted PDF text "${txtFilename}" (${parsed.text.length} chars)`);
+            refs.push(`_downloads/${txtFilename}`);
+          } catch (pdfErr: any) {
+            console.warn(`[Gmail] PDF text extraction failed for "${att.filename}":`, pdfErr?.message);
+            refs.push(`_downloads/${att.filename}`);
+          }
+        } else {
+          refs.push(`_downloads/${att.filename}`);
+        }
+      } catch (err: any) {
+        console.warn(`[Gmail] failed to download attachment "${att.filename}":`, err?.message);
+      }
+    }
+    if (!refs.length) return body;
+    return body + `\n\n[Attachments saved to workspace: ${refs.join(', ')}]`;
+  }
+
+  async fetchRecent(query: string = 'in:inbox', maxResults: number = 10, downloadDir?: string): Promise<EmailMessage[]> {
     const gm = this.gmail();
     const listRes = await this.withTimeout(gm.users.messages.list({
       userId: 'me',
@@ -271,7 +385,10 @@ export class GmailClient {
         const prior = threadMsgs.slice(0, currentIdx >= 0 ? currentIdx : threadMsgs.length - 1);
         const thread: ThreadMessage[] = prior.map((t: any) => parseThreadMessage(t)).filter(Boolean) as ThreadMessage[];
         const parsed = parseMessage(current, thread);
-        if (parsed) results.push(parsed);
+        if (parsed) {
+          if (downloadDir) parsed.body = await this.downloadTextAttachments(current.id as string, current.payload, parsed.body, downloadDir);
+          results.push(parsed);
+        }
       } catch (err: any) {
         console.warn(`[Gmail] failed to fetch thread for message ${m.id}:`, err?.message);
       }
@@ -279,7 +396,7 @@ export class GmailClient {
     return results;
   }
 
-  async fetchThread(threadId: string): Promise<EmailMessage | null> {
+  async fetchThread(threadId: string, downloadDir?: string): Promise<EmailMessage | null> {
     const gm = this.gmail();
     try {
       const threadRes = await this.withTimeout(gm.users.threads.get({ userId: 'me', id: threadId, format: 'full' }));
@@ -288,11 +405,129 @@ export class GmailClient {
       const current = threadMsgs[threadMsgs.length - 1];
       const prior = threadMsgs.slice(0, threadMsgs.length - 1);
       const thread: ThreadMessage[] = prior.map((t: any) => parseThreadMessage(t)).filter(Boolean) as ThreadMessage[];
-      return parseMessage(current, thread);
+      const result = parseMessage(current, thread);
+      if (result && downloadDir) result.body = await this.downloadTextAttachments(current.id as string, current.payload, result.body, downloadDir);
+      return result;
     } catch (err: any) {
       console.warn(`[Gmail] fetchThread failed for ${threadId}:`, err?.message);
       return null;
     }
+  }
+
+  /** Fetch a single message by ID with no body truncation — used by read_email_message. */
+  async fetchMessage(messageId: string): Promise<NormalizedMessage | null> {
+    const gm = this.gmail();
+    try {
+      const res = await this.withTimeout(gm.users.messages.get({ userId: 'me', id: messageId, format: 'full' }));
+      const msg = res.data;
+      const headers: Record<string, string> = {};
+      for (const h of msg.payload?.headers ?? []) {
+        headers[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
+      }
+      if (!headers['from']) return null;
+      const body = extractBody(msg.payload as any, (msg.payload as any)?.mimeType);
+      const attachments = extractAllAttachmentParts(msg.payload as any);
+      return {
+        message_id: msg.id ?? messageId,
+        rfc_message_id: headers['message-id'] ?? '',
+        thread_id: msg.threadId ?? '',
+        from: headers['from'],
+        to: headers['to'] ?? '',
+        cc: headers['cc'] ?? '',
+        date: headers['date'] ? DATE_FMT.format(new Date(headers['date'])) : 'unknown',
+        body,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
+    } catch (err: any) {
+      console.warn(`[Gmail] fetchMessage failed for ${messageId}:`, err?.message);
+      return null;
+    }
+  }
+
+  /** Fetch a full thread as a flat sorted list of normalized messages — used by read_email_thread. */
+  async fetchThreadFull(threadId: string, downloadDir?: string): Promise<EmailThreadFull | null> {
+    const gm = this.gmail();
+    try {
+      const threadRes = await this.withTimeout(gm.users.threads.get({ userId: 'me', id: threadId, format: 'full' }));
+      const threadMsgs: any[] = threadRes.data.messages ?? [];
+      if (!threadMsgs.length) return null;
+
+      // Extract subject from first message headers
+      const firstHeaders: Record<string, string> = {};
+      for (const h of threadMsgs[0]?.payload?.headers ?? []) {
+        firstHeaders[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
+      }
+      const subject = firstHeaders['subject'] ?? '(no subject)';
+
+      const messages: NormalizedMessage[] = [];
+      for (const msg of threadMsgs) {
+        const headers: Record<string, string> = {};
+        for (const h of msg.payload?.headers ?? []) {
+          headers[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
+        }
+        if (!headers['from']) continue;
+        let body = extractBody(msg.payload, msg.payload?.mimeType).slice(0, MAX_BODY_LEN);
+        if (downloadDir) body = await this.downloadTextAttachments(msg.id as string, msg.payload, body, downloadDir);
+        const attachments = extractAllAttachmentParts(msg.payload);
+        messages.push({
+          message_id: msg.id as string,
+          rfc_message_id: headers['message-id'] ?? '',
+          from: headers['from'],
+          to: headers['to'] ?? '',
+          cc: headers['cc'] ?? '',
+          date: headers['date'] ? DATE_FMT.format(new Date(headers['date'])) : 'unknown',
+          body,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        });
+      }
+
+      // Sort oldest-first by internalDate
+      const msgsWithDate = threadMsgs.map((m, i) => ({ idx: i, internalDate: Number(m.internalDate ?? 0) }));
+      msgsWithDate.sort((a, b) => a.internalDate - b.internalDate);
+      const sorted = msgsWithDate.map((m) => messages[m.idx]).filter(Boolean) as NormalizedMessage[];
+
+      return { thread_id: threadId, subject, messages: sorted };
+    } catch (err: any) {
+      console.warn(`[Gmail] fetchThreadFull failed for ${threadId}:`, err?.message);
+      return null;
+    }
+  }
+
+  /** Fetch thread metadata (no body) for a query — used by read_emails to return a lightweight thread list. */
+  async fetchThreadsMeta(query: string, maxResults: number = 10): Promise<EmailThreadMeta[]> {
+    const gm = this.gmail();
+    const listRes = await this.withTimeout(gm.users.messages.list({ userId: 'me', q: query, maxResults }));
+    const messages = listRes.data.messages ?? [];
+    console.log(`[Gmail] fetchThreadsMeta: ${messages.length} message(s) matched query "${query}"`);
+
+    const seenThreads = new Set<string>();
+    const results: EmailThreadMeta[] = [];
+    for (const m of messages) {
+      if (!m.threadId || seenThreads.has(m.threadId)) continue;
+      seenThreads.add(m.threadId);
+      try {
+        const threadRes = await this.withTimeout(
+          gm.users.threads.get({ userId: 'me', id: m.threadId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Date'] }),
+        );
+        const threadMsgs: any[] = threadRes.data.messages ?? [];
+        if (!threadMsgs.length) continue;
+        const latest = threadMsgs[threadMsgs.length - 1];
+        const headers: Record<string, string> = {};
+        for (const h of latest.payload?.headers ?? []) {
+          headers[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
+        }
+        results.push({
+          threadId: m.threadId,
+          subject: headers['subject'] ?? '(no subject)',
+          from: headers['from'] ?? '',
+          date: headers['date'] ? DATE_FMT.format(new Date(headers['date'])) : 'unknown',
+          messageCount: threadMsgs.length,
+        });
+      } catch (err: any) {
+        console.warn(`[Gmail] fetchThreadsMeta failed for thread ${m.threadId}:`, err?.message);
+      }
+    }
+    return results;
   }
 
   /** Fetch all threads with recent inbox activity, returning raw message data for per-agent cursor comparison. */
@@ -311,24 +546,27 @@ export class GmailClient {
       try {
         const threadRes = await this.withTimeout(gm.users.threads.get({ userId: 'me', id: m.threadId, format: 'full' }));
         const threadMsgs: any[] = threadRes.data.messages ?? [];
-        const rawMessages: RawThreadMessage[] = threadMsgs.map((msg: any) => {
+        const rawMessages: RawThreadMessage[] = [];
+        for (const msg of threadMsgs) {
           const headers: Record<string, string> = {};
           for (const h of msg.payload?.headers ?? []) {
             headers[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
           }
-          return {
+          if (!headers['from']) continue;
+          rawMessages.push({
             id: msg.id as string,
             internalDate: Number(msg.internalDate ?? 0),
             rfcMessageId: headers['message-id'] ?? '',
-            from: headers['from'] ?? '',
+            from: headers['from'],
             to: headers['to'] ?? '',
             cc: headers['cc'] ?? '',
             subject: headers['subject'] ?? '(no subject)',
             body: extractBody(msg.payload, msg.payload?.mimeType),
+            payload: msg.payload,
             mentionText: extractAllText(msg.payload),
             labelIds: (msg.labelIds ?? []) as string[],
-          };
-        }).filter((msg) => msg.from);
+          });
+        }
         if (rawMessages.length > 0) {
           results.push({ threadId: m.threadId, messages: rawMessages });
         }
@@ -371,6 +609,7 @@ function parseMessage(msg: any, thread: ThreadMessage[] = []): EmailMessage | nu
   if (!from) return null;
 
   const body = extractBody(msg.payload);
+  const attachments = extractAllAttachmentParts(msg.payload);
 
   return {
     messageId: msg.id,
@@ -381,6 +620,7 @@ function parseMessage(msg: any, thread: ThreadMessage[] = []): EmailMessage | nu
     cc,
     subject,
     body: body.slice(0, MAX_BODY_LEN),
+    ...(attachments.length > 0 ? { attachments } : {}),
     thread,
   };
 }
@@ -394,7 +634,14 @@ function parseThreadMessage(msg: any): ThreadMessage | null {
   const date = headers['date'] ?? '';
   if (!from) return null;
   const body = extractBody(msg.payload);
-  return { from, date, body };
+  const attachments = extractAllAttachmentParts(msg.payload);
+  return {
+    messageId: msg.id as string,
+    from,
+    date,
+    body,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
 }
 
 /**
@@ -466,6 +713,40 @@ function htmlToText(html: string): string {
   });
 
   return $.text().replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Find all attachment parts in a message payload (any MIME type with an attachmentId). */
+function extractAllAttachmentParts(payload: any): EmailAttachment[] {
+  const result: EmailAttachment[] = [];
+  const scan = (p: any) => {
+    if (!p) return;
+    if (p.body?.attachmentId && p.filename) {
+      result.push({
+        filename: p.filename as string,
+        mimeType: (p.mimeType as string | undefined) ?? 'application/octet-stream',
+        attachmentId: p.body.attachmentId as string,
+        size: (p.body.size as number | undefined) ?? 0,
+      });
+    }
+    for (const child of p.parts ?? []) scan(child);
+  };
+  scan(payload);
+  return result;
+}
+
+/** Find text/* attachment parts (those with an attachmentId rather than inline data). */
+function extractTextAttachmentParts(payload: any): { filename: string; attachmentId: string }[] {
+  const result: { filename: string; attachmentId: string }[] = [];
+  const scan = (p: any) => {
+    if (!p) return;
+    const mime = p.mimeType as string | undefined;
+    if (p.body?.attachmentId && p.filename && (mime?.startsWith('text/') || mime === 'application/pdf')) {
+      result.push({ filename: p.filename as string, attachmentId: p.body.attachmentId as string });
+    }
+    for (const child of p.parts ?? []) scan(child);
+  };
+  scan(payload);
+  return result;
 }
 
 /** Collect text from every part of a message payload (plain + HTML) for @mention scanning */

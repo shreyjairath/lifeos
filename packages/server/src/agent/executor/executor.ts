@@ -105,9 +105,39 @@ export class Executor {
         local.push(msg);
         yield { type: 'agent_append', role: 'tool', message: msg };
       }
+
+      // Compress large tool results from prior turns — agent already saw the full
+      // content this turn; history only needs enough to remember what was found.
+      compressOldToolResults(local, toolsResult.messages.length);
+
       prepareMessages(local);
 
       if (toolsResult.cancelled) return;
+    }
+  }
+}
+
+const COMPRESS_THRESHOLD = 10_000;
+const COMPRESS_PREVIEW = 1_500;
+
+/**
+ * Compress large tool results from prior turns in place.
+ * Skips the last `keepLast` tool results (current turn — agent hasn't seen history yet).
+ */
+function compressOldToolResults(messages: Record<string, any>[], keepLast: number): void {
+  const toolIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]!.role === 'tool') toolIndices.push(i);
+  }
+  const toCompress = toolIndices.slice(0, Math.max(0, toolIndices.length - keepLast));
+  for (const idx of toCompress) {
+    const msg = messages[idx]!;
+    const content = msg.content as string;
+    if (typeof content === 'string' && content.length > COMPRESS_THRESHOLD) {
+      messages[idx] = {
+        ...msg,
+        content: content.slice(0, COMPRESS_PREVIEW) + `\n[...compressed — ${content.length} chars total]`,
+      };
     }
   }
 }

@@ -12,7 +12,7 @@ For every new agent you create:
 - `description` — one sentence, what it owns
 - `goal` — the north star; specific enough to evaluate decisions against.
 - `manager` — almost always `cos` unless this is a peer-level hire
-- `identity` — always `[identity.md]`. This file is loaded in every mode (chat, heartbeat, self_eval, inter-agent-message). It should describe who the agent is, what they own, how they operate, and any standing facts or context they need. Write it as a direct brief — second person, present tense, operational.
+- `identity` — always `[identity.md]`. This file is loaded in every mode (chat, self_eval, inter-agent-message, task_trigger). It should describe who the agent is, what they own, how they operate, and any standing facts or context they need. Write it as a direct brief — second person, present tense, operational.
 - `chat-prompt` — `[chat.md]` only if the client will chat directly with this agent. This file is loaded only in chat mode, on top of identity. Use it for chat-specific framing: how to open a session, what to check first, how to structure responses, what the agent should do at the start of every conversation. Omit if the agent is background-only.
 - `tools` — by default, use `mode: exclude` and exclude only the three Redfin tools unless the agent needs them. Every agent gets all platform tools (workspace, logging, email, web search, tasks, team coordination, session history, artifacts) by default. Only real estate agents need `parse_redfin_listing`, `parse_redfin_search`, `property_report` — for those, omit the tools block entirely (no filter = all tools).
 
@@ -28,7 +28,7 @@ For every new agent you create:
   # Real estate agents:
   # (omit tools block — gets everything)
   ```
-- `recurring-tasks` — standard set for active agents: heartbeat (6h), reconcile_workspace (4h), self_eval (24h), self_learning (48h), workspace_reorg (168h), system_feedback (168h). Reduce cadence or omit tasks for lightweight/reactive agents.
+- `recurring-tasks` — standard set for active agents: reconcile_workspace (4h), self_eval (24h), self_learning (48h), workspace_reorg (168h), system_feedback (168h). Reduce cadence or omit tasks for lightweight/reactive agents.
 
 **`identity.md`** — who the agent is:
 - What domain they own and what they explicitly don't own

@@ -112,6 +112,7 @@ export class AgentTools {
     goal: string | null,
     manager: string | null,
     tools: string[] | null,
+    identity: string | null,
   ): Record<string, any> {
     const agentDir = resolve(this.agentsDir, name);
     if (!existsSync(agentDir)) {
@@ -134,6 +135,10 @@ export class AgentTools {
 
       const yamlContent = yaml.dump(merged, { lineWidth: -1 });
       writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
+
+      if (identity != null) {
+        writeFileSync(resolve(agentDir, 'identity.md'), identity, 'utf-8');
+      }
 
       this.getRegistry().register(yamlContent, agentDir);
       this.eventBus.publish({ type: 'agents_updated' });

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
-type Store = Record<string, { lastSeenMessageId: string | null; summary?: string }>;
+type Store = Record<string, { lastSeenMessageId: string | null; subject?: string; summary?: string }>;
 
 export class EmailThreadStore {
   private readonly path: string;
@@ -16,9 +16,14 @@ export class EmailThreadStore {
     return this.load()[threadId]?.lastSeenMessageId ?? null;
   }
 
-  markSeen(threadId: string, messageId: string): void {
+  markSeen(threadId: string, messageId: string, subject?: string): void {
     const store = this.load();
-    store[threadId] = { ...store[threadId], lastSeenMessageId: messageId };
+    const existing = store[threadId];
+    store[threadId] = {
+      ...existing,
+      lastSeenMessageId: messageId,
+      ...(subject && !existing?.subject ? { subject: subject.replace(/^(Re:\s*)+/i, '') } : {}),
+    };
     this.save(store);
   }
 

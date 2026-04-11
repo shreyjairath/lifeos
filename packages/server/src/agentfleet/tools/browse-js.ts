@@ -1,11 +1,14 @@
 import * as cheerio from 'cheerio';
 import { chromium, type Browser } from 'playwright';
+import type { Verifier } from './verifier.js';
 
 const MAX_CHARS = 50_000;
 const REMOVE_TAGS = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
 
 export class BrowseJs {
   private browser: Browser | null = null;
+
+  constructor(private readonly verifier?: Verifier) {}
 
   private async getBrowser(): Promise<Browser> {
     if (this.browser && this.browser.isConnected()) return this.browser;
@@ -17,7 +20,7 @@ export class BrowseJs {
     return this.browser;
   }
 
-  async fetch(url: string): Promise<Record<string, any>> {
+  async fetch(url: string, verify = false): Promise<Record<string, any>> {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { error: 'Only http/https URLs are supported.', url };
     }
@@ -67,7 +70,13 @@ export class BrowseJs {
       const truncated = text.length > MAX_CHARS;
       if (truncated) text = text.slice(0, MAX_CHARS);
 
-      return { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+      const result: Record<string, any> = { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+
+      if (verify && this.verifier) {
+        result.verification = await this.verifier.assessPage(finalUrl, title, text);
+      }
+
+      return result;
     } catch (err: any) {
       // Reset browser on crash
       this.browser = null;

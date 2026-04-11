@@ -1,11 +1,14 @@
 import * as cheerio from 'cheerio';
+import type { Verifier } from './verifier.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 const MAX_CHARS = 50_000;
 const REMOVE_TAGS = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
 
 export class Browse {
-  async fetch(url: string): Promise<Record<string, any>> {
+  constructor(private readonly verifier?: Verifier) {}
+
+  async fetch(url: string, verify = false): Promise<Record<string, any>> {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { error: 'Only http/https URLs are supported.', url };
     }
@@ -52,7 +55,13 @@ export class Browse {
       const truncated = text.length > MAX_CHARS;
       if (truncated) text = text.slice(0, MAX_CHARS);
 
-      return { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+      const result: Record<string, any> = { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+
+      if (verify && this.verifier) {
+        result.verification = await this.verifier.assessPage(finalUrl, title, text);
+      }
+
+      return result;
     } catch (err: any) {
       if (err?.name === 'TimeoutError') {
         return { error: 'Request timed out after 15s.', url };

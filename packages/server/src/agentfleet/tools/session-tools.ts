@@ -31,7 +31,7 @@ export class SessionToolsImpl {
           session_id: sessionId,
           title: meta.title ?? meta.name ?? sessionId,
           date: createdAt > 0 ? DATE_FMT.format(new Date(createdAt * 1000)) : 'unknown',
-          has_summary: !!store.readSummary(sessionId),
+          summary: store.readSummary(sessionId) ?? null,
         },
       });
     }

@@ -17,13 +17,15 @@
     "js-yaml": "^4.1.0",
     "marked": "^18.0.0",
     "node-cron": "^3.0.0",
+    "pdf-parse": "^2.4.5",
     "playwright": "^1.59.1",
     "web-push": "^3.6.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "@types/web-push": "^3.6.4",
     "@types/node-cron": "^3.0.11",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/web-push": "^3.6.4",
     "bun-types": "latest",
     "typescript": "^5.7.0"
   }

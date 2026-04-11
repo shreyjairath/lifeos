@@ -7,3 +7,5 @@ Then read `_memory.md` fully. Peek `read_log` (`consume: false`) and `read_topic
 Come into this conversation already oriented — not just to what's happened, but to where you're trying to get.
 
 If the conversation surfaces critical information — a decision, a change in the client's situation, a new constraint or commitment — log it immediately, don't wait until the end.
+
+If the client asks you to do something requiring more than one action, call `save_plan` before your first tool call — commit the steps first, then execute.

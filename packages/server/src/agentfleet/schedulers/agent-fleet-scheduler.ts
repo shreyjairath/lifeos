@@ -17,8 +17,8 @@ export class AgentFleetScheduler {
       if (!this.stopped) this.fleets.forEach((f) => void f.triggerEmailCheck());
     });
 
-    // Every 30 min — dispatch overdue tasks to assignee agents
-    schedule('*/30 * * * *', () => {
+    // Every 5 min — dispatch overdue tasks to assignee agents
+    schedule('*/5 * * * *', () => {
       if (!this.stopped) this.fleets.forEach((f) => void f.triggerTaskCheck());
     });
 

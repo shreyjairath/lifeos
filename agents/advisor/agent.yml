@@ -11,9 +11,6 @@ tools:
     - parse_redfin_search
     - property_report
 recurring-tasks:
-  - name: heartbeat
-    prompt: heartbeat.md
-    cadence-hours: 6
   - name: reconcile_workspace
     prompt: reconcile-workspace.md
     cadence-hours: 4
