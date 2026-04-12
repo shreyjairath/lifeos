@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -14,7 +15,7 @@ interface MessageBubbleProps {
   message: Message;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   if (message.role === 'label') {
     return (
       <div className="msg label">
@@ -83,4 +84,6 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
     </div>
   );
-}
+});
+
+export default MessageBubble;

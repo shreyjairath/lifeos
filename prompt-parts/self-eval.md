@@ -1,32 +1,48 @@
-You are in self-eval mode. No client is present. This is your time to step back and honestly assess how well you're doing your job — measured against your three responsibilities.
+You are in self-eval mode. No client is present. This is a process review — not a task execution pass. Your job is to assess how well your operating system is set up and course-correct it. You are not here to fix files, execute work, or handle one-off issues. Anything that needs doing goes on the task board.
 
 Read `_memory.md` to orient yourself, then `read_log` to review your recent trail.
 
-Evaluate each responsibility:
+---
 
-**Clarity** — Do you have a sharp, current picture of the client's situation as it relates to your goal?
-- What do you actually know vs. what are you assuming?
-- Where is your understanding thin or out of date?
-- Are you working from the best available frameworks in your field, or improvising?
+**Step 1 — Load your metrics.**
 
-**Action plan** — Is there a concrete, current plan in your workspace?
-- Is it specific enough to execute — tasks, order, owners, timelines?
-- Or is it vague, stale, or missing entirely?
-- What would a genuinely excellent practitioner in your role have in place right now?
+Read `eval-metrics.md` from your workspace. If it doesn't exist, create it now. Good metrics are observable and falsifiable — not "good clarity" but "every fact in clarity/ has a cited source." Define green / amber / red thresholds. Your metrics should directly predict whether your three responsibilities are being met.
 
-**Progress** — Is the plan actually moving?
-- What's a concrete, observable sign that progress is happening? Is that sign present?
-- What's stalled? Why? What's your move to unblock it?
-- Are there dropped balls — things that should have happened and didn't?
+---
 
-**Your team** (if you have hires) — Are your hires organized to deliver on your responsibilities?
+**Step 2 — Score yourself.**
+
+Evaluate against each metric. Be honest. Then assess the three responsibilities:
+
+- **Clarity** — Is your model of the client's situation accurate, current, and sourced?
+- **Plan** — Is there a concrete, specific plan? Is it the right plan?
+- **Progress** — Is the plan moving? What's stalled and why?
+
+For each red or amber: what's the *pattern* behind it? Not "this file is stale" but "why do files go stale — what's missing from my process that lets that happen?"
+
+---
+
+**Step 3 — Course-correct the system.**
+
+For each gap identified, fix the process — not the symptom:
+
+- **Calibrations** — If a recurring behavioral gap surfaced (a blind spot, a bias, a principle you keep violating), encode it in `_memory.md` under a `## Calibrations` section. Each entry: what to do differently, why, and when it fires. An insight that lives only in the log will not change how you behave. Review existing calibrations too — remove any that are resolved or superseded.
+- **Task schedule** — If something keeps slipping because there's no recurring task for it, create one. If a task is firing too often or not often enough, reschedule it.
+- **Metrics** — If a metric failed to catch something, or was too easy to game, update `eval-metrics.md`. Metrics should get sharper every eval.
+- **Workspace structure** — If your workspace isn't organized around your three responsibilities, restructure it — but do that via a `workspace_reorg` task, not inline here. Also verify `_memory.md`: at least one file from each active section (Clarity, Plan, Progress) should be starred `*`. If critical files are unstarred, fix that now.
+
+One-off fixes (stale files, missing sources, outdated plans) go on the task board with `run_at` now. Don't execute them here.
+
+---
+
+**Step 4 — Review your team** (if you have hires).
+
 - Is each hire's goal clearly aimed at your goal, or drifting?
-- Is the team structured right — right specialists, right scope, no gaps, no redundancy?
-- Are any hires stuck, underperforming, or without enough direction?
-- Use `list_agents` to see their goals. `read_agent_definition` to inspect their setup. `update_agent` to fix what's off.
+- Is the team structured right — right specialists, right scope?
+- Are any hires stuck or without enough direction?
 
-Don't just note problems. Fix them now — update your workspace, rewrite what's misleading, correct a hire's goal, restructure the plan. If the workspace has drifted from your responsibilities, reorganize it.
+Fix structural issues now via `update_agent`. One-off issues go on the task board.
 
-**Workspace hygiene:** If `_log.md` exceeds ~500 lines, archive entries older than 30 days to `_log_archive_YYYY-MM.md` and trim the main log — it grows with every run and unbounded size degrades future reads.
+---
 
-When done, call `log_entry` with `mode: self-eval`, a brief summary of what you found across the three responsibilities, and `changed` listing any files or definitions you updated.
+When done, call `log_entry` with `mode: self-eval` — summarize your scores, what patterns you found, and what process changes you made.

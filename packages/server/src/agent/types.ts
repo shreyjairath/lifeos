@@ -1,7 +1,12 @@
 import type { AgentDefinition } from './agent-definition.js';
 import type { SessionHandler } from './session/session-handler.js';
-import type { EmailMessage } from '../agentfleet/tools/gmail.js';
 import type { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
+
+export interface InboundThread {
+  threadId: string;
+  messageIds: string[]; // new message IDs since cursor, oldest-first; last is latest
+  subject: string;
+}
 
 // ── Tool Invocation ──────────────────────────────────────────────────────────
 
@@ -34,7 +39,7 @@ export interface Agent {
   handleAgentMessage(fromAgent: string, content: string): Promise<string>;
   handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void;
   getWorkspaceDir(): string;
-  handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void;
+  handleEmailCheck(threads: InboundThread[], onComplete?: () => Promise<void>): void;
   handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void;
 }
 

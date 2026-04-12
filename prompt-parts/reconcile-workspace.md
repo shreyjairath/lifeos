@@ -8,10 +8,10 @@ You have been woken up to reconcile your workspace with your recent activity. Yo
 
 **Reconcile your workspace** — the log entries are the source of truth for what happened. For each entry, ask: does the workspace already reflect this? If not, apply it. Work through entries in time order; most recent wins on conflicts. At the end, your workspace should be fully coherent with your log history — no stale data, no contradictions.
 
-Focus on your primary state files first: clarity, plan, and progress files. Some changes will already be written to files from the run itself — skip those. Others will be implied but not yet applied — write them now. Update `_memory.md` last if any files were added, removed, or renamed.
+Focus on your primary state files first: clarity, plan, and progress files. Some changes will already be written to files from the run itself — skip those. Others will be implied but not yet applied — write them now. Update `_memory.md` last if any files were added, removed, or renamed. When updating `_memory.md`, verify that the most critical clarity, plan, and progress files are marked `*` — if a file must be current for you to operate, it should be starred. At least one file from each active section (Clarity, Plan, Progress) should be starred.
 
 **Refresh tasks** — call `get_overdue_tasks` to see what's due. Call `get_my_tasks` to review your full task list. Cancel or reschedule anything no longer relevant. Create tasks for any follow-ups identified during reconciliation. Do not execute any tasks — this run is reconciliation only.
 
-Scope: workspace sync only. Do not send emails, message agents, or take outbound actions.
+Scope: workspace sync only. Don't execute work you discover here — create a task instead, set `run_at` to now if it's urgent. The task fires the action; reconcile only identifies it.
 
 **Log** with `log_entry` using `mode: task-trigger`. Use the `notes` field for anything that needs follow-up in a future run.

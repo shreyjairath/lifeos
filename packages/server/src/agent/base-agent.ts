@@ -3,7 +3,7 @@ import { Executor, prepareMessages } from './executor/executor.js';
 import { LlmClient } from './executor/llm-client.js';
 import { Confirmations } from './executor/confirmations.js';
 import { SessionHandler } from './session/session-handler.js';
-import type { EmailMessage } from '../agentfleet/tools/gmail.js';
+import type { InboundThread } from './types.js';
 import { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
 import {
   createRunRecord,
@@ -184,28 +184,15 @@ export class BaseAgent implements Agent {
     );
   }
 
-  handleEmailCheck(emails: EmailMessage[], onComplete?: () => Promise<void>): void {
-    console.log(`[${this.def.name}] handleEmailCheck: received ${emails.length} email(s), enqueueing`);
-    // Build per-thread reply metadata
-    const threadMeta = new Map<string, { threadId: string; inReplyTo: string; subject: string; replyTo: string }>();
-    for (const email of emails) {
-      if (!threadMeta.has(email.threadId)) {
-        threadMeta.set(email.threadId, {
-          threadId: email.threadId,
-          inReplyTo: email.rfcMessageId.replace(/^<|>$/g, ''),
-          subject: email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`,
-          replyTo: email.from,
-        });
-      } else {
-        // Update to latest message in thread
-        const meta = threadMeta.get(email.threadId)!;
-        meta.inReplyTo = email.rfcMessageId.replace(/^<|>$/g, '');
-        meta.replyTo = email.from;
-      }
-    }
-    const append = formatEmailsForAgent(emails);
+  handleEmailCheck(threads: InboundThread[], onComplete?: () => Promise<void>): void {
+    console.log(`[${this.def.name}] handleEmailCheck: received ${threads.length} thread(s), enqueueing`);
+    const lines = threads.map((t) => {
+      const ids = t.messageIds.map((id) => `\`${id}\``).join(', ');
+      return `- **thread_id:** \`${t.threadId}\` | **new_message_ids:** ${ids} | **subject:** ${t.subject}`;
+    });
+    const append = `\n\n# Email(s) for You\n\nCall \`read_email_thread\` on each thread before acting.\n\n${lines.join('\n')}`;
     this.backgroundQueue.enqueue(async () => {
-      await this.handleSystemMessage('check_email_trigger', append, { emailThreadMeta: [...threadMeta.values()] });
+      await this.handleSystemMessage('check_email_trigger', append);
       if (onComplete) await onComplete();
     });
   }
@@ -276,10 +263,10 @@ export class BaseAgent implements Agent {
     return result;
   }
 
-  private async handleSystemMessage(mode: string, userMsgAppend?: string, opts: { emailThreadMeta?: { threadId: string; inReplyTo: string; subject: string; replyTo: string }[] } = {}): Promise<void> {
+  private async handleSystemMessage(mode: string, userMsgAppend?: string): Promise<void> {
     if (this.def.disabledModes.has(mode)) return;
 
-    const system = this.buildSystemPrompt(mode, opts);
+    const system = this.buildSystemPrompt(mode);
     const userMsg = userMsgAppend?.trim() ? userMsgAppend : `[${mode}]`;
 
     const messages: Record<string, any>[] = [{ role: 'user', content: userMsg }];
@@ -339,7 +326,7 @@ export class BaseAgent implements Agent {
 
   private buildSystemPrompt(
     mode: string,
-    opts: { sessionId?: string; fromAgent?: string; async?: boolean; emailThreadMeta?: { threadId: string; inReplyTo: string; subject: string; replyTo: string }[] },
+    opts: { sessionId?: string; fromAgent?: string; async?: boolean } = {},
   ): string {
     const parts: string[] = [LIFEOS_PROMPT];
 
@@ -381,22 +368,12 @@ export class BaseAgent implements Agent {
       }
     } else {
       parts.push('\n\n' + this.modePrompt(mode));
-      if (mode === 'check_email_trigger') {
-        if (opts.emailThreadMeta?.length) {
-          const threadLines = opts.emailThreadMeta.map((t) =>
-            `- **thread_id:** \`${t.threadId}\` | **in_reply_to:** \`${t.inReplyTo}\` | **subject:** ${t.subject} | **reply_to:** ${t.replyTo}`,
-          );
-          parts.push(
-            `\n\n**You are processing ${opts.emailThreadMeta.length === 1 ? 'this thread' : 'these threads'} — use the fields below when calling \`send_email\` or \`send_file_email\` to reply, and pass all thread_ids to \`email_thread_ids\` in \`log_entry\`:**\n\n${threadLines.join('\n')}`,
-          );
-        }
-        if (this.clientConfig.mailboxAddress) {
-          parts.push(
-            `\n\n**Shared mailbox:** \`${this.clientConfig.mailboxAddress}\` — all agents share this address. ` +
-            `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
-            `— ${this.def.title} (@${this.def.name})`,
-          );
-        }
+      if (mode === 'check_email_trigger' && this.clientConfig.mailboxAddress) {
+        parts.push(
+          `\n\n**Shared mailbox:** \`${this.clientConfig.mailboxAddress}\` — all agents share this address. ` +
+          `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
+          `— ${this.def.title} (@${this.def.name})`,
+        );
       }
     }
 
@@ -497,71 +474,3 @@ function resultPreview(result: string): string {
   return s.length > 120 ? s.slice(0, 120) + '…' : s;
 }
 
-function formatEmailsForAgent(emails: EmailMessage[]): string {
-  // Group by threadId — multiple unread messages on the same thread show as one entry
-  const threads = new Map<string, EmailMessage[]>();
-  for (const email of emails) {
-    if (!threads.has(email.threadId)) threads.set(email.threadId, []);
-    threads.get(email.threadId)!.push(email);
-  }
-
-  const lines: string[] = ['\n\n# Email(s) for You\n'];
-  for (const threadEmails of threads.values()) {
-    const first = threadEmails[0]!;
-    const last = threadEmails[threadEmails.length - 1]!;
-    lines.push('---');
-    lines.push(`Subject: ${first.subject}`);
-    lines.push(`From: ${last.from}`);
-    if (last.to) lines.push(`To: ${last.to}`);
-    if (last.cc) lines.push(`CC: ${last.cc}`);
-    lines.push(`Message-ID: ${last.rfcMessageId.replace(/^<|>$/g, '')}`);
-    if (first.thread.length > 0) {
-      lines.push('\n**Thread history:**');
-      const truncated = truncateThreadHistory(first.thread);
-      if (truncated.dropped > 0) {
-        lines.push(`> *[${truncated.dropped} earlier message(s) omitted for length]*`);
-        lines.push('');
-      }
-      for (const msg of truncated.messages) {
-        lines.push(`> From: ${msg.from} | ${msg.date}`);
-        const stripped = stripQuotedLines(msg.body);
-        lines.push(`> ${stripped.split('\n').join('\n> ')}`);
-        lines.push('');
-      }
-    }
-    lines.push('\n**New message(s):**');
-    for (const email of threadEmails) {
-      lines.push(`From: ${email.from}`);
-      lines.push(stripQuotedLines(email.body));
-      lines.push('');
-    }
-  }
-  lines.push('---');
-  return lines.join('\n');
-}
-
-const MAX_THREAD_HISTORY_CHARS = 20_000;
-
-function truncateThreadHistory(msgs: { from: string; date: string; body: string }[]): {
-  messages: { from: string; date: string; body: string }[];
-  dropped: number;
-} {
-  // Keep the most recent messages that fit within the char budget (drop oldest first)
-  let total = 0;
-  let cutIdx = msgs.length;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    total += msgs[i]!.from.length + msgs[i]!.body.length;
-    if (total > MAX_THREAD_HISTORY_CHARS) { cutIdx = i + 1; break; }
-    cutIdx = i;
-  }
-  return { messages: msgs.slice(cutIdx), dropped: cutIdx };
-}
-
-function stripQuotedLines(body: string): string {
-  return body
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('>'))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}

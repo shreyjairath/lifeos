@@ -1,7 +1,7 @@
 import type { AgentRegistry } from './agent-registry.js';
 import type { EventBus } from './event-bus.js';
-import type { ExecutorEvent, Agent } from '../agent/types.js';
-import type { GmailClient, RawThread, EmailMessage, ThreadMessage } from './tools/gmail.js';
+import type { ExecutorEvent, Agent, InboundThread } from '../agent/types.js';
+import type { GmailClient, RawThread } from './tools/gmail.js';
 import type { Contact } from '../config.js';
 
 /**
@@ -81,9 +81,10 @@ export class AgentRouter {
       const latestInbox = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
       const senderEmail = extractEmail(latestInbox ? latestInbox.from : rawThread.messages[rawThread.messages.length - 1]!.from);
 
-      // Client (owner) — defaults to cos
+      // Client (owner) — route by @mention, cos as fallback
       if (clientEmail && senderEmail === clientEmail.toLowerCase()) {
-        return [cosAgent];
+        const involved = allAgents.filter((a) => fullThreadText.includes(`@${a.getName()}`));
+        return involved.length > 0 ? involved : [cosAgent];
       }
 
       // Known contact — restricted to their allowed agents
@@ -100,45 +101,44 @@ export class AgentRouter {
     };
 
     // Build per-agent delivery buckets
-    type Bucket = { agent: Agent; emails: EmailMessage[]; thread: RawThread };
+    type Bucket = { agent: Agent; inbound: InboundThread; rawThread: RawThread };
     const buckets = new Map<string, Bucket[]>();
+    // Cache resolveInvolved results — used again when building threadMeta below
+    const involvedCache = new Map<string, Agent[] | null>();
 
     for (const rawThread of rawThreads) {
       const allMsgs = rawThread.messages;
       const involved = resolveInvolved(rawThread);
+      involvedCache.set(rawThread.threadId, involved);
       if (!involved) continue;
 
       for (const agent of involved) {
         const lastSeen = agent.emailThreadStore.getLastSeen(rawThread.threadId);
         const lastSeenIdx = lastSeen ? allMsgs.findIndex((m) => m.id === lastSeen) : -1;
+        if (lastSeen && lastSeenIdx === -1) {
+          console.warn(`[EmailCheck] cursor miss on thread ${rawThread.threadId} for ${agent.getName()} — cursor message not found, re-delivering all messages`);
+        }
         const newMsgs = allMsgs.slice(lastSeenIdx + 1).filter((m) => !m.labelIds.includes('SENT'));
         if (newMsgs.length === 0) continue;
 
-        const prior: ThreadMessage[] = allMsgs.slice(0, lastSeenIdx + 1).map((m) => ({
-          messageId: m.id, from: m.from, date: new Date(m.internalDate).toUTCString(), body: m.body,
-        }));
-        const workspaceDir = agent.getWorkspaceDir();
-        const emailMsgs: EmailMessage[] = await Promise.all(newMsgs.map(async (m) => {
-          const body = await gmail.downloadTextAttachments(m.id, m.payload, m.body, workspaceDir);
-          return { messageId: m.id, rfcMessageId: m.rfcMessageId, threadId: rawThread.threadId, from: m.from, to: m.to, cc: m.cc, subject: m.subject, body, thread: prior };
-        }));
-
-        const latestMsg = allMsgs[allMsgs.length - 1]!;
-        console.log(`[EmailCheck] routing "${latestMsg.subject}" → ${agent.getName()} (${newMsgs.length} new message(s))`);
+        const subject = allMsgs[allMsgs.length - 1]!.subject;
+        console.log(`[EmailCheck] routing "${subject}" → ${agent.getName()} (${newMsgs.length} new message(s))`);
         if (!buckets.has(agent.getName())) buckets.set(agent.getName(), []);
-        buckets.get(agent.getName())!.push({ agent, emails: emailMsgs, thread: rawThread });
+        buckets.get(agent.getName())!.push({
+          agent,
+          inbound: { threadId: rawThread.threadId, messageIds: newMsgs.map((m) => m.id), subject },
+          rawThread,
+        });
       }
     }
 
     // Per-thread metadata for mark-as-read coordination
-    const threadMeta = new Map<string, { involvedAgents: Agent[]; latestInboxMsgId: string; latestMsgId: string }>();
+    const threadMeta = new Map<string, { involvedAgents: Agent[]; latestMsgId: string }>();
     for (const rawThread of rawThreads) {
-      const latestInboxMsg = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
-      if (!latestInboxMsg) continue;
+      const latestMsgId = rawThread.messages[rawThread.messages.length - 1]!.id;
       threadMeta.set(rawThread.threadId, {
-        involvedAgents: resolveInvolved(rawThread) ?? [],
-        latestInboxMsgId: latestInboxMsg.id,
-        latestMsgId: rawThread.messages[rawThread.messages.length - 1]!.id,
+        involvedAgents: involvedCache.get(rawThread.threadId) ?? [],
+        latestMsgId,
       });
     }
 
@@ -146,34 +146,33 @@ export class AgentRouter {
 
     for (const agentBuckets of buckets.values()) {
       const agent = agentBuckets[0]!.agent;
-      for (const { emails: agentEmails, thread } of agentBuckets) {
-        agent.handleEmailCheck(agentEmails, async () => {
-          const latestNewMsg = agentEmails[agentEmails.length - 1]!;
-
-          const threadSubject = agentEmails[0]!.subject;
-          const sent = await gmail.getLatestSentMessage(thread.threadId, checkStartTime);
+      for (const { inbound, rawThread } of agentBuckets) {
+        agent.handleEmailCheck([inbound], async () => {
+          const sent = await gmail.getLatestSentMessage(rawThread.threadId, checkStartTime);
           if (sent) {
             const tagged = allAgents.find((a) => a !== agent && sent.body.includes(`@${a.getName()}`));
             if (tagged) {
-              const sentIdx = thread.messages.findIndex((m) => m.id === sent.id);
-              const prevMsgId = sentIdx > 0 ? thread.messages[sentIdx - 1]!.id : null;
-              if (prevMsgId) tagged.emailThreadStore.markSeen(thread.threadId, prevMsgId, threadSubject);
-              agent.emailThreadStore.markSeen(thread.threadId, sent.id, threadSubject);
+              const sentIdx = rawThread.messages.findIndex((m) => m.id === sent.id);
+              const prevMsgId = sentIdx > 0 ? rawThread.messages[sentIdx - 1]!.id : null;
+              if (prevMsgId) tagged.emailThreadStore.markSeen(rawThread.threadId, prevMsgId, inbound.subject);
+              agent.emailThreadStore.markSeen(rawThread.threadId, sent.id, inbound.subject);
+
               console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — cursor set to ${prevMsgId ?? 'start'}`);
               return;
             }
           }
 
-          agent.emailThreadStore.markSeen(thread.threadId, latestNewMsg.messageId, threadSubject);
-          console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestNewMsg.messageId} on thread ${thread.threadId}`);
+          const latestMsgId = inbound.messageIds[inbound.messageIds.length - 1]!;
+          agent.emailThreadStore.markSeen(rawThread.threadId, latestMsgId, inbound.subject);
+          console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestMsgId} on thread ${rawThread.threadId}`);
 
-          const meta = threadMeta.get(thread.threadId);
+          const meta = threadMeta.get(rawThread.threadId);
           if (meta) {
-            const allCaughtUp = meta.involvedAgents.every((a) => a.emailThreadStore.getLastSeen(thread.threadId) === meta.latestMsgId);
+            const allCaughtUp = meta.involvedAgents.every((a) => a.emailThreadStore.getLastSeen(rawThread.threadId) === meta.latestMsgId);
             if (allCaughtUp) {
               try {
-                await gmail.markAsRead([meta.latestInboxMsgId]);
-                console.log(`[EmailCheck] all agents caught up on thread ${thread.threadId} — marked as read`);
+                await gmail.markAsRead([meta.latestMsgId]);
+                console.log(`[EmailCheck] all agents caught up on thread ${rawThread.threadId} — marked as read`);
               } catch (err: any) {
                 console.warn('[EmailCheck] failed to mark as read:', err?.message);
               }
@@ -247,7 +246,7 @@ function toSse(event: ExecutorEvent): SseFrame | null {
       payload = { type: 'tool_confirm_denied', name: event.name };
       break;
     case 'tool_result':
-      payload = { type: 'tool_result', id: event.id, name: event.name, result: event.result };
+      payload = { type: 'tool_result', id: event.id, name: event.name, result: null };
       break;
     case 'agent_append':
     case 'tool_cancelled':

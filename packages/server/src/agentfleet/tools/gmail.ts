@@ -82,6 +82,7 @@ export interface NormalizedMessage {
   cc: string;
   date: string;
   body: string;
+  sent_by?: string; // agent name if sent by an agent via the shared mailbox
   attachments?: EmailAttachment[];
 }
 
@@ -466,11 +467,15 @@ export class GmailClient {
           headers[(h.name as string).toLowerCase()] = decodeHeader(h.value as string);
         }
         if (!headers['from']) continue;
-        let body = extractBody(msg.payload, msg.payload?.mimeType).slice(0, MAX_BODY_LEN);
+        const rawBody = extractBody(msg.payload, msg.payload?.mimeType);
+        const wasTruncated = rawBody.length > MAX_BODY_LEN;
+        let body = wasTruncated ? rawBody.slice(0, MAX_BODY_LEN) : rawBody;
         if (downloadDir) body = await this.downloadTextAttachments(msg.id as string, msg.payload, body, downloadDir);
+        const messageId = msg.id as string;
+        if (wasTruncated) body += `\n[...truncated at ${MAX_BODY_LEN} chars — call read_email_message with message_id "${messageId}" for full content]`;
         const attachments = extractAllAttachmentParts(msg.payload);
         messages.push({
-          message_id: msg.id as string,
+          message_id: messageId,
           rfc_message_id: headers['message-id'] ?? '',
           from: headers['from'],
           to: headers['to'] ?? '',

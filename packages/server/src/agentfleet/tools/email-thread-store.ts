@@ -27,8 +27,8 @@ export class EmailThreadStore {
     this.save(store);
   }
 
-  readSummary(threadId: string): string {
-    return this.load()[threadId]?.summary ?? '';
+  readSummary(threadId: string): string | null {
+    return this.load()[threadId]?.summary ?? null;
   }
 
   writeSummary(threadId: string, summary: string): void {

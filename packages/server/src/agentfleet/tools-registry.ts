@@ -188,15 +188,7 @@ export class ToolsRegistry {
       }
       case 'read_emails': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
-        let emailQuery = (input.query as string | undefined) ?? 'in:inbox is:unread';
-        // Always restrict to unread unless the agent explicitly asks for read messages
-        if (!emailQuery.includes('is:unread') && !emailQuery.includes('is:read')) {
-          emailQuery += ' is:unread';
-        }
-        // Restrict to threads where this agent is mentioned
-        if (!emailQuery.includes(`@${agentName}`)) {
-          emailQuery += ` "@${agentName}"`;
-        }
+        let emailQuery = (input.query as string | undefined) ?? `in:inbox "@${agentName}"`;
         // Restrict to this client's mailbox address (inbound or outbound)
         if (this.mailboxAddress && !emailQuery.includes('to:') && !emailQuery.includes('from:')) {
           emailQuery += ` {to:${this.mailboxAddress} from:${this.mailboxAddress}}`;
@@ -221,6 +213,16 @@ export class ToolsRegistry {
         const threadWorkspace = resolve(this.agentsDir, agentName, 'workspace');
         const thread = await this.gmailClient.fetchThreadFull(input.thread_id as string, threadWorkspace);
         if (!thread) return { error: `Thread '${input.thread_id as string}' not found or empty` };
+        if (this.mailboxAddress) {
+          const titleToAgent = new Map([...this.agentTitles.entries()].map(([k, v]) => [v.toLowerCase(), k]));
+          for (const msg of thread.messages) {
+            if (msg.from.toLowerCase().includes(this.mailboxAddress.toLowerCase())) {
+              const displayName = msg.from.replace(/<[^>]+>/, '').trim().toLowerCase();
+              const agentMatch = titleToAgent.get(displayName);
+              if (agentMatch) msg.sent_by = agentMatch;
+            }
+          }
+        }
         return { thread };
       }
       case 'read_email_message': {
@@ -507,10 +509,10 @@ const TOOLS: ToolDefinition[] = [
   tool('read_emails',
     'List email threads from the shared mailbox. ' +
     'Returns { threads } — each with thread_id, subject, from, date, message_count, and summary (if one has been written). ' +
-    'Use this to get an overview of active threads. Call read_email_thread with a thread_id to read the full content. ' +
-    'Note: queries that do not specify is:unread or is:read will have is:unread appended automatically.',
+    'Threads with summary=null have not been processed yet. ' +
+    'Use this to get an overview of active threads. Call read_email_thread with a thread_id to read the full content.',
     props(
-      prop('query', 'string', 'Gmail search query (default: "in:inbox is:unread"). Examples: "in:inbox is:unread", "in:inbox is:read", "from:someone@example.com".'),
+      prop('query', 'string', 'Gmail search query. Default: "in:inbox \\"@{your_agent_name}\\"" — threads that mention you. Override to broaden (e.g. "in:inbox" for all inbox threads) or narrow (e.g. add "is:unread", "from:someone@example.com").'),
       prop('max_results', 'number', 'Max number of threads to return (default: 10)'),
     ),
     []),

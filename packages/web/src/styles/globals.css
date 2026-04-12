@@ -804,7 +804,7 @@ input, textarea, select {
   outline: none;
   resize: none;
   color: var(--chrome-text);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
   max-height: 120px;
   min-height: 24px;

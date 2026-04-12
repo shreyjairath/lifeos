@@ -124,10 +124,10 @@ export default function ChatPanel({
               msgs.push({ id: nanoid(), role: 'agent', text: content, timestamp: Date.now() + i });
             }
           } else if (m.role === 'tool') {
-            // Tool results — attach to last tool message
+            // Tool results — mark last tool message as completed (no content)
             const last = msgs.findLast(msg => msg.role === 'tool' && !msg.toolResult);
             if (last) {
-              last.toolResult = m.content;
+              last.toolResult = null;
             }
           }
         });
@@ -140,7 +140,7 @@ export default function ChatPanel({
   // Auto-scroll — suppressed while user has scrolled up
   useEffect(() => {
     if (!userScrolledRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      bottomRef.current?.scrollIntoView({ behavior: 'instant' });
     }
   }, [messages]);
 
@@ -355,11 +355,6 @@ export default function ChatPanel({
                 }
                 return updated;
               });
-              // Open artifact panel when render_artifact tool completes
-              if (event.name === 'render_artifact') {
-                const res = event.result as Record<string, unknown>;
-                if (res?.url) onOpenArtifact(String(res.url), String(res.title ?? ''));
-              }
               break;
             }
             case 'tool_confirm_request': {
