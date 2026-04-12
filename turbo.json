@@ -12,6 +12,10 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"]
+    },
+    "test": {
+      "cache": false,
+      "passThroughEnv": ["ANTHROPIC_API_KEY"]
     }
   }
 }

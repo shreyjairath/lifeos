@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 
 // Agent layer
 import { Confirmations } from './agent/executor/confirmations.js';
+import { LlmClient } from './agent/executor/llm-client.js';
 
 // Platform layer
 import { EventBus } from './agentfleet/event-bus.js';
@@ -39,7 +40,7 @@ async function createApp() {
 
   // ── Shared stateless tools ────────────────────────────────────────────────
 
-  const verifier = new Verifier(config.apiKey, config.backgroundModel);
+  const verifier = new Verifier(new LlmClient(config.apiKey), config.backgroundModel);
   const webSearch = new WebSearch(verifier);
   const browse = new Browse(verifier);
 
@@ -86,6 +87,7 @@ async function createApp() {
     const fleet = new AgentFleet(registry, eventBus, router, config, clientConfig, toolsRegistry, confirmations);
 
     fleet.initBackgroundTasks();
+    agentTools.onAgentCreated = (def) => fleet.initTasksForAgent(def);
 
     fleets.set(clientId, fleet);
     return fleet;

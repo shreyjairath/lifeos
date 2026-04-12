@@ -200,21 +200,25 @@ export class AgentFleet {
    * Agents pick these up during heartbeat via get_overdue_tasks.
    */
   initBackgroundTasks(): void {
-    const tasks = this.toolsRegistry.getScheduledTasks();
     for (const agent of this.registry.all()) {
-      const def = agent.getDefinition();
-      for (const rt of def.recurringTasks) {
-        if (rt.disabled) continue;
-        const description = loadPrompt(def.promptBase, rt.promptFile);
-        tasks.upsert(
-          'platform',
-          rt.name,
-          description,
-          rt.cadenceHours,
-          new Date().toISOString(),
-          def.name,
-        );
-      }
+      this.initTasksForAgent(agent.getDefinition());
+    }
+  }
+
+  /** Upserts recurring tasks for a single agent. Called for dynamically created agents. */
+  initTasksForAgent(def: import('../agent/agent-definition.js').AgentDefinition): void {
+    const tasks = this.toolsRegistry.getScheduledTasks();
+    for (const rt of def.recurringTasks) {
+      if (rt.disabled) continue;
+      const description = loadPrompt(def.promptBase, rt.promptFile);
+      tasks.upsert(
+        'platform',
+        rt.name,
+        description,
+        rt.cadenceHours,
+        new Date().toISOString(),
+        def.name,
+      );
     }
   }
 

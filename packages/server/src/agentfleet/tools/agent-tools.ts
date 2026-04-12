@@ -4,12 +4,16 @@ import yaml from 'js-yaml';
 import type { AgentRegistry } from '../agent-registry.js';
 import type { EventBus } from '../event-bus.js';
 import type { AgentTopics } from './agent-topics.js';
+import type { AgentDefinition } from '../../agent/agent-definition.js';
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
 export class AgentTools {
+  /** Called after a new agent is registered. Wired up by index.ts to init platform tasks. */
+  onAgentCreated?: (def: AgentDefinition) => void;
+
   constructor(
     private readonly agentsDir: string,
     private readonly getRegistry: () => AgentRegistry,
@@ -168,7 +172,8 @@ export class AgentTools {
       const yamlContent = buildAgentYaml(name, title, description, goal, manager, tools);
       writeFileSync(resolve(agentDir, 'agent.yml'), yamlContent, 'utf-8');
 
-      this.getRegistry().register(yamlContent, agentDir);
+      const agent = this.getRegistry().register(yamlContent, agentDir);
+      this.onAgentCreated?.(agent.getDefinition());
       this.eventBus.publish({ type: 'agents_updated' });
       return { success: `Agent '${name}' created and registered. Switch to it with agent: "${name}"` };
     } catch (err: any) {
@@ -176,6 +181,20 @@ export class AgentTools {
     }
   }
 }
+
+const BASIC_TOOLS = [
+  'agent_bash',
+  'save_plan', 'get_plan',
+  'log_entry', 'read_log',
+  'create_task', 'get_my_tasks', 'get_overdue_tasks', 'mark_task_complete', 'delete_task',
+  'post_message', 'read_topic', 'message_agent',
+  'list_agents', 'read_agent_definition',
+  'get_current_datetime',
+  'render_artifact', 'system_feedback',
+  'read_emails', 'read_email_thread', 'read_email_message',
+  'read_email_thread_summary', 'write_email_thread_summary',
+  'fetch_email_attachment', 'send_file_email', 'send_email',
+];
 
 function buildAgentYaml(
   name: string,
@@ -185,7 +204,7 @@ function buildAgentYaml(
   manager: string | null,
   tools: string[],
 ): string {
-  const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
+  const allTools = [...new Set([...BASIC_TOOLS, ...tools])];
   const doc: Record<string, any> = { name };
   doc.title = title?.trim() || name;
   if (description?.trim()) doc.description = description.trim();
@@ -193,5 +212,12 @@ function buildAgentYaml(
   if (manager?.trim()) doc.manager = manager.trim();
   doc.identity = ['identity.md'];
   doc.tools = { mode: 'include', names: allTools };
+  doc['recurring-tasks'] = [
+    { name: 'reconcile_workspace', prompt: 'reconcile-workspace.md', 'cadence-hours': 4 },
+    { name: 'self_eval', prompt: 'self-eval.md', 'cadence-hours': 24 },
+    { name: 'self_learning', prompt: 'self-learning.md', 'cadence-hours': 48 },
+    { name: 'workspace_reorg', prompt: 'workspace-reorg.md', 'cadence-hours': 168 },
+    { name: 'system_feedback', prompt: 'system-feedback.md', 'cadence-hours': 168 },
+  ];
   return yaml.dump(doc, { lineWidth: -1 });
 }

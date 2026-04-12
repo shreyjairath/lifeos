@@ -8,6 +8,7 @@ import { Bash } from './tools/bash.js';
 import type { GmailClient } from './tools/gmail.js';
 import { ScheduledTasks } from './tools/scheduled-tasks.js';
 import { SessionToolsImpl } from './tools/session-tools.js';
+import { SessionStore } from '../agent/session/session-store.js';
 import { AgentTopics } from './tools/agent-topics.js';
 import { EmailThreadStore } from './tools/email-thread-store.js';
 import { Redfin } from './tools/redfin.js';
@@ -43,7 +44,7 @@ export class ToolsRegistry {
     this.sharedDir = resolve(clientDataDir, 'shared');
     this.disabledFile = resolve(clientDataDir, 'disabled-tools.json');
     this.sharedTasks = new ScheduledTasks(resolve(clientDataDir, 'tasks.json'));
-    this.sessionTools = new SessionToolsImpl(this.agentsDir);
+    this.sessionTools = new SessionToolsImpl((name) => new SessionStore(this.agentsDir, name));
     this.topics = new AgentTopics(resolve(clientDataDir, 'topics'));
     this.sharedBash = new Bash(this.sharedDir, false);
     this.clientEmail = clientConfig.email;
@@ -845,9 +846,10 @@ const TOOLS: ToolDefinition[] = [
     ['category', 'subject', 'detail']),
 
   tool('render_artifact',
-    'Display a file in a persistent panel next to the chat. ' +
-    'Use for anything long-form: reports, summaries, plans, HTML visualizations. ' +
-    'Accepts a path relative to your workspace/_artifacts/ folder or a full URL.',
+    'Display a file in the client\'s chat UI in a persistent panel next to the conversation. ' +
+    'Only works in chat mode — the client must be present and active. ' +
+    'Use for long-form content you want the client to read: reports, summaries, plans, HTML visualizations. ' +
+    'For sharing content in background modes, use send_email to reach the client or post_message/message_agent to reach teammates.',
     props(
       prop('path', 'string', 'Filename within workspace/_artifacts/ (e.g. "report.md") or a full https:// URL'),
       prop('title', 'string', 'Optional title shown in the artifact panel header'),

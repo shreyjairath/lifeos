@@ -13,7 +13,7 @@ function epochSeconds(): number {
 
 function newSessionId(agent: string): string {
   const now = new Date();
-  const ts = now.toISOString().replace('T', '-').replace(/:/g, '').slice(0, 17);
+  const ts = now.toISOString().replace('T', '-').replace(/:/g, '').replace('.', '-').slice(0, 21);
   return agent ? `session-${agent}-${ts}` : `session-${ts}`;
 }
 
@@ -69,12 +69,12 @@ export class SessionHandler {
 
   constructor(
     config: AppConfig,
-    agentsDir: string,
+    store: SessionStore,
     agentName: string,
   ) {
     this.config = config;
     this.agentName = agentName;
-    this.store = new SessionStore(agentsDir, agentName);
+    this.store = store;
   }
 
   /** Inject LlmClient after construction to avoid circular dependency */

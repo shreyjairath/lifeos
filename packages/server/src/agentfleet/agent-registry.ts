@@ -4,6 +4,9 @@ import yaml from 'js-yaml';
 import { BaseAgent } from '../agent/base-agent.js';
 import { parseAgentDefinition } from '../agent/agent-definition.js';
 import { Confirmations } from '../agent/executor/confirmations.js';
+import { SessionHandler } from '../agent/session/session-handler.js';
+import { SessionStore } from '../agent/session/session-store.js';
+import { EmailThreadStore } from './tools/email-thread-store.js';
 import type { Agent } from '../agent/types.js';
 import type { AppConfig, ClientConfig } from '../config.js';
 import type { EventBus } from './event-bus.js';
@@ -25,6 +28,7 @@ const BUILTIN_AGENTS_DIR = resolve(MONOREPO_ROOT, 'agents');
 export class AgentRegistry {
   private readonly agentsMap = new Map<string, Agent>();
   private readonly dynamicAgentsDir: string;
+  private readonly builtinAgentsDir: string;
 
   constructor(
     private readonly toolsRegistry: ToolsRegistry,
@@ -33,13 +37,15 @@ export class AgentRegistry {
     private readonly config: AppConfig,
     private readonly clientConfig: ClientConfig,
     clientDataDir: string,
+    builtinAgentsDir: string = BUILTIN_AGENTS_DIR,
   ) {
     this.dynamicAgentsDir = resolve(clientDataDir, 'agents');
+    this.builtinAgentsDir = builtinAgentsDir;
   }
 
   load(): void {
     // 1. Built-in agents
-    this.loadDir(BUILTIN_AGENTS_DIR);
+    this.loadDir(this.builtinAgentsDir);
 
     // 2. Dynamic agents from {clientDataDir}/agents/
     this.loadDir(this.dynamicAgentsDir);
@@ -128,6 +134,10 @@ export class AgentRegistry {
         .filter((a) => a.getDefinition().manager === def.name)
         .map((a) => a.getName());
 
+    const store = new SessionStore(this.dynamicAgentsDir, def.name);
+    const session = new SessionHandler(this.config, store, def.name);
+    const emailThreadStore = new EmailThreadStore(this.dynamicAgentsDir, def.name);
+
     const agent = new BaseAgent(
       def,
       invoker,
@@ -137,6 +147,8 @@ export class AgentRegistry {
       this.dynamicAgentsDir,
       this.eventBus,
       hiresProvider,
+      session,
+      emailThreadStore,
     );
     this.agentsMap.set(def.name, agent);
     console.log(`[AgentRegistry] Loaded agent '${def.name}' from ${promptBase}`);

@@ -138,7 +138,7 @@ function parseEntryAfter(entry: string, cursorMs: number | null): Record<string,
   try {
     const ts = new Date(m[1]!).getTime();
     if (cursorMs !== null && ts <= cursorMs) return null;
-    const content = lines.slice(2).join('\n').trim();
+    const content = lines.slice(2).join('\n').replace(/\n\n---$/, '').trim();
     return { timestamp: m[1], from: m[2], message: content };
   } catch {
     return null;

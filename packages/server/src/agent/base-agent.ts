@@ -2,7 +2,7 @@ import { resolve } from 'path';
 import { Executor, prepareMessages } from './executor/executor.js';
 import { LlmClient } from './executor/llm-client.js';
 import { Confirmations } from './executor/confirmations.js';
-import { SessionHandler } from './session/session-handler.js';
+import { SessionHandler, type SessionSummary } from './session/session-handler.js';
 import type { InboundThread } from './types.js';
 import { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
 import {
@@ -27,6 +27,9 @@ const CHECK_EMAIL = loadGenericPrompt('check-email.md');
 const TASK_TRIGGER = loadGenericPrompt('task-trigger.md');
 const INTER_AGENT = loadGenericPrompt('inter-agent-message.md');
 
+// Tools only relevant when the client is present (chat UI)
+const CHAT_ONLY_TOOLS = new Set(['render_artifact']);
+
 // ── EventBus minimal interface (circular dep avoided by duck-typing) ──────────
 
 export interface EventBusLike {
@@ -48,6 +51,10 @@ class BackgroundQueue {
 
 // ── BaseAgent ─────────────────────────────────────────────────────────────────
 
+export type ExecutorFactory = (llmClient: LlmClient, confirmations: Confirmations) => Executor;
+
+const defaultExecutorFactory: ExecutorFactory = (llm, conf) => new Executor(llm, conf);
+
 export class BaseAgent implements Agent {
   private readonly def: AgentDefinition;
   private readonly toolInvoker: ToolInvoker;
@@ -57,6 +64,7 @@ export class BaseAgent implements Agent {
   private readonly agentsDir: string;
   private readonly eventBus: EventBusLike;
   private readonly hiresProvider: () => string[];
+  private readonly executorFactory: ExecutorFactory;
   readonly session: SessionHandler;
 
   /** Serializes all background runs per agent */
@@ -74,6 +82,9 @@ export class BaseAgent implements Agent {
     agentsDir: string,
     eventBus: EventBusLike,
     hiresProvider: () => string[],
+    session: SessionHandler,
+    emailThreadStore: EmailThreadStore,
+    executorFactory?: ExecutorFactory,
   ) {
     this.def = def;
     this.toolInvoker = toolInvoker;
@@ -83,9 +94,10 @@ export class BaseAgent implements Agent {
     this.agentsDir = agentsDir;
     this.eventBus = eventBus;
     this.hiresProvider = hiresProvider;
-    this.emailThreadStore = new EmailThreadStore(agentsDir, def.name);
-    this.session = new SessionHandler(config, agentsDir, def.name);
+    this.session = session;
     this.session.setLlmClientFactory(() => new LlmClient(config.apiKey));
+    this.emailThreadStore = emailThreadStore;
+    this.executorFactory = executorFactory ?? defaultExecutorFactory;
     this.initListeners();
   }
 
@@ -116,7 +128,7 @@ export class BaseAgent implements Agent {
     const record = createRunRecord(this.def.name, 'chat', system, userMessage, model, sessionId);
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode: 'chat' });
 
-    const exec = new Executor(this.config.apiKey, this.confirmations);
+    const exec = this.executorFactory(new LlmClient(this.config.apiKey), this.confirmations);
     this.activeRuns.set(sessionId, exec);
 
     // Buffer assistant+tool_use messages — only persist once the matching tool_result arrives
@@ -228,12 +240,13 @@ export class BaseAgent implements Agent {
 
     let result = '';
     try {
-      const exec = new Executor(this.config.apiKey, this.confirmations);
+      const exec = this.executorFactory(new LlmClient(this.config.apiKey), this.confirmations);
+      const interAgentDefs = this.toolInvoker.definitions().filter((t) => !CHAT_ONLY_TOOLS.has(t.name));
       for await (const event of exec.runLoop(
         messages,
         system,
         model,
-        this.toolInvoker.definitions(),
+        interAgentDefs,
         this.def.name,
         this.reasoningConfig(),
         this.toolInvoker,
@@ -275,15 +288,16 @@ export class BaseAgent implements Agent {
     this.eventBus.publish({ type: 'agent_run_start', agent: this.def.name, mode });
 
     const invoker = this.toolInvoker;
+    const bgDefs = invoker.definitions().filter((t) => !CHAT_ONLY_TOOLS.has(t.name));
 
     let result = '';
     try {
-      const exec = new Executor(this.config.apiKey, this.confirmations);
+      const exec = this.executorFactory(new LlmClient(this.config.apiKey), this.confirmations);
       for await (const event of exec.runLoop(
         messages,
         system,
         bgModel,
-        invoker.definitions(),
+        bgDefs,
         this.def.name,
         null,
         invoker,
@@ -328,89 +342,20 @@ export class BaseAgent implements Agent {
     mode: string,
     opts: { sessionId?: string; fromAgent?: string; async?: boolean } = {},
   ): string {
-    const parts: string[] = [LIFEOS_PROMPT];
+    const identityText = this.def.identity.length
+      ? this.def.identity.map((f) => loadPrompt(this.def.promptBase, f)).join('\n\n')
+      : '';
+    const parentSummary = opts.sessionId
+      ? this.session.getParentSummary(opts.sessionId) ?? undefined
+      : undefined;
 
-    const clientLines: string[] = [];
-    if (this.clientConfig.name) clientLines.push(`**Name:** ${this.clientConfig.name}`);
-    if (this.clientConfig.email) clientLines.push(`**Email:** ${this.clientConfig.email}`);
-    if (this.clientConfig.timezone) clientLines.push(`**Timezone:** ${this.clientConfig.timezone}`);
-    if (clientLines.length) parts.push('\n\n# The Client\n\n' + clientLines.join('\n'));
-
-    parts.push('\n\n# Your Identity\n\n' + this.identityWithName());
-
-    if (this.def.goal) parts.push('\n\n# Your Goal\n\n' + this.def.goal);
-
-    parts.push('\n\n# Current Mode: ' + mode);
-
-    if (mode === 'chat') {
-      parts.push('\n\n' + CHAT_SCAFFOLD);
-      if (opts.sessionId) {
-        parts.push(`\n\n**Session ID:** ${opts.sessionId}`);
-        const parentSummary = this.session.getParentSummary(opts.sessionId);
-        if (parentSummary) {
-          parts.push(`\n\n## Last Session — ${parentSummary.dateStr}\n\n${parentSummary.content}`);
-        }
-      }
-    } else if (mode === 'inter-agent-message') {
-      parts.push('\n\n' + INTER_AGENT);
-      if (opts.async) {
-        parts.push(
-          '\n\n> **Async message** — the sender has moved on and will not receive your text directly. ' +
-          'Your response is written to the feed. ' +
-          'Call `post_message` if you need to send them an explicit reply.',
-        );
-      } else {
-        parts.push(
-          '\n\n> **Sync message** — the sender is blocking and waiting. ' +
-          'Your text response will be returned to them directly. ' +
-          'Do NOT call `message_agent` (sync) to reply — deadlock.',
-        );
-      }
-    } else {
-      parts.push('\n\n' + this.modePrompt(mode));
-      if (mode === 'check_email_trigger' && this.clientConfig.mailboxAddress) {
-        parts.push(
-          `\n\n**Shared mailbox:** \`${this.clientConfig.mailboxAddress}\` — all agents share this address. ` +
-          `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
-          `— ${this.def.title} (@${this.def.name})`,
-        );
-      }
-    }
-
-    const now = new Intl.DateTimeFormat('en-US', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-    }).format(new Date());
-    parts.push('\n\n# Current Date & Time\n\n' + now);
-
-    return parts.join('').trim();
-  }
-
-  private identityWithName(): string {
-    const id = this.identity();
-    const header: string[] = [`Your name is **${this.def.name}**.`];
-    if (this.def.manager) header.push(` Your manager is **${this.def.manager}**.`);
-    const hires = this.hiresProvider();
-    if (hires.length > 0) {
-      header.push('\n\nYour hires: ' + hires.map((h) => `**${h}**`).join(', '));
-    }
-    header.push(
-      '\n\nUse `read_agent_definition` with your own name to review your full definition — ' +
-      'identity, goal, and instructions — and make sure your work is aligned with it.',
-    );
-    const headerStr = header.join('');
-    return id.trim() ? headerStr + '\n\n' + id : headerStr;
-  }
-
-  private identity(): string {
-    if (!this.def.identity.length) return '';
-    return this.def.identity.map((f) => loadPrompt(this.def.promptBase, f)).join('\n\n');
-  }
-
-  private modePrompt(mode: string): string {
-    if (mode === 'check_email_trigger') return CHECK_EMAIL;
-    if (mode === 'task_trigger') return TASK_TRIGGER;
-    throw new Error(`Unknown system mode: ${mode}`);
+    return buildSystemPrompt(this.def, this.clientConfig, this.hiresProvider(), mode, {
+      sessionId: opts.sessionId,
+      fromAgent: opts.fromAgent,
+      async: opts.async,
+      parentSummary,
+      identityText,
+    });
   }
 
   // ── Models ─────────────────────────────────────────────────────────────────
@@ -440,6 +385,96 @@ export class BaseAgent implements Agent {
     return Object.keys(map).length ? map : null;
   }
 
+}
+
+// ── Exported pure function for prompt building ──────────────────────────────
+
+export interface BuildSystemPromptOpts {
+  sessionId?: string;
+  fromAgent?: string;
+  async?: boolean;
+  parentSummary?: SessionSummary;
+  identityText?: string;
+}
+
+export function buildSystemPrompt(
+  def: AgentDefinition,
+  clientConfig: ClientConfig,
+  hires: string[],
+  mode: string,
+  opts: BuildSystemPromptOpts = {},
+): string {
+  const parts: string[] = [LIFEOS_PROMPT];
+
+  const clientLines: string[] = [];
+  if (clientConfig.name) clientLines.push(`**Name:** ${clientConfig.name}`);
+  if (clientConfig.email) clientLines.push(`**Email:** ${clientConfig.email}`);
+  if (clientConfig.timezone) clientLines.push(`**Timezone:** ${clientConfig.timezone}`);
+  if (clientLines.length) parts.push('\n\n# The Client\n\n' + clientLines.join('\n'));
+
+  // Identity
+  const idText = opts.identityText ?? '';
+  const header: string[] = [`Your name is **${def.name}**.`];
+  if (def.manager) header.push(` Your manager is **${def.manager}**.`);
+  if (hires.length > 0) {
+    header.push('\n\nYour hires: ' + hires.map((h) => `**${h}**`).join(', '));
+  }
+  header.push(
+    '\n\nUse `read_agent_definition` with your own name to review your full definition — ' +
+    'identity, goal, and instructions — and make sure your work is aligned with it.',
+  );
+  const headerStr = header.join('');
+  const identityBlock = idText.trim() ? headerStr + '\n\n' + idText : headerStr;
+  parts.push('\n\n# Your Identity\n\n' + identityBlock);
+
+  if (def.goal) parts.push('\n\n# Your Goal\n\n' + def.goal);
+
+  parts.push('\n\n# Current Mode: ' + mode);
+
+  if (mode === 'chat') {
+    parts.push('\n\n' + CHAT_SCAFFOLD);
+    if (opts.sessionId) {
+      parts.push(`\n\n**Session ID:** ${opts.sessionId}`);
+      if (opts.parentSummary) {
+        parts.push(`\n\n## Last Session — ${opts.parentSummary.dateStr}\n\n${opts.parentSummary.content}`);
+      }
+    }
+  } else if (mode === 'inter-agent-message') {
+    parts.push('\n\n' + INTER_AGENT);
+    if (opts.async) {
+      parts.push(
+        '\n\n> **Async message** — the sender has moved on and will not receive your text directly. ' +
+        'Your response is written to the feed. ' +
+        'Call `post_message` if you need to send them an explicit reply.',
+      );
+    } else {
+      parts.push(
+        '\n\n> **Sync message** — the sender is blocking and waiting. ' +
+        'Your text response will be returned to them directly. ' +
+        'Do NOT call `message_agent` (sync) to reply — deadlock.',
+      );
+    }
+  } else {
+    if (mode === 'check_email_trigger') parts.push('\n\n' + CHECK_EMAIL);
+    else if (mode === 'task_trigger') parts.push('\n\n' + TASK_TRIGGER);
+    else throw new Error(`Unknown system mode: ${mode}`);
+
+    if (mode === 'check_email_trigger' && clientConfig.mailboxAddress) {
+      parts.push(
+        `\n\n**Shared mailbox:** \`${clientConfig.mailboxAddress}\` — all agents share this address. ` +
+        `Always close every outbound email with your name so recipients know who they are speaking with:\n\n` +
+        `— ${def.title} (@${def.name})`,
+      );
+    }
+  }
+
+  const now = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(new Date());
+  parts.push('\n\n# Current Date & Time\n\n' + now);
+
+  return parts.join('').trim();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

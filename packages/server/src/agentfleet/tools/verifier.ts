@@ -32,8 +32,8 @@ export class Verifier {
   private readonly llm: LlmClient;
   private readonly model: string;
 
-  constructor(apiKey: string, model: string) {
-    this.llm = new LlmClient(apiKey);
+  constructor(llm: LlmClient, model: string) {
+    this.llm = llm;
     this.model = model;
   }
 

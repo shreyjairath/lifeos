@@ -23,4 +23,4 @@ If acting on an email requires more than one step (research, coordination, multi
 
 **Synthesize** any new information from the email into your workspace.
 
-**Log** with `log_entry` using `mode: check-email` — one sentence: what you found and what you did. If nothing was relevant, log "nothing to action."
+**Log** with `log_entry` using `mode: check-email` — one sentence: what you found and what you did. Always pass `email_thread_ids` with the Gmail thread IDs of every thread you processed, even if you took no action. If nothing was relevant, log "nothing to action." with an empty `email_thread_ids`.

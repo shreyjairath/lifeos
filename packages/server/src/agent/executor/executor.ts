@@ -16,8 +16,8 @@ export class Executor {
   private readonly confirmations: Confirmations;
   private _cancelled = false;
 
-  constructor(apiKey: string, confirmations: Confirmations) {
-    this.llmClient = new LlmClient(apiKey);
+  constructor(llmClient: LlmClient, confirmations: Confirmations) {
+    this.llmClient = llmClient;
     this.confirmations = confirmations;
   }
 
