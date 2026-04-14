@@ -200,9 +200,10 @@ export class BaseAgent implements Agent {
     console.log(`[${this.def.name}] handleEmailCheck: received ${threads.length} thread(s), enqueueing`);
     const lines = threads.map((t) => {
       const ids = t.messageIds.map((id) => `\`${id}\``).join(', ');
-      return `- **thread_id:** \`${t.threadId}\` | **new_message_ids:** ${ids} | **subject:** ${t.subject}`;
+      const ccLine = t.latestCc ? ` | **cc:** ${t.latestCc}` : '';
+      return `- **thread_id:** \`${t.threadId}\` | **in_reply_to:** \`${t.latestRfcMessageId}\` | **from:** ${t.latestFrom} | **to:** ${t.latestTo}${ccLine} | **new_message_ids:** ${ids} | **subject:** ${t.subject}`;
     });
-    const append = `\n\n# Email(s) for You\n\nCall \`read_email_thread\` on each thread before acting.\n\n${lines.join('\n')}`;
+    const append = `\n\n# Email(s) for You\n\nCall \`read_email_thread\` on each thread before acting.\n\nWhen replying, you MUST:\n- Pass \`thread_id\` and \`in_reply_to\` (shown below) to keep the thread intact\n- Set \`to\` to the **from** address shown below\n- Set \`cc\` to all other participants in **to** and **cc** below (reply-all), omitting your own mailbox address\n\n${lines.join('\n')}`;
     this.backgroundQueue.enqueue(async () => {
       await this.handleSystemMessage('check_email_trigger', append);
       if (onComplete) await onComplete();

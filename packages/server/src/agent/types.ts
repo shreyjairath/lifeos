@@ -5,6 +5,10 @@ import type { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js
 export interface InboundThread {
   threadId: string;
   messageIds: string[]; // new message IDs since cursor, oldest-first; last is latest
+  latestRfcMessageId: string; // RFC 2822 Message-ID of the latest new message — pass as in_reply_to
+  latestFrom: string;         // From header of the latest new message
+  latestTo: string;           // To header of the latest new message
+  latestCc: string;           // CC header of the latest new message (may be empty)
   subject: string;
 }
 

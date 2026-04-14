@@ -135,8 +135,64 @@ describe('BaseAgent.handleAgentMessageAsync', () => {
 // ── handleEmailCheck / handleOverdueTask ──────────────────────────────────────
 
 describe('BaseAgent.handleEmailCheck', () => {
-  it('does not throw', () => {
+  it('does not throw with empty threads', () => {
     expect(() => agent.handleEmailCheck([])).not.toThrow();
+  });
+
+  it('does not throw with populated threads', () => {
+    expect(() => agent.handleEmailCheck([{
+      threadId: 'thread-1',
+      messageIds: ['msg-1', 'msg-2'],
+      latestRfcMessageId: '<abc@mail.gmail.com>',
+      latestFrom: 'alice@example.com',
+      latestTo: 'mailbox@example.com',
+      latestCc: 'bob@example.com',
+      subject: 'Hello',
+    }])).not.toThrow();
+  });
+
+  it('enqueues context containing thread_id, in_reply_to, from, to, cc', async () => {
+    let captured = '';
+    (agent as any).handleSystemMessage = async (_mode: string, msg: string) => { captured = msg; };
+
+    agent.handleEmailCheck([{
+      threadId: 'thread-abc',
+      messageIds: ['msg-1'],
+      latestRfcMessageId: '<abc@mail.gmail.com>',
+      latestFrom: 'alice@example.com',
+      latestTo: 'mailbox@example.com',
+      latestCc: 'carol@example.com',
+      subject: 'Test',
+    }]);
+
+    // drain the background queue
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(captured).toContain('thread-abc');
+    expect(captured).toContain('<abc@mail.gmail.com>');
+    expect(captured).toContain('alice@example.com');
+    expect(captured).toContain('mailbox@example.com');
+    expect(captured).toContain('carol@example.com');
+  });
+
+  it('omits cc line when latestCc is empty', async () => {
+    let captured = '';
+    (agent as any).handleSystemMessage = async (_mode: string, msg: string) => { captured = msg; };
+
+    agent.handleEmailCheck([{
+      threadId: 'thread-xyz',
+      messageIds: ['msg-1'],
+      latestRfcMessageId: '<xyz@mail.gmail.com>',
+      latestFrom: 'sender@example.com',
+      latestTo: 'mailbox@example.com',
+      latestCc: '',
+      subject: 'No CC',
+    }]);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(captured).toContain('thread-xyz');
+    expect(captured).not.toContain('**cc:**');
   });
 });
 

@@ -171,3 +171,124 @@ describe('ToolsRegistry.init', () => {
     expect(existsSync(resolve(tmpDir, 'shared'))).toBe(true);
   });
 });
+
+// ── send_email allowlist ──────────────────────────────────────────────────────
+
+function fakeGmailClient() {
+  return {
+    send: async () => ({ threadId: 'thread-1', messageId: 'msg-1' }),
+    sendFile: async () => ({ threadId: 'thread-1', messageId: 'msg-1' }),
+  } as any;
+}
+
+describe('ToolsRegistry send_email allowlist', () => {
+  let reg: ToolsRegistry;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir('tools-registry-email');
+    reg = new ToolsRegistry(dir, fakeClientConfig({
+      email: 'client@example.com',
+      contacts: [{ email: 'contact@example.com', agents: ['cos'], fallback: 'cos' }],
+    }));
+    reg.setGmailClient(fakeGmailClient());
+    const workspace = resolve(dir, 'agents', 'cos', 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    reg.registerAgentWorkspace('cos', workspace, 'Chief of Staff');
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('blocks send_email to an unknown address', async () => {
+    const r = await reg.dispatch('send_email', { to: 'stranger@other.com', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toContain('Not allowed');
+  });
+
+  it('allows send_email to the client address', async () => {
+    const r = await reg.dispatch('send_email', { to: 'client@example.com', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toBeUndefined();
+    expect(r.sent).toBe(true);
+  });
+
+  it('allows send_email to a registered contact', async () => {
+    const r = await reg.dispatch('send_email', { to: 'contact@example.com', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toBeUndefined();
+    expect(r.sent).toBe(true);
+  });
+
+  it('allows send_email when to is omitted (defaults to client)', async () => {
+    const r = await reg.dispatch('send_email', { subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toBeUndefined();
+    expect(r.sent).toBe(true);
+  });
+
+  it('handles RFC-formatted address for client', async () => {
+    const r = await reg.dispatch('send_email', { to: 'Client Name <client@example.com>', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toBeUndefined();
+    expect(r.sent).toBe(true);
+  });
+
+  it('handles RFC-formatted address for contact', async () => {
+    const r = await reg.dispatch('send_email', { to: 'Contact Name <contact@example.com>', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toBeUndefined();
+    expect(r.sent).toBe(true);
+  });
+
+  it('blocks RFC-formatted address with unknown email', async () => {
+    const r = await reg.dispatch('send_email', { to: 'Stranger <stranger@other.com>', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(r.error).toContain('Not allowed');
+  });
+
+  it('fromName is always the agent title', async () => {
+    let capturedFromName: string | undefined;
+    const gmail = {
+      send: async (_to: string, _subj: string, _body: any, _tid: any, _html: any, _irt: any, fromName: string) => {
+        capturedFromName = fromName;
+        return { threadId: 't', messageId: 'm' };
+      },
+    } as any;
+    reg.setGmailClient(gmail);
+    await reg.dispatch('send_email', { to: 'client@example.com', subject: 'Hi', body: 'Hello' }, 'cos');
+    expect(capturedFromName).toBe('Chief of Staff');
+  });
+});
+
+// ── send_file_email allowlist ─────────────────────────────────────────────────
+
+describe('ToolsRegistry send_file_email allowlist', () => {
+  let reg: ToolsRegistry;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir('tools-registry-file-email');
+    reg = new ToolsRegistry(dir, fakeClientConfig({
+      email: 'client@example.com',
+      contacts: [{ email: 'contact@example.com', agents: ['cos'], fallback: 'cos' }],
+    }));
+    reg.setGmailClient(fakeGmailClient());
+    const workspace = resolve(dir, 'agents', 'cos', 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    reg.registerAgentWorkspace('cos', workspace, 'Chief of Staff');
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it('blocks send_file_email to an unknown address', async () => {
+    const r = await reg.dispatch('send_file_email', { to: 'stranger@other.com', subject: 'Report', file_path: '_artifacts/report.html' }, 'cos');
+    expect(r.error).toContain('Not allowed');
+  });
+
+  it('allows send_file_email to client (error is file-not-found, not allowlist)', async () => {
+    const r = await reg.dispatch('send_file_email', { to: 'client@example.com', subject: 'Report', file_path: '_artifacts/report.html' }, 'cos');
+    expect(r.error).not.toContain('Not allowed');
+  });
+
+  it('handles RFC-formatted unknown address', async () => {
+    const r = await reg.dispatch('send_file_email', { to: 'Stranger <stranger@other.com>', subject: 'Report', file_path: 'report.html' }, 'cos');
+    expect(r.error).toContain('Not allowed');
+  });
+});

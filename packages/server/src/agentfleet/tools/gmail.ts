@@ -460,7 +460,7 @@ export class GmailClient {
       }
       const subject = firstHeaders['subject'] ?? '(no subject)';
 
-      const messages: NormalizedMessage[] = [];
+      const messages: { msg: NormalizedMessage; internalDate: number }[] = [];
       for (const msg of threadMsgs) {
         const headers: Record<string, string> = {};
         for (const h of msg.payload?.headers ?? []) {
@@ -475,21 +475,23 @@ export class GmailClient {
         if (wasTruncated) body += `\n[...truncated at ${MAX_BODY_LEN} chars — call read_email_message with message_id "${messageId}" for full content]`;
         const attachments = extractAllAttachmentParts(msg.payload);
         messages.push({
-          message_id: messageId,
-          rfc_message_id: headers['message-id'] ?? '',
-          from: headers['from'],
-          to: headers['to'] ?? '',
-          cc: headers['cc'] ?? '',
-          date: headers['date'] ? DATE_FMT.format(new Date(headers['date'])) : 'unknown',
-          body,
-          ...(attachments.length > 0 ? { attachments } : {}),
+          internalDate: Number(msg.internalDate ?? 0),
+          msg: {
+            message_id: messageId,
+            rfc_message_id: headers['message-id'] ?? '',
+            from: headers['from'],
+            to: headers['to'] ?? '',
+            cc: headers['cc'] ?? '',
+            date: headers['date'] ? DATE_FMT.format(new Date(headers['date'])) : 'unknown',
+            body,
+            ...(attachments.length > 0 ? { attachments } : {}),
+          },
         });
       }
 
       // Sort oldest-first by internalDate
-      const msgsWithDate = threadMsgs.map((m, i) => ({ idx: i, internalDate: Number(m.internalDate ?? 0) }));
-      msgsWithDate.sort((a, b) => a.internalDate - b.internalDate);
-      const sorted = msgsWithDate.map((m) => messages[m.idx]).filter(Boolean) as NormalizedMessage[];
+      messages.sort((a, b) => a.internalDate - b.internalDate);
+      const sorted = messages.map((m) => m.msg);
 
       return { thread_id: threadId, subject, messages: sorted };
     } catch (err: any) {

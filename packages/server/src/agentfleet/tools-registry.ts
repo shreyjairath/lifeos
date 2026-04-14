@@ -38,6 +38,7 @@ export class ToolsRegistry {
   private gmailClient: GmailClient | null = null;
   clientEmail: string;
   private readonly mailboxAddress: string;
+  private readonly allowedEmailAddresses: Set<string>;
 
   constructor(clientDataDir: string, clientConfig: ClientConfig) {
     this.agentsDir = resolve(clientDataDir, 'agents');
@@ -49,6 +50,10 @@ export class ToolsRegistry {
     this.sharedBash = new Bash(this.sharedDir, false);
     this.clientEmail = clientConfig.email;
     this.mailboxAddress = clientConfig.mailboxAddress;
+    this.allowedEmailAddresses = new Set([
+      clientConfig.email.toLowerCase(),
+      ...clientConfig.contacts.map((c) => c.email.toLowerCase()),
+    ]);
   }
 
   setGmailClient(client: GmailClient): void {
@@ -136,19 +141,21 @@ export class ToolsRegistry {
         return this.sharedBash.run(input.command as string);
       case 'send_file_email': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
+        const sendFileTo = (input.to as string | undefined)?.trim() || this.clientEmail;
+        if (!sendFileTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
+        if (!this.allowedEmailAddresses.has(extractEmail(sendFileTo))) return { error: `Not allowed to send email to ${sendFileTo} — only client and registered contacts are permitted recipients` };
         const workspace = resolve(this.agentsDir, agentName, 'workspace');
         const filePath = resolve(workspace, input.file_path as string);
         if (!filePath.startsWith(workspace)) return { error: 'Path outside workspace' };
         if (!existsSync(filePath)) return { error: `File not found: ${input.file_path}` };
-        const sendFileTo = (input.to as string | undefined)?.trim() || this.clientEmail;
-        if (!sendFileTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
+        const fileFromName = this.agentTitles.get(agentName);
         const sendFileResult = await this.gmailClient.sendFile(
           sendFileTo,
           input.subject as string,
           filePath,
           input.thread_id as string | undefined,
           input.in_reply_to as string | undefined,
-          this.agentTitles.get(agentName),
+          fileFromName,
           input.cc as string | undefined,
           this.mailboxAddress || undefined,
         );
@@ -158,6 +165,7 @@ export class ToolsRegistry {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
         const sendTo = (input.to as string | undefined)?.trim() || this.clientEmail;
         if (!sendTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
+        if (!this.allowedEmailAddresses.has(extractEmail(sendTo))) return { error: `Not allowed to send email to ${sendTo} — only client and registered contacts are permitted recipients` };
         let attachments: { filename: string; mimeType: string; data: Buffer }[] | undefined;
         if (Array.isArray(input.attachments) && input.attachments.length > 0) {
           const workspace = resolve(this.agentsDir, agentName, 'workspace');
@@ -173,6 +181,7 @@ export class ToolsRegistry {
             });
           }
         }
+        const fromName = this.agentTitles.get(agentName);
         const sendResult = await this.gmailClient.send(
           sendTo,
           input.subject as string,
@@ -180,7 +189,7 @@ export class ToolsRegistry {
           input.thread_id as string | undefined,
           input.html_body as string | undefined,
           input.in_reply_to as string | undefined,
-          this.agentTitles.get(agentName),
+          fromName,
           input.cc as string | undefined,
           attachments,
           this.mailboxAddress || undefined,
@@ -190,9 +199,11 @@ export class ToolsRegistry {
       case 'read_emails': {
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
         let emailQuery = (input.query as string | undefined) ?? `in:inbox "@${agentName}"`;
-        // Restrict to this client's mailbox address (inbound or outbound)
+        // Restrict to inbound emails only (to: this client's mailbox).
+        // Do NOT include from:mailboxAddress — sent messages get the INBOX label,
+        // so including outbound would surface other clients' emails on a shared mailbox.
         if (this.mailboxAddress && !emailQuery.includes('to:') && !emailQuery.includes('from:')) {
-          emailQuery += ` {to:${this.mailboxAddress} from:${this.mailboxAddress}}`;
+          emailQuery += ` to:${this.mailboxAddress}`;
         }
         const threadMetas = await this.gmailClient.fetchThreadsMeta(
           emailQuery,
@@ -245,9 +256,17 @@ export class ToolsRegistry {
       }
       case 'read_email_thread_summary': {
         const store = new EmailThreadStore(this.agentsDir, agentName);
-        const summary = store.readSummary(input.thread_id as string);
-        if (!summary) return { error: `No summary found for thread ${input.thread_id as string}` };
-        return { thread_id: input.thread_id, summary };
+        const entry = store.readEntry(input.thread_id as string);
+        if (!entry?.summary) return { error: `No summary found for thread ${input.thread_id as string}` };
+        return {
+          thread_id: input.thread_id,
+          subject: entry.subject ?? null,
+          summary: entry.summary,
+          in_reply_to: entry.latestRfcMessageId ?? null,
+          latest_from: entry.latestFrom ?? null,
+          latest_to: entry.latestTo ?? null,
+          latest_cc: entry.latestCc ?? null,
+        };
       }
       case 'write_email_thread_summary': {
         const store = new EmailThreadStore(this.agentsDir, agentName);
@@ -520,8 +539,7 @@ const TOOLS: ToolDefinition[] = [
 
   tool('read_email_thread',
     'Fetch a Gmail thread by thread ID. Returns { thread_id, subject, messages[] } — messages are sorted oldest-first, ' +
-    'each with message_id, rfc_message_id, from, to, cc, date, body, and attachments if present. ' +
-    'Use this during log processing only when no summary exists yet — prefer read_email_thread_summary first.',
+    'each with message_id, rfc_message_id, from, to, cc, date, body, attachments (if present), and sent_by (agent name, if the message was sent by an agent via the shared mailbox).',
     props(
       prop('thread_id', 'string', 'Gmail thread ID from a previous log entry email_thread_ids field.'),
     ),
@@ -538,6 +556,8 @@ const TOOLS: ToolDefinition[] = [
 
   tool('read_email_thread_summary',
     'Read the locally stored summary of an email thread. No Gmail API call. ' +
+    'Returns { thread_id, subject, summary, in_reply_to, latest_from, latest_to, latest_cc } — ' +
+    'in_reply_to is the RFC 2822 Message-ID to pass when replying; latest_from/to/cc are the participants from when the thread was last processed. ' +
     'Use during log processing before falling back to read_email_thread.',
     props(
       prop('thread_id', 'string', 'Gmail thread ID from a log entry email_thread_ids field.'),
@@ -895,6 +915,11 @@ const SESSION_TOOLS: ToolDefinition[] = [
     ),
     ['session_id', 'summary']),
 ];
+
+function extractEmail(address: string): string {
+  const m = address.match(/<([^>]+)>/);
+  return (m ? m[1]! : address).trim().toLowerCase();
+}
 
 function mimeTypeFromExt(ext: string): string {
   const map: Record<string, string> = {

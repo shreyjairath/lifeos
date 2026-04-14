@@ -126,7 +126,15 @@ export class AgentRouter {
         if (!buckets.has(agent.getName())) buckets.set(agent.getName(), []);
         buckets.get(agent.getName())!.push({
           agent,
-          inbound: { threadId: rawThread.threadId, messageIds: newMsgs.map((m) => m.id), subject },
+          inbound: {
+            threadId: rawThread.threadId,
+            messageIds: newMsgs.map((m) => m.id),
+            latestRfcMessageId: newMsgs[newMsgs.length - 1]!.rfcMessageId,
+            latestFrom: newMsgs[newMsgs.length - 1]!.from,
+            latestTo: newMsgs[newMsgs.length - 1]!.to,
+            latestCc: newMsgs[newMsgs.length - 1]!.cc,
+            subject,
+          },
           rawThread,
         });
       }
@@ -163,7 +171,12 @@ export class AgentRouter {
           }
 
           const latestMsgId = inbound.messageIds[inbound.messageIds.length - 1]!;
-          agent.emailThreadStore.markSeen(rawThread.threadId, latestMsgId, inbound.subject);
+          agent.emailThreadStore.markSeen(rawThread.threadId, latestMsgId, inbound.subject, {
+            latestRfcMessageId: inbound.latestRfcMessageId,
+            latestFrom: inbound.latestFrom,
+            latestTo: inbound.latestTo,
+            latestCc: inbound.latestCc,
+          });
           console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestMsgId} on thread ${rawThread.threadId}`);
 
           const meta = threadMeta.get(rawThread.threadId);
