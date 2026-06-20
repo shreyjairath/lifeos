@@ -20,11 +20,80 @@ Detailed architecture and design docs live in `docs/`:
 
 An agent team that knows you deeply and grows with you over time. Each agent is a specialist — therapist, dating coach, chief of staff, real estate advisor — sharing a common runtime but operating independently. The long-term vision: autocomplete everything in a person's life that can be automated or assisted.
 
-## Running
+## Starting the App (Fresh Clone)
+
+### 1. Prerequisites
+
+- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
+- An LLM API key: `OPENROUTER_API_KEY` (preferred) or `ANTHROPIC_API_KEY`
+
+### 2. Install dependencies
+
+```bash
+bun install          # run from repo root — installs all packages
+```
+
+### 3. Configure clients and model
+
+Edit `config.yml` at the repo root. The file is already in the repo; update it with real values:
+
+```yaml
+server:
+  port: 8000
+
+lifeos:
+  model: deepseek/deepseek-v4-flash        # or any OpenRouter/Anthropic model ID
+  background-model: deepseek/deepseek-v4-flash
+  clients:
+    - id: shrey
+      name: Shrey
+      email: your@email.com
+      mailbox-address: your+cos@gmail.com  # Gmail address the agent monitors
+      timezone: America/Los_Angeles
+```
+
+### 4. Set environment variables
+
+Create a `.env` file at the repo root (it's gitignored):
+
+```bash
+OPENROUTER_API_KEY=sk-or-...       # required — or use ANTHROPIC_API_KEY
+BRAVE_SEARCH_API_KEY=...           # optional — enables web_search tool
+```
+
+Turbo forwards these automatically to both packages at dev time.
+
+### 5. Start both server and web
+
+```bash
+bun run dev          # from repo root — starts server (port 8000) + web UI (port 3000)
+```
+
+Open **http://localhost:3000** in a browser. The server API is at http://localhost:8000.
+
+To capture server logs for Claude Code to read:
 
 ```bash
 bun run dev 2>&1 | tee /tmp/lifeos-server.log
-# Open http://localhost:8000
+```
+
+### Running packages individually
+
+```bash
+cd packages/server && bun run dev    # server only (port 8000)
+cd packages/web    && bun run dev    # web UI only (port 3000, needs server running)
+```
+
+### Runtime data
+
+`.user-data/` is created automatically on first run (gitignored). It holds sessions, agent workspaces, and system credentials. Nothing to set up manually.
+
+### Gmail setup (optional)
+
+If the agent should read/send email, run `/gmail-reauth` in Claude Code after the server is running — or:
+
+```bash
+cd packages/server && bun reauth-gmail.mjs
 ```
 
 Server logs are written to `/tmp/lifeos-server.log` — readable by Claude Code.
