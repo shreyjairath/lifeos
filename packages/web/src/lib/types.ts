@@ -93,6 +93,14 @@ export interface Task {
   status?: string;
 }
 
+export interface JournalEntry {
+  id: string;
+  title: string;
+  date: string;
+  preview: string;
+  content?: string;
+}
+
 export type SseEvent =
   | { type: 'llm_text'; text: string }
   | { type: 'llm_reasoning'; text: string }

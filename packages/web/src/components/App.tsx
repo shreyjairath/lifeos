@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import ArtifactPanel from './ArtifactPanel';
 import AgentMonitor from './AgentMonitor';
+import JournalPanel from './JournalPanel';
 import {
   fetchAgents,
   fetchSessions,
@@ -13,6 +14,7 @@ import {
   fetchVapidPublicKey,
   subscribePush,
   urlBase64ToUint8Array,
+  getApiBase,
 } from '@/lib/api';
 import type { AgentInfo, Session, Toast, GlobalEvent } from '@/lib/types';
 
@@ -34,6 +36,7 @@ export default function App() {
   const [activeAgent, setActiveAgent] = useState<string>('cos');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [artifactUrl, setArtifactUrl] = useState<string | null>(null);
@@ -78,8 +81,7 @@ export default function App() {
 
   // Global event bus SSE
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
-    const es = new EventSource(`${apiBase}/api/events`);
+    const es = new EventSource(`${getApiBase()}/api/events`);
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {
@@ -236,10 +238,17 @@ export default function App() {
 
   const handleToggleMonitor = () => {
     setMonitorOpen(v => !v);
+    setJournalOpen(false);
+  };
+
+  const handleToggleJournal = () => {
+    setJournalOpen(v => !v);
+    setMonitorOpen(false);
   };
 
   const handleHeaderClick = () => {
     if (monitorOpen) setMonitorOpen(false);
+    if (journalOpen) setJournalOpen(false);
     setSidebarOpen(false);
   };
 
@@ -266,12 +275,14 @@ export default function App() {
             activeAgent={activeAgent}
             activeSessionId={sessionId}
             monitorOpen={monitorOpen}
+            journalOpen={journalOpen}
             modelOverride={modelOverride}
             onSelectAgent={handleSelectAgent}
             onSelectSession={handleSelectSession}
             onDeleteSession={handleDeleteSession}
             onNewSession={handleNewSession}
             onToggleMonitor={handleToggleMonitor}
+            onToggleJournal={handleToggleJournal}
             onModelChange={handleModelChange}
             onHeaderClick={handleHeaderClick}
             theme={theme}
@@ -280,7 +291,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Desktop sidebar — hidden when monitor is open */}
+      {/* Desktop sidebar */}
       {!monitorOpen && (
         <Sidebar
           agents={agents}
@@ -288,12 +299,14 @@ export default function App() {
           activeAgent={activeAgent}
           activeSessionId={sessionId}
           monitorOpen={monitorOpen}
+          journalOpen={journalOpen}
           modelOverride={modelOverride}
           onSelectAgent={handleSelectAgent}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           onNewSession={handleNewSession}
           onToggleMonitor={handleToggleMonitor}
+          onToggleJournal={handleToggleJournal}
           onModelChange={handleModelChange}
           onHeaderClick={handleHeaderClick}
           theme={theme}
@@ -305,6 +318,8 @@ export default function App() {
       <div className="main-area">
         {monitorOpen ? (
           <AgentMonitor agents={agents} onClose={() => setMonitorOpen(false)} />
+        ) : journalOpen ? (
+          <JournalPanel />
         ) : (
           <ChatPanel
             agent={activeAgentInfo}

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
 import ConfirmDialog from './ConfirmDialog';
 import StreamDebugOverlay, { type DebugEvent } from './StreamDebugOverlay';
-import { fetchChatHistory, stopChat, confirmTool } from '@/lib/api';
+import { fetchChatHistory, stopChat, confirmTool, getApiBase } from '@/lib/api';
 import type { Message, SseEvent, ConfirmRequest, AgentInfo } from '@/lib/types';
 
 interface ChatPanelProps {
@@ -207,8 +207,7 @@ export default function ChatPanel({
       if (activeSessionId) body.session_id = activeSessionId;
       if (modelOverride.trim()) body.model = modelOverride.trim();
 
-      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
-      const res = await fetch(`${apiBase}/api/chat`, {
+      const res = await fetch(`${getApiBase()}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

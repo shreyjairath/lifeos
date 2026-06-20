@@ -17,6 +17,7 @@ interface SidebarProps {
   activeAgent: string;
   activeSessionId: string | null;
   monitorOpen: boolean;
+  journalOpen: boolean;
   modelOverride: string;
   theme: string;
   onSelectAgent: (name: string) => void;
@@ -24,6 +25,7 @@ interface SidebarProps {
   onDeleteSession: (agent: string, id: string) => void;
   onNewSession: (agent: string) => void;
   onToggleMonitor: () => void;
+  onToggleJournal: () => void;
   onModelChange: (model: string) => void;
   onHeaderClick: () => void;
   onThemeChange: (theme: string) => void;
@@ -113,6 +115,7 @@ export default function Sidebar({
   activeAgent,
   activeSessionId,
   monitorOpen,
+  journalOpen,
   modelOverride,
   theme,
   onSelectAgent,
@@ -120,6 +123,7 @@ export default function Sidebar({
   onDeleteSession,
   onNewSession,
   onToggleMonitor,
+  onToggleJournal,
   onModelChange,
   onHeaderClick,
   onThemeChange,
@@ -256,6 +260,12 @@ export default function Sidebar({
             </datalist>
           </div>
         )}
+        <button
+          className={`monitor-btn${journalOpen ? ' active' : ''}`}
+          onClick={onToggleJournal}
+        >
+          {journalOpen ? '← Back to Chat' : 'Journal'}
+        </button>
         <button
           className={`monitor-btn${monitorOpen ? ' active' : ''}`}
           onClick={onToggleMonitor}
