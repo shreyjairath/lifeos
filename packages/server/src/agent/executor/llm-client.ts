@@ -1,5 +1,5 @@
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 32768;
 
 export interface LlmResult {
   fullText: string;
