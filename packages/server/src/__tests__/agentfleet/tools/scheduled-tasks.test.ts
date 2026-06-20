@@ -113,6 +113,18 @@ describe('ScheduledTasks.markComplete', () => {
     expect(updated.run_at).toBe(originalRunAt + 24 * 3600);
   });
 
+  it('advances run_at past now when task is multiple periods overdue', () => {
+    // Task is 3 cadence periods behind — run_at must land in the future, not one step back
+    const threePeriodsPastIso = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
+    tasks.upsert('cos', 'stale', 'desc', 24, threePeriodsPastIso, 'cos');
+    const { tasks: [t] } = tasks.list('cos');
+    tasks.markComplete(t.id, 'cos');
+    const { tasks: [updated] } = tasks.list('cos');
+    expect(updated.run_at * 1000).toBeGreaterThan(Date.now());
+    // Should not appear overdue again immediately
+    expect(tasks.getOverdue('cos').tasks).toHaveLength(0);
+  });
+
   it('sets last_run for one-off tasks', () => {
     tasks.upsert('cos', 'one-off', 'desc', null, futureIso, 'cos');
     const { tasks: [t] } = tasks.list('cos');
@@ -125,6 +137,16 @@ describe('ScheduledTasks.markComplete', () => {
     const r = tasks.markComplete('nonexistent', 'cos');
     expect(r.error).toBeDefined();
   });
+
+  it('returns error for platform tasks — agents cannot complete platform tasks', () => {
+    tasks.upsert('platform', 'reconcile_workspace', 'desc', 12, pastIso, 'cos', true);
+    const { tasks: [t] } = tasks.list('cos');
+    const r = tasks.markComplete(t.id, 'cos');
+    expect(r.error).toBeDefined();
+    // last_run must not have been updated
+    const { tasks: [unchanged] } = tasks.list('cos');
+    expect(unchanged.last_run).toBeNull();
+  });
 });
 
 describe('ScheduledTasks.markAllComplete', () => {
@@ -135,6 +157,26 @@ describe('ScheduledTasks.markAllComplete', () => {
     tasks.markAllComplete(ids, 'cos');
     const overdue = tasks.getAllOverdue();
     expect(overdue).toHaveLength(0);
+  });
+
+  it('can mark platform tasks complete — the system path bypasses the agent guard', () => {
+    tasks.upsert('platform', 'reconcile_workspace', 'desc', 12, pastIso, 'cos', true);
+    const { tasks: [t] } = tasks.list('cos');
+    tasks.markAllComplete([t.id], 'platform');
+    const { tasks: [updated] } = tasks.list('cos');
+    expect(updated.last_run).toBeGreaterThan(0);
+    expect(updated.run_at * 1000).toBeGreaterThan(Date.now());
+    expect(tasks.getAllOverdue()).toHaveLength(0);
+  });
+
+  it('advances run_at past now for platform tasks that are multiple periods behind', () => {
+    const threePeriodsPast = new Date(Date.now() - 3 * 12 * 3600_000).toISOString();
+    tasks.upsert('platform', 'reconcile_workspace', 'desc', 12, threePeriodsPast, 'cos', true);
+    const { tasks: [t] } = tasks.list('cos');
+    tasks.markAllComplete([t.id], 'platform');
+    const { tasks: [updated] } = tasks.list('cos');
+    expect(updated.run_at * 1000).toBeGreaterThan(Date.now());
+    expect(tasks.getAllOverdue()).toHaveLength(0);
   });
 });
 

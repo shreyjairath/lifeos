@@ -8,6 +8,7 @@ export function fakeAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     port: 8000,
     apiKey: 'test-api-key',
+    braveSearchApiKey: 'test-brave-key',
     model: 'test-model',
     backgroundModel: 'test-bg-model',
     clients: [],

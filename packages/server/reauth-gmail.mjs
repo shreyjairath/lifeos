@@ -9,7 +9,9 @@ import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CREDS_PATH = resolve(__dirname, '../../.user-data/system/gmail-credentials.json');
+const CREDS_PATH = process.env.CREDS_PATH
+  ? resolve(process.env.CREDS_PATH)
+  : resolve(__dirname, '../../.user-data/clients/shrey/system/gmail-credentials.json');
 
 const creds = JSON.parse(readFileSync(CREDS_PATH, 'utf-8'));
 const REDIRECT_URI = 'http://localhost:4242/oauth2callback';

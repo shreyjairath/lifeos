@@ -31,7 +31,7 @@ export class AgentTools {
     const threadId = randomId();
     this.topics.writeTopic(fromAgent, 'feed', message, [targetAgent], threadId);
     try {
-      const response = await agent.handleAgentMessage(fromAgent, message);
+      const response = await agent.handleAgentMessage(fromAgent, message, threadId);
       this.topics.writeTopic(targetAgent, 'feed', response, [fromAgent], threadId);
       return { agent: targetAgent, response };
     } catch (err: any) {
@@ -39,32 +39,22 @@ export class AgentTools {
     }
   }
 
-  postMessage(fromAgent: string, message: string, to: string[]): Record<string, any> {
+  postMessage(fromAgent: string, message: string, to: string[], wakeup: boolean): Record<string, any> {
     const threadId = randomId();
     this.topics.writeTopic(fromAgent, 'feed', message, to, threadId);
-    if (to.length === 0) return { status: 'broadcast', thread_id: threadId };
-    const registry = this.getRegistry();
-    for (const target of to) {
-      const agent = registry.get(target);
-      if (!agent) continue;
-      agent.handleAgentMessageAsync(fromAgent, message, (response) => {
-        this.topics.writeTopic(target, 'feed', response, [fromAgent], threadId);
-      });
+    if (wakeup && to.length > 0) {
+      const registry = this.getRegistry();
+      for (const target of to) {
+        if (target === fromAgent) continue;
+        const agent = registry.get(target);
+        if (!agent) continue;
+        agent.handleAgentMessageAsync(fromAgent, message, (response) => {
+          this.topics.writeTopic(target, 'feed', response, [fromAgent], threadId);
+        }, threadId);
+      }
+      return { status: 'queued', thread_id: threadId };
     }
-    return { status: 'queued', thread_id: threadId };
-  }
-
-  messageAgentAsync(fromAgent: string, targetAgent: string, message: string): Record<string, any> {
-    if (fromAgent === targetAgent) return { error: 'Cannot message yourself.' };
-    const registry = this.getRegistry();
-    const agent = registry.get(targetAgent);
-    if (!agent) return { error: `Agent '${targetAgent}' not found. Use list_agents to see available agents.` };
-    const threadId = randomId();
-    this.topics.writeTopic(fromAgent, 'feed', message, [targetAgent], threadId);
-    agent.handleAgentMessageAsync(fromAgent, message, (response) => {
-      this.topics.writeTopic(targetAgent, 'feed', response, [fromAgent], threadId);
-    });
-    return { status: 'queued', thread_id: threadId };
+    return { status: 'posted', thread_id: threadId };
   }
 
   listAgents(callerName: string): Record<string, any> {
@@ -95,8 +85,12 @@ export class AgentTools {
     if (!existsSync(agentDir)) {
       return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
     }
+    const ymlPath = resolve(agentDir, 'agent.yml');
+    if (!existsSync(ymlPath)) {
+      return { error: `Agent '${name}' is a built-in agent — its definition cannot be read or edited via this tool.` };
+    }
     try {
-      const agentYml = readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8');
+      const agentYml = readFileSync(ymlPath, 'utf-8');
       const parsed = yaml.load(agentYml) as Record<string, any>;
       const result: Record<string, any> = { ...parsed };
       for (const file of ['identity.md', 'self-eval.md', 'heartbeat.md']) {
@@ -118,12 +112,19 @@ export class AgentTools {
     tools: string[] | null,
     identity: string | null,
   ): Record<string, any> {
+    if (!name || typeof name !== 'string') {
+      return { error: 'name is required — the agent slug to update (e.g. "pm_coach"). Use list_agents to find agent names.' };
+    }
     const agentDir = resolve(this.agentsDir, name);
     if (!existsSync(agentDir)) {
       return { error: `Agent '${name}' is not a dynamic agent or does not exist.` };
     }
+    const ymlPath = resolve(agentDir, 'agent.yml');
+    if (!existsSync(ymlPath)) {
+      return { error: `Agent '${name}' is a built-in agent — its definition cannot be read or edited via this tool.` };
+    }
     try {
-      const currentYaml = yaml.load(readFileSync(resolve(agentDir, 'agent.yml'), 'utf-8')) as Record<string, any>;
+      const currentYaml = yaml.load(readFileSync(ymlPath, 'utf-8')) as Record<string, any>;
 
       // Merge: start from existing YAML, only overwrite fields that were explicitly passed.
       // This preserves any keys not known to buildAgentYaml (recurring-tasks, disabled-modes, etc.)
@@ -133,8 +134,7 @@ export class AgentTools {
       if (goal != null) merged.goal = goal.trim() || null;
       if (manager != null) merged.manager = manager.trim() || null;
       if (tools != null) {
-        const allTools = tools.includes('agent_bash') ? tools : ['agent_bash', ...tools];
-        merged.tools = { mode: 'include', names: allTools };
+        merged.tools = { mode: 'include', names: tools };
       }
 
       const yamlContent = yaml.dump(merged, { lineWidth: -1 });
@@ -182,20 +182,6 @@ export class AgentTools {
   }
 }
 
-const BASIC_TOOLS = [
-  'agent_bash',
-  'save_plan', 'get_plan',
-  'log_entry', 'read_log',
-  'create_task', 'get_my_tasks', 'get_overdue_tasks', 'mark_task_complete', 'delete_task',
-  'post_message', 'read_topic', 'message_agent',
-  'list_agents', 'read_agent_definition',
-  'get_current_datetime',
-  'render_artifact', 'system_feedback',
-  'read_emails', 'read_email_thread', 'read_email_message',
-  'read_email_thread_summary', 'write_email_thread_summary',
-  'fetch_email_attachment', 'send_file_email', 'send_email',
-];
-
 function buildAgentYaml(
   name: string,
   title: string | null,
@@ -204,7 +190,7 @@ function buildAgentYaml(
   manager: string | null,
   tools: string[],
 ): string {
-  const allTools = [...new Set([...BASIC_TOOLS, ...tools])];
+  const allTools = [...new Set(tools)];
   const doc: Record<string, any> = { name };
   doc.title = title?.trim() || name;
   if (description?.trim()) doc.description = description.trim();
@@ -213,7 +199,7 @@ function buildAgentYaml(
   doc.identity = ['identity.md'];
   doc.tools = { mode: 'include', names: allTools };
   doc['recurring-tasks'] = [
-    { name: 'reconcile_workspace', prompt: 'reconcile-workspace.md', 'cadence-hours': 4 },
+    { name: 'reconcile_workspace', prompt: 'reconcile-workspace.md', 'cadence-hours': 12 },
     { name: 'self_eval', prompt: 'self-eval.md', 'cadence-hours': 24 },
     { name: 'self_learning', prompt: 'self-learning.md', 'cadence-hours': 48 },
     { name: 'workspace_reorg', prompt: 'workspace-reorg.md', 'cadence-hours': 168 },

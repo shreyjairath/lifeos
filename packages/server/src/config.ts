@@ -26,11 +26,13 @@ export interface ClientConfig {
   mailboxAddress: string;
   timezone: string;
   contacts: Contact[];
+  disabled?: boolean;
 }
 
 export interface AppConfig {
   port: number;
   apiKey: string;
+  braveSearchApiKey: string;
   model: string;
   backgroundModel: string;
   clients: ClientConfig[];
@@ -58,6 +60,7 @@ function parseClients(lifeos: Record<string, any>): ClientConfig[] {
       mailboxAddress: (c['mailbox-address'] as string) ?? '',
       timezone: (c.timezone as string) ?? 'America/New_York',
       contacts: parseContacts((c.contacts ?? []) as Record<string, any>[]),
+      disabled: (c.disabled as boolean) ?? false,
     }));
   }
   // Legacy single-client format: client-name, client-email, mailbox-email, contacts
@@ -96,6 +99,7 @@ export function loadConfig(configPath?: string): AppConfig {
   return {
     port: process.env.PORT ? parseInt(process.env.PORT) : (raw?.server?.port ?? 8000),
     apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+    braveSearchApiKey: process.env.BRAVE_SEARCH_API_KEY || '',
     model: lifeos.model,
     backgroundModel: lifeos['background-model'],
     clients: parseClients(lifeos),

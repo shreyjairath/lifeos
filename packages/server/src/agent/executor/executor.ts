@@ -3,8 +3,6 @@ import { invokeTools, newToolsResult } from './tools-client.js';
 import type { Confirmations } from './confirmations.js';
 import type { ExecutorEvent, ToolInvoker } from '../types.js';
 
-const MAX_TURNS = 100;
-
 /**
  * The agentic loop: LLM → tools → LLM, until done or cancelled.
  *
@@ -33,6 +31,7 @@ export class Executor {
     agentName: string,
     reasoning: Record<string, any> | null,
     dispatch: ToolInvoker,
+    maxTurns?: number,
   ): AsyncGenerator<ExecutorEvent> {
     // Work on a local copy so the caller's array isn't mutated mid-stream
     const local = [...messages];
@@ -40,9 +39,8 @@ export class Executor {
 
     while (true) {
       if (this._cancelled) return;
-      if (turns >= MAX_TURNS) {
-        console.warn(`[${agentName}] max turns (${MAX_TURNS}) reached — stopping`);
-        yield { type: 'llm_text', text: `\n\n[Run stopped: max turns (${MAX_TURNS}) reached]` } as ExecutorEvent;
+      if (maxTurns !== undefined && turns >= maxTurns) {
+        yield { type: 'llm_text', text: `[max turns (${maxTurns}) reached — stopping]` } as ExecutorEvent;
         return;
       }
       turns++;
@@ -106,6 +104,15 @@ export class Executor {
         yield { type: 'agent_append', role: 'tool', message: msg };
       }
 
+      // Append remaining-turns hint to the last tool result so the agent can self-regulate
+      if (maxTurns !== undefined && toolsResult.messages.length > 0) {
+        const remaining = maxTurns - turns;
+        const last = local[local.length - 1]!;
+        if (typeof last.content === 'string') {
+          last.content += `\n\n[turns used: ${turns}/${maxTurns} — ${remaining} remaining]`;
+        }
+      }
+
       // Compress large tool results from prior turns — agent already saw the full
       // content this turn; history only needs enough to remember what was found.
       compressOldToolResults(local, toolsResult.messages.length);
@@ -117,8 +124,7 @@ export class Executor {
   }
 }
 
-const COMPRESS_THRESHOLD = 10_000;
-const COMPRESS_PREVIEW = 1_500;
+const COMPRESS_THRESHOLD = 2_000;
 
 /**
  * Compress large tool results from prior turns in place.
@@ -136,7 +142,7 @@ function compressOldToolResults(messages: Record<string, any>[], keepLast: numbe
     if (typeof content === 'string' && content.length > COMPRESS_THRESHOLD) {
       messages[idx] = {
         ...msg,
-        content: content.slice(0, COMPRESS_PREVIEW) + `\n[...compressed — ${content.length} chars total]`,
+        content: content.slice(0, COMPRESS_THRESHOLD) + `\n[...truncated — ${content.length} chars total]`,
       };
     }
   }

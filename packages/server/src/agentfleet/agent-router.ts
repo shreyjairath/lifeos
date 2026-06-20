@@ -72,6 +72,7 @@ export class AgentRouter {
     }
     if (!rawThreads.length) return;
 
+    console.log(`[EmailCheck] threads to process: ${rawThreads.map((t) => t.threadId).join(', ')}`);
     const allAgents = this.registry.all();
     const cosAgent = this.registry.get('cos');
     const checkStartTime = Date.now();
@@ -108,6 +109,7 @@ export class AgentRouter {
 
     for (const rawThread of rawThreads) {
       const allMsgs = rawThread.messages;
+      const subject = allMsgs[allMsgs.length - 1]!.subject;
       const involved = resolveInvolved(rawThread);
       involvedCache.set(rawThread.threadId, involved);
       if (!involved) continue;
@@ -117,11 +119,16 @@ export class AgentRouter {
         const lastSeenIdx = lastSeen ? allMsgs.findIndex((m) => m.id === lastSeen) : -1;
         if (lastSeen && lastSeenIdx === -1) {
           console.warn(`[EmailCheck] cursor miss on thread ${rawThread.threadId} for ${agent.getName()} — cursor message not found, re-delivering all messages`);
+        } else {
+          console.log(`[EmailCheck] thread "${subject}" (${rawThread.threadId}) for ${agent.getName()} — cursor=${lastSeen ?? 'none'} at idx=${lastSeenIdx}, total=${allMsgs.length} messages`);
         }
         const newMsgs = allMsgs.slice(lastSeenIdx + 1).filter((m) => !m.labelIds.includes('SENT'));
-        if (newMsgs.length === 0) continue;
+        const skippedSent = allMsgs.slice(lastSeenIdx + 1).length - newMsgs.length;
+        if (newMsgs.length === 0) {
+          console.log(`[EmailCheck] thread "${subject}" → ${agent.getName()} skipped — 0 new messages (${skippedSent} SENT filtered)`);
+          continue;
+        }
 
-        const subject = allMsgs[allMsgs.length - 1]!.subject;
         console.log(`[EmailCheck] routing "${subject}" → ${agent.getName()} (${newMsgs.length} new message(s))`);
         if (!buckets.has(agent.getName())) buckets.set(agent.getName(), []);
         buckets.get(agent.getName())!.push({
@@ -155,7 +162,30 @@ export class AgentRouter {
     for (const agentBuckets of buckets.values()) {
       const agent = agentBuckets[0]!.agent;
       for (const { inbound, rawThread } of agentBuckets) {
-        agent.handleEmailCheck([inbound], async () => {
+        // Pre-advance cursor optimistically — revert on error
+        const prevCursor = agent.emailThreadStore.getLastSeen(rawThread.threadId);
+        const latestMsgId = inbound.messageIds[inbound.messageIds.length - 1]!;
+        agent.emailThreadStore.markSeen(rawThread.threadId, latestMsgId, inbound.subject, {
+          latestRfcMessageId: inbound.latestRfcMessageId,
+          latestFrom: inbound.latestFrom,
+          latestTo: inbound.latestTo,
+          latestCc: inbound.latestCc,
+        });
+        console.log(`[EmailCheck] ${agent.getName()} cursor pre-advanced to ${latestMsgId} on thread ${rawThread.threadId}`);
+
+        agent.handleEmailCheck([inbound], async (status) => {
+          if (status === 'error') {
+            // Revert cursor so the email is retried next poll
+            if (prevCursor) {
+              agent.emailThreadStore.markSeen(rawThread.threadId, prevCursor, inbound.subject);
+            } else {
+              agent.emailThreadStore.remove(rawThread.threadId);
+            }
+            console.log(`[EmailCheck] ${agent.getName()} run errored on thread ${rawThread.threadId} — cursor reverted to ${prevCursor ?? 'start'}`);
+            return;
+          }
+
+          // Success — handle tagged agent routing
           const sent = await gmail.getLatestSentMessage(rawThread.threadId, checkStartTime);
           if (sent) {
             const tagged = allAgents.find((a) => a !== agent && sent.body.includes(`@${a.getName()}`));
@@ -163,22 +193,11 @@ export class AgentRouter {
               const sentIdx = rawThread.messages.findIndex((m) => m.id === sent.id);
               const prevMsgId = sentIdx > 0 ? rawThread.messages[sentIdx - 1]!.id : null;
               if (prevMsgId) tagged.emailThreadStore.markSeen(rawThread.threadId, prevMsgId, inbound.subject);
-              agent.emailThreadStore.markSeen(rawThread.threadId, sent.id, inbound.subject);
-
-              console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — cursor set to ${prevMsgId ?? 'start'}`);
-              return;
+              console.log(`[EmailCheck] ${agent.getName()} tagged @${tagged.getName()} — ${tagged.getName()} cursor set to ${prevMsgId ?? 'start'}`);
             }
           }
 
-          const latestMsgId = inbound.messageIds[inbound.messageIds.length - 1]!;
-          agent.emailThreadStore.markSeen(rawThread.threadId, latestMsgId, inbound.subject, {
-            latestRfcMessageId: inbound.latestRfcMessageId,
-            latestFrom: inbound.latestFrom,
-            latestTo: inbound.latestTo,
-            latestCc: inbound.latestCc,
-          });
-          console.log(`[EmailCheck] ${agent.getName()} cursor advanced to ${latestMsgId} on thread ${rawThread.threadId}`);
-
+          // Mark thread as read when all involved agents have caught up
           const meta = threadMeta.get(rawThread.threadId);
           if (meta) {
             const allCaughtUp = meta.involvedAgents.every((a) => a.emailThreadStore.getLastSeen(rawThread.threadId) === meta.latestMsgId);

@@ -186,7 +186,7 @@ export class AgentFleet {
         this.inFlightTaskIds.add(task.id as string);
         agent.handleOverdueTask(task, () => {
           this.inFlightTaskIds.delete(task.id as string);
-          tasks.markComplete(task.id as string, 'platform');
+          tasks.markAllComplete([task.id as string], 'platform');
           console.log(`[TaskCheck] marked task "${task.name as string}" complete after ${agent.getName()} run`);
         });
       }
@@ -218,6 +218,7 @@ export class AgentFleet {
         rt.cadenceHours,
         new Date().toISOString(),
         def.name,
+        true,
       );
     }
   }

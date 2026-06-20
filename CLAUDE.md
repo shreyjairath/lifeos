@@ -23,11 +23,23 @@ An agent team that knows you deeply and grows with you over time. Each agent is 
 ## Running
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
-export ANTHROPIC_API_KEY=your_key_here
-./gradlew bootRun
+bun run dev 2>&1 | tee /tmp/lifeos-server.log
 # Open http://localhost:8000
 ```
+
+Server logs are written to `/tmp/lifeos-server.log` — readable by Claude Code.
+
+## Agent Run Logs
+
+Each agent's background runs are stored as JSON files:
+
+```
+.user-data/clients/{client}/agents/{agent}/runs/{timestamp}_{uuid}.json
+```
+
+Each file contains: `mode`, `inputTokens`, `outputTokens`, `turns` (full tool call history), `result` (final text), `startedAt`, `endedAt`, `durationMs`.
+
+To inspect a run: read the JSON file directly. The `turns` array alternates `assistant` (with `tool_calls`) and `tool` (with `content`) roles. Tool results are truncated to 121 chars in storage — the full content was only available at runtime.
 
 ## Gmail Token Refresh
 
@@ -37,7 +49,7 @@ If email processing fails with `invalid_grant`, the Gmail OAuth refresh token ha
 cd packages/server && bun reauth-gmail.mjs
 ```
 
-This opens a browser, completes the OAuth flow, and overwrites the `refreshToken` in `.user-data/system/gmail-credentials.json`. No server restart needed.
+This opens a browser, completes the OAuth flow, and overwrites the `refreshToken` in `.user-data/clients/shrey/system/gmail-credentials.json`. No server restart needed.
 
 ## Project Structure
 

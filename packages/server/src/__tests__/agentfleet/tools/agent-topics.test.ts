@@ -54,13 +54,60 @@ describe('AgentTopics.readTopic', () => {
     expect(r.count).toBe(0);
   });
 
-  it('peek mode returns all entries without advancing cursor', () => {
+  it('peek mode with no cursor returns all entries and does not advance cursor', () => {
     topics.writeTopic('cos', 'news', 'msg-1');
     topics.writeTopic('cos', 'news', 'msg-2');
     const r1 = topics.readTopic('reader', 'news', false);
     const r2 = topics.readTopic('reader', 'news', false);
     expect(r1.count).toBe(2);
-    expect(r2.count).toBe(2);
+    expect(r2.count).toBe(2); // idempotent — cursor not advanced
+  });
+
+  it('peek mode is bounded by cursor — entries before last reconcile are hidden', async () => {
+    topics.writeTopic('cos', 'feed', 'old-msg');
+    // Reconcile advances the cursor past old-msg
+    const r1 = topics.readTopic('reader', 'feed', true);
+    expect(r1.count).toBe(1);
+
+    await Bun.sleep(5);
+    topics.writeTopic('cos', 'feed', 'new-msg');
+
+    // peek should only see new-msg, not old-msg
+    const peek = topics.readTopic('reader', 'feed', false);
+    expect(peek.count).toBe(1);
+    expect(peek.messages[0].message).toBe('new-msg');
+  });
+
+  it('peek mode is idempotent after reconcile — same new entries each call', async () => {
+    topics.writeTopic('cos', 'feed', 'before');
+    topics.readTopic('reader', 'feed', true); // reconcile
+
+    await Bun.sleep(5);
+    topics.writeTopic('cos', 'feed', 'after');
+
+    const p1 = topics.readTopic('reader', 'feed', false);
+    const p2 = topics.readTopic('reader', 'feed', false);
+    expect(p1.count).toBe(1);
+    expect(p2.count).toBe(1); // same result — cursor not moved
+    expect(p1.messages[0].message).toBe('after');
+  });
+
+  it('consume after peek advances cursor and clears the window', async () => {
+    topics.writeTopic('cos', 'feed', 'before');
+    topics.readTopic('reader', 'feed', true); // reconcile
+
+    await Bun.sleep(5);
+    topics.writeTopic('cos', 'feed', 'after');
+
+    topics.readTopic('reader', 'feed', false); // peek — does not advance
+    const consume = topics.readTopic('reader', 'feed', true); // now reconcile
+    expect(consume.count).toBe(1);
+    expect(consume.messages[0].message).toBe('after');
+
+    await Bun.sleep(5);
+    // Nothing new since reconcile
+    const next = topics.readTopic('reader', 'feed', false);
+    expect(next.count).toBe(0);
   });
 
   it('consume mode advances cursor — second read returns only new entries', async () => {

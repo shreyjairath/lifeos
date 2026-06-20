@@ -2,15 +2,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { resolve } from 'path';
 import { randomUUID } from 'crypto';
 
-const MAX_TEXT_LEN = 5_000;
-const MAX_TOOL_INPUT_LEN = 1_000;
-const MAX_TOOL_RESULT_LEN = 2_000;
-const MAX_REASONING_LEN = 20_000;
 const MAX_INITIAL_MESSAGES = 50;
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + '…' : s;
-}
+export type RunStatus = 'success' | 'error' | 'max_turns';
 
 export interface RunRecord {
   id: string;
@@ -29,6 +23,7 @@ export interface RunRecord {
   turns: Record<string, any>[];
   initialMessages?: Record<string, any>[];
   result: string;
+  status?: RunStatus;
 }
 
 export function createRunRecord(agent: string, mode: string, systemPrompt: string, userMessage: string, model: string, sessionId?: string): RunRecord {
@@ -48,10 +43,11 @@ export function createRunRecord(agent: string, mode: string, systemPrompt: strin
   };
 }
 
-export function finishRunRecord(record: RunRecord, result: string): void {
+export function finishRunRecord(record: RunRecord, result: string, status: RunStatus = 'success'): void {
   record.endedAt = Date.now();
   record.durationMs = record.endedAt - record.startedAt;
   record.result = result;
+  record.status = status;
 }
 
 export function addTokens(record: RunRecord, input: number, output: number): void {
@@ -59,19 +55,23 @@ export function addTokens(record: RunRecord, input: number, output: number): voi
   record.outputTokens += output;
 }
 
+const TOOL_PREVIEW_CHARS = 120;
+
 export function addTurn(record: RunRecord, role: string, message: Record<string, any>): void {
   const turn: Record<string, any> = { role };
   const content = message.content;
   if (typeof content === 'string') {
-    turn.content = truncate(content, role === 'tool' ? MAX_TOOL_RESULT_LEN : MAX_TEXT_LEN);
+    turn.content = role === 'tool'
+      ? content.slice(0, TOOL_PREVIEW_CHARS) + (content.length > TOOL_PREVIEW_CHARS ? '…' : '')
+      : content;
   }
   if (message.reasoning && typeof message.reasoning === 'string') {
-    turn.reasoning = truncate(message.reasoning, MAX_REASONING_LEN);
+    turn.reasoning = message.reasoning;
   }
   if (Array.isArray(message.tool_calls)) {
     turn.tool_calls = message.tool_calls.map((tc: any) => ({
       name: tc.function?.name,
-      arguments: truncate(tc.function?.arguments ?? '{}', MAX_TOOL_INPUT_LEN),
+      arguments: tc.function?.arguments ?? '{}',
     }));
   }
   record.turns.push(turn);
@@ -80,7 +80,7 @@ export function addTurn(record: RunRecord, role: string, message: Record<string,
 export function setInitialMessages(record: RunRecord, messages: Record<string, any>[]): void {
   record.initialMessages = messages.slice(0, MAX_INITIAL_MESSAGES).map((m) => {
     const msg: Record<string, any> = { role: m.role };
-    if (typeof m.content === 'string') msg.content = truncate(m.content, MAX_TEXT_LEN);
+    if (typeof m.content === 'string') msg.content = m.content;
     return msg;
   });
 }

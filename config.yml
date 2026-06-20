@@ -10,29 +10,29 @@ lifeos:
       timezone: America/Los_Angeles
       contacts:
         - email: jairath.nishant@gmail.com
-          agents: [relocation, chicago_childcare, chicago_realestate]
+          agents: [relocation, chicago_childcare, chicago_realestate, us_immigration]
           fallback: relocation
         - email: akanksha.khanna28@gmail.com
-          agents: [relocation, chicago_childcare, chicago_realestate]
+          agents: [relocation, chicago_childcare, chicago_realestate, us_immigration]
           fallback: relocation
     - id: nishant
       name: Nishant
       email: jairath.nishant@gmail.com
       mailbox-address: sjairath.cos+nishant@gmail.com
-      timezone: Asia/Kolkata
+      timezone: America/Chicago
     - id: akanksha
       name: Akanksha
       email: akanksha.khanna28@gmail.com
       mailbox-address: sjairath.cos+akanksha@gmail.com
-      timezone: Asia/Kolkata
-  model: xiaomi/mimo-v2-pro
-  background-model: xiaomi/mimo-v2-pro
+      timezone: America/Chicago
+  model: deepseek/deepseek-v4-flash
+  background-model: deepseek/deepseek-v4-flash
   reasoning:
     effort: medium
   session:
     token-threshold: 100000
     time-threshold-hours: 4
   heartbeat:
-    cron: "0 0 */4 * * *"
+    cron: "0 0 */24 * * *"
   session-expiry-check:
-    cron: "0 0 * * * *"
+    cron: "0 0 */4 * * *"

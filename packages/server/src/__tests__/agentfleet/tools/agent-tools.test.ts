@@ -126,10 +126,9 @@ describe('AgentTools.createAgent', () => {
     expect(agentTools.createAgent('', null, null, null, null, 'id', []).error).toBeDefined();
   });
 
-  it('always includes agent_bash in tools', () => {
+  it('writes only agent-specific tools to yml (basic toolkit injected at runtime)', () => {
     agentTools.createAgent('my_agent', null, null, null, null, 'id', ['web_search']);
     const def = agentTools.readAgentDefinition('my_agent');
-    expect(def.tools.names).toContain('agent_bash');
     expect(def.tools.names).toContain('web_search');
   });
 

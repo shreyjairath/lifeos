@@ -28,6 +28,7 @@ import { eventRoutes } from './routes/events.js';
 import { toolsRoutes } from './routes/tools.js';
 import { artifactsRoutes } from './routes/artifacts.js';
 import { ccRoutes } from './routes/cc.js';
+import { journalRoutes } from './routes/journal.js';
 
 // Gmail
 import { GmailClient } from './agentfleet/tools/gmail.js';
@@ -36,13 +37,17 @@ import { clientDataDir } from './root.js';
 async function createApp() {
   const config = loadConfig();
   console.log(`[config] apiKey: ${config.apiKey ? config.apiKey.slice(0, 8) + '...' : '(empty)'}`);
-  console.log(`[config] clients: ${config.clients.map((c) => c.id).join(', ')}`);
+  const enabledClients = config.clients.filter((c) => !c.disabled);
+  const disabledClients = config.clients.filter((c) => c.disabled);
+  console.log(`[config] clients: ${enabledClients.map((c) => c.id).join(', ')}`);
+  if (disabledClients.length) console.log(`[config] disabled clients: ${disabledClients.map((c) => c.id).join(', ')}`);
 
   // ── Shared stateless tools ────────────────────────────────────────────────
 
   const verifier = new Verifier(new LlmClient(config.apiKey), config.backgroundModel);
-  const webSearch = new WebSearch(verifier);
+  const webSearch = new WebSearch(config.braveSearchApiKey, verifier);
   const browse = new Browse(verifier);
+  if (!config.braveSearchApiKey) console.warn('[config] BRAVE_SEARCH_API_KEY not set — web_search will return errors');
 
   // ── Per-client fleet construction ──────────────────────────────────────────
 
@@ -93,13 +98,16 @@ async function createApp() {
     return fleet;
   }
 
-  // Eager-init all configured clients
-  for (const client of config.clients) {
+  // Eager-init all enabled clients
+  for (const client of enabledClients) {
     buildFleet(client.id);
   }
 
-  // Default fleet (first client) for routes that don't specify clientId
-  const defaultFleet = fleets.get(config.clients[0]!.id)!;
+  if (enabledClients.length === 0) throw new Error('[config] No enabled clients configured');
+
+  // Default fleet (first enabled client) for routes that don't specify clientId
+  const defaultFleet = fleets.get(enabledClients[0]!.id)!;
+  const defaultClientDataDir = clientDataDir(enabledClients[0]!.id);
 
   // ── Schedulers ─────────────────────────────────────────────────────────────
 
@@ -122,6 +130,7 @@ async function createApp() {
   app.route('/api', toolsRoutes(defaultFleet));
   app.route('/api', artifactsRoutes(defaultFleet));
   app.route('/api', ccRoutes(config));
+  app.route('/api', journalRoutes(defaultClientDataDir));
 
   console.log(`lifeos-ts server starting on port ${config.port}`);
   return { port: config.port, fetch: app.fetch, idleTimeout: 0 };

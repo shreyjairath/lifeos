@@ -8,7 +8,7 @@ const REMOVE_TAGS = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'ifr
 export class Browse {
   constructor(private readonly verifier?: Verifier) {}
 
-  async fetch(url: string, verify = false): Promise<Record<string, any>> {
+  async fetch(url: string, verify = false, raw = false): Promise<Record<string, any>> {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { error: 'Only http/https URLs are supported.', url };
     }
@@ -48,14 +48,22 @@ export class Browse {
       }
 
       if (!text || text.length < 200) {
-        return { error: 'Could not extract readable content (page may be JS-rendered or paywalled).', url: finalUrl, title };
+        return { _js_fallback: true, url: finalUrl, title };
       }
 
       const wordCount = text.split(/\s+/).length;
       const truncated = text.length > MAX_CHARS;
       if (truncated) text = text.slice(0, MAX_CHARS);
 
-      const result: Record<string, any> = { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+      const result: Record<string, any> = { url: finalUrl, title };
+
+      if (!raw && this.verifier) {
+        result.summary = await this.verifier.summarizePage(finalUrl, title, text);
+      } else {
+        result.content = text;
+        result.truncated = truncated;
+        result.word_count = wordCount;
+      }
 
       if (verify && this.verifier) {
         result.verification = await this.verifier.assessPage(finalUrl, title, text);

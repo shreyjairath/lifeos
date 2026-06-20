@@ -14,6 +14,7 @@ interface Task extends Record<string, any> {
   assignee: string;
   last_modified_at: number;
   last_modified_by: string;
+  platform?: boolean;
 }
 
 export class ScheduledTasks {
@@ -26,6 +27,7 @@ export class ScheduledTasks {
     cadenceHours: number | null,
     dueAtIso: string,
     assignee: string | null,
+    platform = false,
   ): Record<string, any> {
     if (!dueAtIso) return { error: 'run_at is required.' };
     try {
@@ -58,6 +60,7 @@ export class ScheduledTasks {
       task.assignee = assignee?.trim() || createdBy;
       task.last_modified_at = epochNow();
       task.last_modified_by = createdBy;
+      if (platform) task.platform = true;
 
       this.save(list);
       return { ok: true, id: task.id, name, created_by: createdBy, next_due: nextDueIso(task) };
@@ -110,7 +113,12 @@ export class ScheduledTasks {
           task.last_run = now;
           task.last_modified_at = now;
           task.last_modified_by = calledBy;
-          if (task.cadence_hours) task.run_at = (task.run_at as number) + (task.cadence_hours as number) * 3600;
+          if (task.cadence_hours) {
+            const cadenceSecs = (task.cadence_hours as number) * 3600;
+            let next = (task.run_at as number) + cadenceSecs;
+            while (next <= now) next += cadenceSecs;
+            task.run_at = next;
+          }
         }
       }
       this.save(list);
@@ -124,11 +132,17 @@ export class ScheduledTasks {
       const list = this.load();
       const task = list.find((t) => t.id === id);
       if (!task) return { error: `No task with id: ${id}` };
+      if (task.platform) return { error: `Task '${task.name}' is a platform task and cannot be modified.` };
       const now = epochNow();
       task.last_run = now;
       task.last_modified_at = now;
       task.last_modified_by = calledBy;
-      if (task.cadence_hours) task.run_at = (task.run_at as number) + (task.cadence_hours as number) * 3600;
+      if (task.cadence_hours) {
+        const cadenceSecs = (task.cadence_hours as number) * 3600;
+        let next = (task.run_at as number) + cadenceSecs;
+        while (next <= now) next += cadenceSecs;
+        task.run_at = next;
+      }
       this.save(list);
       return { ok: true, id, next_due: nextDueIso(task) };
     } catch (err: any) {
@@ -139,9 +153,10 @@ export class ScheduledTasks {
   delete(id: string): Record<string, any> {
     try {
       const list = this.load();
-      const before = list.length;
+      const task = list.find((t) => t.id === id);
+      if (!task) return { error: `No task with id: ${id}` };
+      if (task.platform) return { error: `Task '${task.name}' is a platform task and cannot be deleted.` };
       const filtered = list.filter((t) => t.id !== id);
-      if (filtered.length === before) return { error: `No task with id: ${id}` };
       this.save(filtered);
       return { ok: true, id };
     } catch (err: any) {

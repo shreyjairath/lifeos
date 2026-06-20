@@ -226,17 +226,25 @@ export class LlmClient {
       max_tokens: maxTokens,
       stream: true,
       stream_options: { include_usage: true },
+      plugins: [{ id: 'context-compression', max_middle_tokens: 8192 }],
     };
 
     if (tools.length > 0) {
-      body.tools = tools.map((t) => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.input_schema,
-        },
-      }));
+      const hasWebSearch = tools.some((t) => t.name === 'web_search');
+      const functionTools = tools
+        .filter((t) => t.name !== 'web_search')
+        .map((t) => ({
+          type: 'function',
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.input_schema,
+          },
+        }));
+      body.tools = [
+        ...(hasWebSearch ? [{ type: 'openrouter:web_search', parameters: { engine: 'exa' } }] : []),
+        ...functionTools,
+      ];
     }
 
     if (reasoning) body.reasoning = reasoning;

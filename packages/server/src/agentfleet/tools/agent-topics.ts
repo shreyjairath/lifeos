@@ -57,9 +57,16 @@ export class AgentTopics {
       const raw = readFileSync(file, 'utf-8');
       const allEntries = raw.split(/(?<=\n---\n\n)/).filter((e) => e.trim());
 
+      // Both modes apply the cursor as a lower bound — only entries after the last
+      // reconcile (consume: true) are visible. consume: false peeks at the same
+      // unreconciled window without advancing the cursor; consume: true advances it.
+      const cursor = this.readCursor(agentName, topic);
+      const cursorMs = cursor ? new Date(cursor).getTime() : null;
+
       if (!consume) {
-        // Peek: full visibility, paginated newest-first, no cursor applied
-        const filtered = filter ? allEntries.filter((e) => e.includes(filter)) : allEntries;
+        // Peek: unreconciled window only, paginated newest-first, cursor not advanced
+        const sinceFilter = allEntries.filter((e) => !cursorMs || entryTimestamp(e) > cursorMs);
+        const filtered = filter ? sinceFilter.filter((e) => e.includes(filter)) : sinceFilter;
         const total = filtered.length;
         const p = Math.max(1, page);
         const ps = Math.max(1, pageSize);
@@ -70,20 +77,13 @@ export class AgentTopics {
         return { topic, messages, count: messages.length, total, page: p, page_size: ps, pages: Math.ceil(total / ps) };
       }
 
-      // Consume: delta since cursor, advance cursor, no pagination
-      const cursor = this.readCursor(agentName, topic);
+      // Consume: unreconciled window, advance cursor, no pagination
       this.writeCursor(agentName, topic, new Date().toISOString());
 
       const filtered = filter ? allEntries.filter((e) => e.includes(filter)) : allEntries;
-      let messages: Record<string, any>[];
-      if (cursor === null) {
-        messages = filtered.map(parseEntry).filter(Boolean) as Record<string, any>[];
-      } else {
-        const cursorTs = new Date(cursor).getTime();
-        messages = filtered
-          .map((e) => parseEntryAfter(e, cursorTs))
-          .filter(Boolean) as Record<string, any>[];
-      }
+      const messages = filtered
+        .map((e) => parseEntryAfter(e, cursorMs))
+        .filter(Boolean) as Record<string, any>[];
       return { topic, messages, count: messages.length };
     } catch (err: any) {
       return { error: err?.message ?? 'unknown' };
@@ -124,6 +124,12 @@ export class AgentTopics {
       writeFileSync(file, ts, 'utf-8');
     } catch { /* ignore */ }
   }
+}
+
+function entryTimestamp(entry: string): number {
+  const m = HEADER_RE.exec(entry.trim().split('\n')[0]?.trim() ?? '');
+  if (!m) return 0;
+  try { return new Date(m[1]!).getTime(); } catch { return 0; }
 }
 
 function parseEntry(entry: string): Record<string, any> | null {

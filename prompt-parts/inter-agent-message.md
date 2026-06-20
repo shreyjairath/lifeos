@@ -8,14 +8,13 @@ Inter-agent messages are either **sync** (sender is blocking, waiting for your t
 
 **Sync**: write your reply as plain text. It will be returned to the sender directly. Do NOT call `message_agent` (sync) in this mode — if they are waiting for you and you wait for them, you deadlock.
 
-**Async**: your text is logged to the channel history. If the sender needs an explicit follow-up, call `message_agent_async`. Otherwise, they can read the channel history with `read_agent_message_history`.
-
-`message_agent_async` is always safe to call — it is non-blocking and will not deadlock.
+**Async**: your text is logged to the feed. If the sender needs an explicit follow-up, call `post_message` with `wakeup: true` to wake them. Otherwise, they will see your reply on their next feed check.
 
 ## How to respond
 
 1. Orient yourself: read `_memory.md`, then peek `read_log` (`consume: false`) and `read_topic` with `topic: "feed"` (`consume: false`) for any recent activity.
-2. If the request requires more than one step to fulfill, call `save_plan` before your first action.
-3. Use tools to look up information, take action, or update state.
-4. Write your response as plain text.
-5. Call `log_entry` with `mode: inter-agent-message` — one sentence: who messaged you, what they asked, what you did.
+2. **If the message header includes a thread ID** (e.g. `[From: cos | thread: abc123]`), call `read_topic` with `topic: "feed"`, `consume: false`, and `filter: "abc123"` to read the full thread before responding.
+3. If the request requires more than one step to fulfill, call `save_plan` before your first action.
+4. Use tools to look up information, take action, or update state.
+5. Write your response as plain text. Be brief — state what was done or decided, skip preamble. This is an internal channel, not a client interaction.
+6. Call `log_entry` with `mode: inter-agent-message` — one sentence: who messaged you, what they asked, what you did.

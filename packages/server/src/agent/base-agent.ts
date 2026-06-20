@@ -13,6 +13,7 @@ import {
   setInitialMessages,
   saveRunRecord,
   type RunRecord,
+  type RunStatus,
 } from './agent-run-logs.js';
 import { loadPrompt, loadGenericPrompt } from './prompt-parts.js';
 import type { AgentDefinition } from './agent-definition.js';
@@ -185,18 +186,18 @@ export class BaseAgent implements Agent {
   }
 
   /** Sync variant — blocks until the agent finishes responding. Use from background only. */
-  async handleAgentMessage(fromAgent: string, content: string): Promise<string> {
-    return this.runInterAgentMessage(fromAgent, content, false);
+  async handleAgentMessage(fromAgent: string, content: string, threadId?: string): Promise<string> {
+    return this.runInterAgentMessage(fromAgent, content, false, undefined, threadId);
   }
 
   /** Async variant — submits to the background queue and returns immediately. */
-  handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void {
+  handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void, threadId?: string): void {
     this.backgroundQueue.enqueue(() =>
-      this.runInterAgentMessage(fromAgent, content, true, onComplete).then(() => {}),
+      this.runInterAgentMessage(fromAgent, content, true, onComplete, threadId).then(() => {}),
     );
   }
 
-  handleEmailCheck(threads: InboundThread[], onComplete?: () => Promise<void>): void {
+  handleEmailCheck(threads: InboundThread[], onComplete?: (status: RunStatus) => Promise<void>): void {
     console.log(`[${this.def.name}] handleEmailCheck: received ${threads.length} thread(s), enqueueing`);
     const lines = threads.map((t) => {
       const ids = t.messageIds.map((id) => `\`${id}\``).join(', ');
@@ -205,8 +206,8 @@ export class BaseAgent implements Agent {
     });
     const append = `\n\n# Email(s) for You\n\nCall \`read_email_thread\` on each thread before acting.\n\nWhen replying, you MUST:\n- Pass \`thread_id\` and \`in_reply_to\` (shown below) to keep the thread intact\n- Set \`to\` to the **from** address shown below\n- Set \`cc\` to all other participants in **to** and **cc** below (reply-all), omitting your own mailbox address\n\n${lines.join('\n')}`;
     this.backgroundQueue.enqueue(async () => {
-      await this.handleSystemMessage('check_email_trigger', append);
-      if (onComplete) await onComplete();
+      const status = await this.handleSystemMessage('check_email_trigger', append);
+      if (onComplete) await onComplete(status);
     });
   }
 
@@ -226,14 +227,16 @@ export class BaseAgent implements Agent {
     content: string,
     async: boolean,
     onComplete?: (response: string) => void,
+    threadId?: string,
   ): Promise<string> {
     const system = this.buildSystemPrompt('inter-agent-message', { fromAgent, async });
+    const header = threadId ? `[From: ${fromAgent} | thread: ${threadId}]` : `[From: ${fromAgent}]`;
     const messages: Record<string, any>[] = [
-      { role: 'user', content: `[From: ${fromAgent}]\n\n${content}` },
+      { role: 'user', content: `${header}\n\n${content}` },
     ];
     prepareMessages(messages);
 
-    const model = this.chatModel();
+    const model = this.backgroundModel();
     const mode = `inter-agent-message (from: ${fromAgent})`;
     const userMsg = messages[0]?.content as string ?? '';
     const record = createRunRecord(this.def.name, mode, system, userMsg, model);
@@ -277,8 +280,8 @@ export class BaseAgent implements Agent {
     return result;
   }
 
-  private async handleSystemMessage(mode: string, userMsgAppend?: string): Promise<void> {
-    if (this.def.disabledModes.has(mode)) return;
+  private async handleSystemMessage(mode: string, userMsgAppend?: string): Promise<RunStatus> {
+    if (this.def.disabledModes.has(mode)) return 'success';
 
     const system = this.buildSystemPrompt(mode);
     const userMsg = userMsgAppend?.trim() ? userMsgAppend : `[${mode}]`;
@@ -292,6 +295,7 @@ export class BaseAgent implements Agent {
     const bgDefs = invoker.definitions().filter((t) => !CHAT_ONLY_TOOLS.has(t.name));
 
     let result = '';
+    let status: RunStatus = 'success';
     try {
       const exec = this.executorFactory(new LlmClient(this.config.apiKey), this.confirmations);
       for await (const event of exec.runLoop(
@@ -304,14 +308,18 @@ export class BaseAgent implements Agent {
         invoker,
       )) {
         withRecordLogging(event, record);
+        if (event.type === 'llm_text' && typeof (event as any).text === 'string' && (event as any).text.startsWith('[max turns')) {
+          status = 'max_turns';
+        }
         if (event.type === 'agent_append' && event.role === 'assistant' && typeof event.message.content === 'string') {
           result += event.message.content;
         }
       }
-      finishRunRecord(record, result);
+      finishRunRecord(record, result, status);
     } catch (err: any) {
+      status = 'error';
       result = `ERROR: ${err?.message ?? 'unknown'}`;
-      finishRunRecord(record, result);
+      finishRunRecord(record, result, status);
     }
 
     saveRunRecord(record, this.agentsDir);
@@ -322,6 +330,7 @@ export class BaseAgent implements Agent {
       duration_ms: record.durationMs,
       result_preview: resultPreview(result),
     });
+    return status;
   }
 
   private initListeners(): void {
@@ -446,7 +455,7 @@ export function buildSystemPrompt(
       parts.push(
         '\n\n> **Async message** — the sender has moved on and will not receive your text directly. ' +
         'Your response is written to the feed. ' +
-        'Call `post_message` if you need to send them an explicit reply.',
+        'Call `post_message` with `wakeup: true` if you need to wake them with an explicit reply.',
       );
     } else {
       parts.push(
@@ -469,11 +478,12 @@ export function buildSystemPrompt(
     }
   }
 
-  const now = new Intl.DateTimeFormat('en-US', {
+  const nowDate = new Date();
+  const nowHuman = new Intl.DateTimeFormat('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-  }).format(new Date());
-  parts.push('\n\n# Current Date & Time\n\n' + now);
+  }).format(nowDate);
+  parts.push('\n\n# Current Date & Time\n\n' + nowHuman + '\n\nISO8601: ' + nowDate.toISOString());
 
   return parts.join('').trim();
 }

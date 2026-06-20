@@ -181,27 +181,34 @@ export class GmailClient {
       ? `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`
       : subject;
 
-    const rfcId = inReplyTo
+    let rfcId = inReplyTo
       ? (inReplyTo.startsWith('<') ? inReplyTo : `<${inReplyTo}>`)
       : null;
 
     // Build full References chain for proper threading in recipient mailboxes.
-    // References = parent's References + parent's Message-ID (RFC 2822).
+    // Always derive In-Reply-To from the actual latest message in the thread
+    // (including agent-sent messages) so the References chain grows correctly.
     let references = rfcId;
-    if (rfcId && threadId) {
+    if (threadId) {
       try {
         const threadRes = await this.withTimeout(
           this.gmail().users.threads.get({ userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['References', 'Message-ID'] }),
         );
-        for (const msg of (threadRes.data.messages ?? []) as any[]) {
-          const hdrs: Record<string, string> = {};
-          for (const h of (msg.payload?.headers ?? []) as any[]) hdrs[(h.name as string).toLowerCase()] = h.value as string;
-          if (hdrs['message-id'] === rfcId) {
-            references = hdrs['references'] ? `${hdrs['references']} ${rfcId}` : rfcId;
-            break;
+        const msgs = (threadRes.data.messages ?? []) as any[];
+        if (msgs.length > 0) {
+          // Always use the latest message in the thread as In-Reply-To so the full
+          // References chain grows correctly even when the last message was agent-sent.
+          // The caller-supplied in_reply_to becomes a fallback only if fetch fails.
+          const latest = msgs[msgs.length - 1];
+          const latestHdrs: Record<string, string> = {};
+          for (const h of (latest.payload?.headers ?? []) as any[]) latestHdrs[(h.name as string).toLowerCase()] = h.value as string;
+          if (latestHdrs['message-id']) {
+            rfcId = latestHdrs['message-id'];
+            // Seed references from the latest message's own References chain.
+            references = latestHdrs['references'] ? `${latestHdrs['references']} ${rfcId}` : rfcId;
           }
         }
-      } catch { /* fall back to just inReplyTo */ }
+      } catch { /* fall back to rfcId only */ }
     }
 
     const replyHeaders = rfcId
@@ -335,11 +342,15 @@ export class GmailClient {
     const refs: string[] = [];
     for (const att of attachments) {
       try {
+        const dest = resolve(destDir, att.filename);
+        if (existsSync(dest)) {
+          refs.push(`_downloads/${att.filename}`);
+          continue;
+        }
         const res = await this.withTimeout(
           gm.users.messages.attachments.get({ userId: 'me', messageId, id: att.attachmentId }),
         );
         const data = Buffer.from(res.data.data ?? '', 'base64url');
-        const dest = resolve(destDir, att.filename);
         writeFileSync(dest, data);
         console.log(`[Gmail] saved attachment "${att.filename}" (${data.length} bytes) → ${dest}`);
         if (att.filename.toLowerCase().endsWith('.pdf')) {
@@ -538,7 +549,7 @@ export class GmailClient {
   }
 
   /** Fetch all threads with recent inbox activity, returning raw message data for per-agent cursor comparison. */
-  async fetchInboxThreads(query: string = 'in:inbox newer_than:3d'): Promise<RawThread[]> {
+  async fetchInboxThreads(query: string = 'in:inbox newer_than:4d'): Promise<RawThread[]> {
     const gm = this.gmail();
     const listRes = await this.withTimeout(gm.users.messages.list({ userId: 'me', q: query, maxResults: 20 }));
     const messages = listRes.data.messages ?? [];

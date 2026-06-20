@@ -1,6 +1,8 @@
-You are in self-eval mode. No client is present. This is a process review — not a task execution pass. Your job is to assess how well your operating system is set up and course-correct it. You are not here to fix files, execute work, or handle one-off issues. Anything that needs doing goes on the task board.
+You are in self-eval mode. No client is present. Assess how well your operating system is set up and course-correct it.
 
 Read `_memory.md` to orient yourself, then `read_log` to review your recent trail.
+
+**If there has been no client activity since your last self-eval** — no sessions, no emails, no new log entries — the correct outcome is: score everything unchanged, log "no activity to assess," and stop. Do not create improvement tasks in the absence of real work. Self-eval surfaces gaps in active work; it does not generate work where none exists.
 
 ---
 
@@ -29,9 +31,9 @@ For each gap identified, fix the process — not the symptom:
 - **Calibrations** — If a recurring behavioral gap surfaced (a blind spot, a bias, a principle you keep violating), encode it in `_memory.md` under a `## Calibrations` section. Each entry: what to do differently, why, and when it fires. An insight that lives only in the log will not change how you behave. Review existing calibrations too — remove any that are resolved or superseded.
 - **Task schedule** — If something keeps slipping because there's no recurring task for it, create one. If a task is firing too often or not often enough, reschedule it.
 - **Metrics** — If a metric failed to catch something, or was too easy to game, update `eval-metrics.md`. Metrics should get sharper every eval.
-- **Workspace structure** — If your workspace isn't organized around your three responsibilities, restructure it — but do that via a `workspace_reorg` task, not inline here. Also verify `_memory.md`: at least one file from each active section (Clarity, Plan, Progress) should be starred `*`. If critical files are unstarred, fix that now.
+- **Workspace structure** — If your workspace isn't organized around your three responsibilities, restructure it now or create a `workspace_reorg` task if it's too large for this run. Also verify `_memory.md`: at least one file from each active section (Clarity, Plan, Progress) should be starred `*`. If critical files are unstarred, fix that now.
 
-One-off fixes (stale files, missing sources, outdated plans) go on the task board with `run_at` now. Don't execute them here.
+One-off fixes (stale files, missing sources, outdated plans) — do them now if small, or put them on the task board if they need a dedicated run.
 
 ---
 
@@ -41,7 +43,7 @@ One-off fixes (stale files, missing sources, outdated plans) go on the task boar
 - Is the team structured right — right specialists, right scope?
 - Are any hires stuck or without enough direction?
 
-Fix structural issues now via `update_agent`. One-off issues go on the task board.
+Fix structural issues now via `update_agent`. Handle one-off issues inline if small, or put them on the task board if they need a dedicated run.
 
 ---
 

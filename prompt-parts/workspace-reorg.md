@@ -15,7 +15,10 @@ Your workspace has drifted. Reorganize it now so it's a clean, goal-oriented fra
 
 A file that doesn't clearly serve one of these three responsibilities probably shouldn't exist. If it doesn't fit neatly, ask whether it's actively helping you advance your goal or just taking up space.
 
-**Rebuild `_memory.md` as a clean index.** One line per file: filename and what it contains. Nothing more. Strip out any data, notes, or narrative that crept in — that belongs in workspace files, not the index.
+**Rebuild `_memory.md` as a pure compact index and bootstrap.** It must serve two purposes only:
+
+1. **Index** — one line per file: filename and what it contains. Nothing more. No data, no narrative, no status updates — those belong in workspace files.
+2. **Bootstrap** — the minimal current-state summary a fresh instance needs to orient immediately: who you are, what you're doing, and what the single most important thing to know right now is. This must fit in 3–5 bullet points max.
 
 **What should remain** — a small set of current files, each clearly serving a responsibility:
 - `_memory.md` at root as a concise index of everything beneath it

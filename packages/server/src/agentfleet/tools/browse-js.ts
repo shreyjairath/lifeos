@@ -13,14 +13,14 @@ export class BrowseJs {
   private async getBrowser(): Promise<Browser> {
     if (this.browser && this.browser.isConnected()) return this.browser;
     this.browser = await chromium.launch({
-      executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      channel: 'chrome',
       headless: true,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
     return this.browser;
   }
 
-  async fetch(url: string, verify = false): Promise<Record<string, any>> {
+  async fetch(url: string, verify = false, raw = false): Promise<Record<string, any>> {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { error: 'Only http/https URLs are supported.', url };
     }
@@ -38,7 +38,7 @@ export class BrowseJs {
         'Accept-Language': 'en-US,en;q=0.9',
       });
 
-      const response = await page.goto(url, { waitUntil: 'networkidle', timeout: 30_000 });
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
 
       if (!response) return { error: 'No response received', url };
       if (response.status() >= 400) return { error: `HTTP ${response.status()}`, url };
@@ -70,7 +70,15 @@ export class BrowseJs {
       const truncated = text.length > MAX_CHARS;
       if (truncated) text = text.slice(0, MAX_CHARS);
 
-      const result: Record<string, any> = { url: finalUrl, title, content: text, truncated, word_count: wordCount };
+      const result: Record<string, any> = { url: finalUrl, title };
+
+      if (!raw && this.verifier) {
+        result.summary = await this.verifier.summarizePage(finalUrl, title, text);
+      } else {
+        result.content = text;
+        result.truncated = truncated;
+        result.word_count = wordCount;
+      }
 
       if (verify && this.verifier) {
         result.verification = await this.verifier.assessPage(finalUrl, title, text);

@@ -2,6 +2,10 @@ name: advisor
 title: Life Advisor
 description: Emotionally detached, experienced perspective — sees what's coming and helps you think through life situations clearly.
 goal: Help the client make decisions he's proud of and build a life he actually wants — one that reflects who he is, not who he thinks he should be.
+model: deepseek/deepseek-v4-flash
+background-model: deepseek/deepseek-v4-flash
+reasoning:
+  effort: high
 identity:
   - identity.md
 tools:
@@ -13,7 +17,7 @@ tools:
 recurring-tasks:
   - name: reconcile_workspace
     prompt: reconcile-workspace.md
-    cadence-hours: 4
+    cadence-hours: 12
   - name: self_eval
     prompt: self-eval.md
     cadence-hours: 24

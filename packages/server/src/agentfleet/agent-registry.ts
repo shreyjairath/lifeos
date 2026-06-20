@@ -119,7 +119,21 @@ export class AgentRegistry {
         : allTools.filter((t) => nameSet.has(t.name));
     }
     // these tools are always available to every agent regardless of their filter
-    const ALWAYS_INCLUDE = ['agent_bash', 'shared_bash'];
+    // agent configs can only add to this set, not remove from it
+    const ALWAYS_INCLUDE = [
+      'agent_bash', 'shared_bash',
+      'read_file', 'write_file', 'patch_file', 'append_file',
+      'save_plan', 'get_plan', 'update_plan',
+      'log_entry', 'read_log',
+      'create_task', 'get_my_tasks', 'get_overdue_tasks', 'mark_task_complete', 'delete_task',
+      'post_message', 'read_messages', 'read_topic', 'message_agent',
+      'list_agents', 'read_agent_definition', 'update_agent',
+      'get_current_datetime',
+      'render_artifact', 'system_feedback',
+      'read_emails', 'read_email_thread', 'read_email_message',
+      'read_email_thread_summary', 'write_email_thread_summary',
+      'fetch_email_attachment', 'send_file_email', 'send_email',
+    ];
     for (const name of ALWAYS_INCLUDE) {
       if (!toolDefs.some((t) => t.name === name)) {
         const def = allTools.find((t) => t.name === name);

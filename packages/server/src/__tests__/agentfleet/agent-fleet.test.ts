@@ -162,6 +162,56 @@ describe('AgentFleet.triggerTaskCheck', () => {
     fleet = makeFleet();
     await expect(fleet.triggerTaskCheck()).resolves.toBeUndefined();
   });
+
+  it('calls markAllComplete (not markComplete) after a task run — platform tasks must be completable', async () => {
+    const markCompleteCalls: string[] = [];
+    const markAllCompleteCalls: string[][] = [];
+
+    let resolveTask: () => void;
+    const taskDone = new Promise<void>((res) => { resolveTask = res; });
+
+    const cos = fakeAgent({
+      getName: () => 'cos',
+      handleOverdueTask: (_task: any, onComplete: () => void) => {
+        // Simulate async completion
+        Promise.resolve().then(() => { onComplete(); resolveTask(); });
+      },
+    });
+
+    const map = new Map([['cos', cos]]);
+    const registry = {
+      get: (name: string) => { const a = map.get(name); if (!a) throw new Error(`not found: ${name}`); return a; },
+      all: () => [...map.values()],
+      register: () => {},
+      load: () => {},
+      identityText: () => '',
+    } as unknown as import('../../agentfleet/agent-registry.js').AgentRegistry;
+
+    const router = new AgentRouter(registry, eventBus);
+
+    const fakeToolsRegistry = {
+      getAgentsDir: () => tmpDir,
+      topics: { getTopicsDir: () => `${tmpDir}/topics` },
+      getScheduledTasks: () => ({
+        getAllOverdue: () => [{ id: 'task-1', name: 'reconcile_workspace', assignee: 'cos', platform: true }],
+        upsert: () => ({ ok: true }),
+        markComplete: (id: string) => { markCompleteCalls.push(id); return {}; },
+        markAllComplete: (ids: string[]) => { markAllCompleteCalls.push(ids); },
+      }),
+      getGmailClient: () => null,
+      allToolNames: () => [],
+      loadDisabledTools: () => new Set<string>(),
+      saveDisabledTools: () => {},
+    } as unknown as import('../../agentfleet/tools-registry.js').ToolsRegistry;
+
+    const f = new AgentFleet(registry, eventBus, router, fakeAppConfig(), fakeClientConfig(), fakeToolsRegistry, new Confirmations());
+    f.triggerTaskCheck();
+    await taskDone;
+
+    expect(markCompleteCalls).toHaveLength(0);
+    expect(markAllCompleteCalls).toHaveLength(1);
+    expect(markAllCompleteCalls[0]).toContain('task-1');
+  });
 });
 
 describe('AgentFleet tools management', () => {

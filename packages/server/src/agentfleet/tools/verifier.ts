@@ -55,6 +55,28 @@ export class Verifier {
     return m ? m[0] ?? null : null;
   }
 
+  /** Concise LLM summary of page content. Returns 3-5 sentences covering the key facts. */
+  async summarizePage(url: string, title: string, content: string): Promise<string> {
+    const excerpt = content.slice(0, 12_000);
+    const userMessage = `URL: ${url}\nTitle: ${title}\n\nContent:\n${excerpt}`;
+    const systemPrompt = 'Summarize the key information from this web page in 3-5 concise sentences. Focus on facts, data, and actionable details. No preamble.';
+    try {
+      const result = newLlmResult();
+      for await (const _ of this.llm.stream(
+        this.model,
+        systemPrompt,
+        [{ role: 'user', content: userMessage }],
+        [],
+        null,
+        result,
+        512,
+      )) { /* drain */ }
+      return result.fullText.trim();
+    } catch {
+      return content.slice(0, 2_000);
+    }
+  }
+
   /** Full LLM-based assessment of page content. Used by browse_page / browse_page_js. */
   async assessPage(url: string, title: string, content: string): Promise<VerificationResult> {
     const excerpt = content.slice(0, 6000); // keep prompt lean

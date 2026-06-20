@@ -4,7 +4,7 @@
     "dev": {
       "persistent": true,
       "cache": false,
-      "passThroughEnv": ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "PORT"]
+      "passThroughEnv": ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "PORT", "BACKEND_URL", "BRAVE_SEARCH_API_KEY"]
     },
     "build": {
       "dependsOn": ["^build"],

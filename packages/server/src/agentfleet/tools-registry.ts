@@ -5,6 +5,7 @@ import type { ClientConfig } from '../config.js';
 
 // Tool implementations
 import { Bash } from './tools/bash.js';
+import { FileTools } from './tools/file-tools.js';
 import type { GmailClient } from './tools/gmail.js';
 import { ScheduledTasks } from './tools/scheduled-tasks.js';
 import { SessionToolsImpl } from './tools/session-tools.js';
@@ -25,9 +26,11 @@ import type { Verifier as VerifierImpl } from './tools/verifier.js';
 export class ToolsRegistry {
   private readonly agentsDir: string;
   private readonly sharedDir: string;
+  private readonly journalDir: string;
   private readonly disabledFile: string;
   private readonly agentBash = new Map<string, Bash>();
   private readonly agentBashReadonly = new Map<string, Bash>();
+  private readonly agentFileTools = new Map<string, FileTools>();
   private readonly agentTitles = new Map<string, string>();
   private readonly sharedTasks: ScheduledTasks;
   private readonly sessionTools: SessionToolsImpl;
@@ -43,6 +46,7 @@ export class ToolsRegistry {
   constructor(clientDataDir: string, clientConfig: ClientConfig) {
     this.agentsDir = resolve(clientDataDir, 'agents');
     this.sharedDir = resolve(clientDataDir, 'shared');
+    this.journalDir = resolve(clientDataDir, 'journal');
     this.disabledFile = resolve(clientDataDir, 'disabled-tools.json');
     this.sharedTasks = new ScheduledTasks(resolve(clientDataDir, 'tasks.json'));
     this.sessionTools = new SessionToolsImpl((name) => new SessionStore(this.agentsDir, name));
@@ -87,6 +91,7 @@ export class ToolsRegistry {
   registerAgentWorkspace(name: string, workspacePath: string, title?: string): void {
     this.agentBash.set(name, new Bash(workspacePath, false));
     this.agentBashReadonly.set(name, new Bash(workspacePath, true));
+    this.agentFileTools.set(name, new FileTools(workspacePath));
     if (title) this.agentTitles.set(name, title);
   }
 
@@ -131,6 +136,22 @@ export class ToolsRegistry {
           ? bash.run(input.command as string)
           : { error: `No workspace registered for agent: ${agentName}` };
       }
+      case 'read_file': {
+        const rft = this.agentFileTools.get(agentName);
+        return rft ? rft.read(input.path as string, input.offset as number | undefined, input.length as number | undefined) : { error: `No workspace registered for agent: ${agentName}` };
+      }
+      case 'write_file': {
+        const wft = this.agentFileTools.get(agentName);
+        return wft ? wft.write(input.path as string, input.content as string) : { error: `No workspace registered for agent: ${agentName}` };
+      }
+      case 'patch_file': {
+        const pft = this.agentFileTools.get(agentName);
+        return pft ? pft.patch(input.path as string, input.old_string as string, input.new_string as string) : { error: `No workspace registered for agent: ${agentName}` };
+      }
+      case 'append_file': {
+        const aft = this.agentFileTools.get(agentName);
+        return aft ? aft.append(input.path as string, input.content as string) : { error: `No workspace registered for agent: ${agentName}` };
+      }
       case 'read_agent_workspace': {
         const bash = this.agentBashReadonly.get(input.agent as string);
         return bash
@@ -162,6 +183,7 @@ export class ToolsRegistry {
         return { sent: true, thread_id: sendFileResult.threadId, message_id: sendFileResult.messageId };
       }
       case 'send_email': {
+        if (input.body !== undefined && input.html_body !== undefined) return { error: 'Provide either body or html_body, not both.' };
         if (!this.gmailClient) return { error: 'Gmail not configured — add credentials to .user-data/system/gmail-credentials.json' };
         const sendTo = (input.to as string | undefined)?.trim() || this.clientEmail;
         if (!sendTo) return { error: 'No recipient: provide to or configure client-email in config.yml' };
@@ -325,10 +347,16 @@ export class ToolsRegistry {
       }
       case 'web_search':
         return this.webSearch.search(input.query as string, 5, input.verify === true);
-      case 'browse_page':
-        return this.browse.fetch(input.url as string, input.verify === true);
+      case 'brave_search':
+        return this.webSearch.search(input.query as string, input.max_results != null ? Number(input.max_results) : 5, input.verify === true);
+      case 'browse_page': {
+        const raw = input.raw !== false; // default true
+        const result = await this.browse.fetch(input.url as string, input.verify === true, raw);
+        if (result._js_fallback) return this.browseJs.fetch(input.url as string, input.verify === true, raw);
+        return result;
+      }
       case 'browse_page_js':
-        return this.browseJs.fetch(input.url as string, input.verify === true);
+        return this.browseJs.fetch(input.url as string, input.verify === true, input.raw === true);
       case 'system_feedback': {
         const { category, subject, detail, severity = 'medium' } = input as any;
         const message = `**[${String(severity).toUpperCase()}] ${subject}**\n- Category: ${category}\n\n${detail}`;
@@ -384,7 +412,7 @@ export class ToolsRegistry {
       case 'message_agent':
         return this.agentTools.messageAgent(agentName, input.agent as string, input.message as string);
       case 'post_message':
-        return this.agentTools.postMessage(agentName, input.message as string, Array.isArray(input.to) ? input.to.map(String) : []);
+        return this.agentTools.postMessage(agentName, input.message as string, Array.isArray(input.to) ? input.to.map(String) : [], input.wakeup === true);
       case 'read_messages':
         return this.topics.readTopic(agentName, 'feed', input.consume as boolean ?? true, (input.filter as string | undefined) ?? `@${agentName}`, input.page as number ?? 1, input.page_size as number ?? 20);
       case 'read_topic':
@@ -465,6 +493,52 @@ export class ToolsRegistry {
         const files = readdirSync(plansDir).filter((f) => f.endsWith('.md')).sort().reverse();
         return { plans: files.map((f) => ({ plan_id: f.slice(0, -3), path: `_plans/${f}` })) };
       }
+      case 'update_plan': {
+        const plansDir = resolve(this.agentsDir, agentName, 'workspace', '_plans');
+        const planId = input.plan_id as string;
+        const file = resolve(plansDir, `${planId}.md`);
+        if (!existsSync(file)) return { error: `Plan not found: ${planId}` };
+        const stepIndex = input.step_index as number;
+        const status = input.status as 'done' | 'skip';
+        if (status !== 'done' && status !== 'skip') return { error: `Invalid status "${status}" — must be "done" or "skip"` };
+        const note = input.note as string | undefined;
+        const content = readFileSync(file, 'utf-8');
+        const lines = content.split('\n');
+        let checkboxCount = -1;
+        let updated = false;
+        const newLines = lines.map((line) => {
+          if (/^- \[[ x]\]/.test(line)) {
+            checkboxCount++;
+            if (checkboxCount === stepIndex) {
+              const mark = status === 'done' ? 'x' : '-';
+              const base = line.replace(/^- \[[ x\-]\]/, `- [${mark}]`);
+              updated = true;
+              return note ? `${base} *(${note})*` : base;
+            }
+          }
+          return line;
+        });
+        if (!updated) return { error: `Step index ${stepIndex} out of range` };
+        writeFileSync(file, newLines.join('\n'), 'utf-8');
+        return { plan_id: planId, step_index: stepIndex, status };
+      }
+      case 'read_journal': {
+        if (!existsSync(this.journalDir)) return { entries: [] };
+        const limit = typeof input.limit === 'number' ? input.limit : 10;
+        const files = readdirSync(this.journalDir)
+          .filter(f => f.endsWith('.md'))
+          .sort()
+          .reverse()
+          .slice(0, limit);
+        const entries = files.map(f => {
+          const id = f.slice(0, -3);
+          const content = readFileSync(resolve(this.journalDir, f), 'utf-8');
+          const m = id.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})/);
+          const date = m ? `${m[1]}-${m[2]}-${m[3]}` : id;
+          return { id, date, content };
+        });
+        return { entries };
+      }
       default:
         return { error: `Unknown tool: ${toolName}` };
     }
@@ -501,18 +575,63 @@ function props(...entries: [string, Record<string, any>][]): Record<string, any>
 
 const TOOLS: ToolDefinition[] = [
   tool('agent_bash',
-    'Your personal workspace. Use this to read and write your notes and files. ' +
-    'The shell starts in your workspace — use relative paths (e.g. ls, cat file.md). ' +
+    'Run shell commands in your workspace. Use for shell operations: ls, grep, find, diff, cp, mv, mkdir, rm, python3 scripts, etc. ' +
+    'Do NOT use for file reads or writes — use read_file, write_file, and patch_file instead. ' +
+    'The shell starts in your workspace — use relative paths only. ' +
     'Do not use ~/, $HOME, or absolute paths. ' +
-    'Standard shell tools available: ls, cat, echo, grep, mkdir, rm, mv, cp, sed, awk, jq, python3, etc. ' +
     'Path traversal (../), ~/, $HOME, network tools, and privilege escalation are blocked.',
     props(prop('command', 'string', 'Bash command to run.')), ['command']),
 
+  tool('read_file',
+    'Read a file from your workspace. Returns file contents as a string. ' +
+    'Default reads up to 100,000 characters — enough for most files. Call with no offset first; only paginate if total_chars exceeds the length. ' +
+    'The response includes total_chars and remaining_chars so you know if there is more. ' +
+    'Always prefer this over agent_bash cat/sed/tail.',
+    props(
+      prop('path', 'string', 'Relative path from your workspace root (e.g. "notes.md", "reports/summary.txt").'),
+      prop('offset', 'number', 'Character offset to start reading from (default: 0).'),
+      prop('length', 'number', 'Max number of characters to read (default: 100000).'),
+    ),
+    ['path']),
+
+  tool('write_file',
+    'Write text content to a file in your workspace. Creates parent directories if needed. Overwrites the file if it already exists — ' +
+    'use read_file first if you need to preserve existing content. ' +
+    'Always use this instead of agent_bash echo/printf/heredoc — never write files through bash. ' +
+    'When making multiple edits to a file, read it once, apply all changes, then write once — do not call patch_file in a loop.',
+    props(
+      prop('path', 'string', 'Relative path from your workspace root (e.g. "notes.md", "reports/summary.txt").'),
+      prop('content', 'string', 'Text content to write to the file.'),
+    ),
+    ['path', 'content']),
+
+  tool('patch_file',
+    'Replace an exact string in a file with new content. Edits in place — no need to read and rewrite the whole file. ' +
+    'old_string must match exactly (including whitespace and newlines) and must be unique in the file — add more surrounding context if it appears more than once. ' +
+    'Returns a snippet of the file around the patched region so you can verify the change without re-reading the file. ' +
+    'Use for a single targeted change. If you need to make multiple edits to the same file, use read_file + write_file instead of calling patch_file in a loop.',
+    props(
+      prop('path', 'string', 'Relative path from your workspace root.'),
+      prop('old_string', 'string', 'Exact string to find and replace. Must appear exactly once in the file.'),
+      prop('new_string', 'string', 'Replacement string.'),
+    ),
+    ['path', 'old_string', 'new_string']),
+
+  tool('append_file',
+    'Append text to the end of a file in your workspace. Creates the file if it does not exist. ' +
+    'Ensures a newline separator between existing content and the appended text. ' +
+    'Use this instead of patch_file or agent_bash cat >> when adding to the end of a file.',
+    props(
+      prop('path', 'string', 'Relative path from your workspace root.'),
+      prop('content', 'string', 'Text to append.'),
+    ),
+    ['path', 'content']),
+
   tool('save_plan',
     'Save a structured plan to your workspace before starting a complex multi-step task. ' +
-    'Writes a markdown checklist to _plans/ that you can reference and edit throughout execution via agent_bash. ' +
+    'Writes a markdown checklist to _plans/ that you can reference throughout execution. ' +
     'Call this before taking any actions on multi-step tasks — commit the plan first, then execute. ' +
-    'Returns a plan_id you can pass to get_plan to retrieve it.',
+    'Use update_plan to tick off steps as you go. Returns a plan_id you can pass to get_plan to retrieve it.',
     props(
       prop('title', 'string', 'Short descriptive title for the plan (e.g. "Research Chicago neighborhoods").'),
       ['steps', { type: 'array', items: { type: 'string' }, description: 'Ordered list of steps to execute. Each step is a short action statement.' }],
@@ -526,13 +645,25 @@ const TOOLS: ToolDefinition[] = [
     ),
     []),
 
+  tool('update_plan',
+    'Mark a step in a saved plan as done or skipped. Use this instead of rewriting the plan file via agent_bash. ' +
+    'Pass the plan_id from save_plan and the 0-based index of the step to update. ' +
+    'Optionally add a short note (e.g. outcome, reason for skip) that gets appended inline.',
+    props(
+      prop('plan_id', 'string', 'Plan ID returned by save_plan.'),
+      prop('step_index', 'number', '0-based index of the step to update.'),
+      ['status', { type: 'string', enum: ['done', 'skip'], description: '"done" to check the step off, "skip" to mark it skipped.' }],
+      prop('note', 'string', 'Optional short note appended inline (e.g. outcome or skip reason).'),
+    ),
+    ['plan_id', 'step_index', 'status']),
+
   tool('read_emails',
     'List email threads from the shared mailbox. ' +
     'Returns { threads } — each with thread_id, subject, from, date, message_count, and summary (if one has been written). ' +
     'Threads with summary=null have not been processed yet. ' +
     'Use this to get an overview of active threads. Call read_email_thread with a thread_id to read the full content.',
     props(
-      prop('query', 'string', 'Gmail search query. Default: "in:inbox \\"@{your_agent_name}\\"" — threads that mention you. Override to broaden (e.g. "in:inbox" for all inbox threads) or narrow (e.g. add "is:unread", "from:someone@example.com").'),
+      prop('query', 'string', 'Gmail search query. Default: "in:inbox \\"@{your_agent_name}\\"" — threads that mention you. Override to broaden (e.g. "in:inbox" for all inbox threads) or narrow (e.g. add "is:unread", "from:someone@example.com"). When a shared mailbox is configured, "to:{mailboxAddress}" is automatically appended to queries that do not already include "to:" or "from:" — limiting results to inbound emails only.'),
       prop('max_results', 'number', 'Max number of threads to return (default: 10)'),
     ),
     []),
@@ -635,18 +766,20 @@ const TOOLS: ToolDefinition[] = [
     props(prop('command', 'string', 'Bash command to run in the shared folder.')), ['command']),
 
   tool('browse_page',
-    'Fetch and read the content of a web page. ' +
-    'Use to read a specific URL in full. For discovery, use web_search first.',
+    'Fetch a web page and return its full text content. Automatically retries with JS rendering if the page is JavaScript-rendered. ' +
+    'Pass raw: false to get a concise LLM-generated summary instead of full text. For discovery, use web_search first.',
     props(
       prop('url', 'string', 'Full URL to fetch'),
-      prop('verify', 'boolean', 'If true, run a credibility assessment on the page and return source_quality, published date, flags, and a reliability summary alongside the content.'),
+      prop('raw', 'boolean', 'If true (default), return full page text instead of a summary. Pass false to get a concise LLM-generated summary.'),
+      prop('verify', 'boolean', 'If true, also run a credibility assessment and return source_quality, published date, and flags.'),
     ), ['url']),
 
   tool('browse_page_js',
-    'Fetch a web page using a real browser (JS rendered). Use when browse_page returns empty or incomplete content because the page relies on JavaScript to render. Slower than browse_page — only use when needed.',
+    'Fetch a JS-rendered web page and return an LLM-generated summary of its key content. Use when browse_page returns empty or incomplete content because the page relies on JavaScript to render. Slower — only use when needed.',
     props(
       prop('url', 'string', 'Full URL to fetch'),
-      prop('verify', 'boolean', 'If true, run a credibility assessment on the page and return source_quality, published date, flags, and a reliability summary alongside the content.'),
+      prop('raw', 'boolean', 'If true, return full page text instead of a summary. Default: false (returns summary).'),
+      prop('verify', 'boolean', 'If true, also run a credibility assessment and return source_quality, published date, and flags.'),
     ), ['url']),
 
   tool('parse_redfin_listing',
@@ -673,11 +806,22 @@ const TOOLS: ToolDefinition[] = [
     ['address']),
 
   tool('web_search',
-    'Search the web for information. ' +
-    'Use for discovery and finding URLs. Follow up with browse_page to read specific pages in full.',
+    'Search the web via Exa (OpenRouter). ' +
+    'Use for discovery and finding URLs. Follow up with browse_page to read specific pages in full. ' +
+    'If results are missing or insufficient, use brave_search as a fallback with a different search index.',
     props(
       prop('query', 'string', 'Search query'),
       prop('verify', 'boolean', 'If true, annotate each result with source_quality (high/medium/low based on domain) and published date extracted from the snippet.'),
+    ), ['query']),
+
+  tool('brave_search',
+    'Search the web via Brave Search API — a direct call to Brave\'s independent index. ' +
+    'Use as a fallback when web_search returns no results or poor results, or when you want a second search engine\'s perspective. ' +
+    'Follow up with browse_page to read specific pages in full.',
+    props(
+      prop('query', 'string', 'Search query'),
+      prop('max_results', 'number', 'Max results to return (default: 5, max: 20)'),
+      prop('verify', 'boolean', 'If true, annotate each result with source_quality and published date.'),
     ), ['query']),
 
   tool('show_image', 'Display an image inline in the chat.',
@@ -685,8 +829,8 @@ const TOOLS: ToolDefinition[] = [
     ['url']),
 
   tool('get_current_datetime',
-    'Get the current date and time. ' +
-    'Call before create_task with run_at or any time-relative calculation.',
+    'Get the current date and time as an ISO8601 string. ' +
+    'The current time is already in your system prompt — only call this tool when you need a fresh ISO8601 timestamp for create_task run_at or precise time-diff calculations.',
     props(), []),
 
   tool('format_timestamp',
@@ -750,7 +894,7 @@ const TOOLS: ToolDefinition[] = [
     'Record what happened at the end of any run — chat, email, task, or inter-agent message. ' +
     'Written to your private log — only you read it.',
     props(
-      prop('mode', 'string', 'Run mode: chat, inter-agent-message, email-check, or task-trigger'),
+      ['mode', { type: 'string', enum: ['chat', 'inter-agent-message', 'email-check', 'task-trigger'], description: 'Run mode: chat, inter-agent-message, email-check, or task-trigger' }],
       prop('summary', 'string', 'What happened and what you decided — be thorough, this is your memory'),
       prop('session_id', 'string', 'Session ID for this run. Always include during chat mode — used to pull transcripts later.'),
       ['email_thread_ids', { type: 'array', items: { type: 'string' }, description: 'Gmail thread IDs processed during this run. Always include during email-check mode — used to pull threads later.' }],
@@ -775,21 +919,23 @@ const TOOLS: ToolDefinition[] = [
   tool('message_agent',
     'Send a message to another agent and block until they respond. ' +
     'Use only in background modes (task-trigger, inter-agent-message) — never during user chat. ' +
-    'Use post_message instead when you do not need an immediate reply.',
+    'Use post_message with wakeup: true instead when you do not need an immediate reply. ' +
+    'Keep messages short and specific — each call runs a full agent loop. One focused question is cheaper than a long brief.',
     props(
       prop('agent', 'string', "Agent to message. Use list_agents to see available agents."),
-      prop('message', 'string', 'Message to send.'),
+      prop('message', 'string', 'Message to send. Be concise — state exactly what you need and nothing more.'),
     ),
     ['agent', 'message']),
 
   tool('post_message',
-    'Post a message to the shared feed. ' +
-    'Use to: ["agentname"] to notify specific agents — they will be woken up and their reply written back to the feed. ' +
-    'Omit to (or pass an empty array) to broadcast to the whole team (no immediate wakeup — agents read it on their next check). ' +
-    'Safe to call during user chat.',
+    'Post a message to the shared feed. Safe to call during user chat. ' +
+    'By default just writes to the feed — recipients see it on their next check. ' +
+    'Set wakeup: true to wake recipients immediately and have their reply written back to the feed. ' +
+    'Only use wakeup when the agent genuinely needs to act now — each wakeup triggers a full agent run.',
     props(
       prop('message', 'string', 'Message content'),
-      ['to', { type: 'array', items: { type: 'string' }, description: 'Agent names to notify, e.g. ["cos"] or ["therapist", "advisor"]. Omit for broadcast.' }],
+      ['to', { type: 'array', items: { type: 'string' }, description: 'Agent names to address, e.g. ["cos"] or ["therapist", "advisor"]. Omit for broadcast.' }],
+      ['wakeup', { type: 'boolean', description: 'If true, wake each recipient immediately and write their reply to the feed. Default: false.' }],
     ),
     ['message']),
 
@@ -834,9 +980,9 @@ const TOOLS: ToolDefinition[] = [
     ['agent']),
 
   tool('update_agent',
-    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first to read the current state before making changes.',
+    'Update a dynamic agent\'s definition. Only the fields you provide are changed. Use read_agent_definition first to read the current state before making changes. Parameter is "name" (not "agent") — use list_agents to find the agent\'s slug.',
     props(
-      prop('name', 'string', 'Agent slug to update'),
+      prop('name', 'string', 'Agent slug to update — same as the "name" field from list_agents (e.g. "pm_coach", not a display title)'),
       prop('title', 'string', 'New display name'),
       prop('description', 'string', 'New one-sentence description'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
@@ -858,12 +1004,19 @@ const TOOLS: ToolDefinition[] = [
     'Submit feedback about the system — tools, triggers, prompts, or missing capabilities. ' +
     'Use when you notice something broken, unhelpful, or missing that is blocking your work.',
     props(
-      prop('category', 'string', 'Area of feedback: "tool", "trigger", "prompt", "capability", or "other"'),
+      ['category', { type: 'string', enum: ['tool', 'trigger', 'prompt', 'capability', 'other'], description: 'Area of feedback: "tool", "trigger", "prompt", "capability", or "other"' }],
       prop('subject',  'string', 'Short title describing the issue or suggestion'),
       prop('detail',   'string', 'Full description — what happened, what you expected, and what the impact is'),
-      prop('severity', 'string', 'Impact level: "low", "medium" (default), or "high"'),
+      ['severity', { type: 'string', enum: ['low', 'medium', 'high'], description: 'Impact level: "low", "medium" (default), or "high"' }],
     ),
     ['category', 'subject', 'detail']),
+
+  tool('read_journal',
+    'Read recent journal entries written by the client. Use to understand the client\'s current state, recent thoughts, or context before a session.',
+    props(
+      prop('limit', 'number', 'Number of recent entries to return (default: 10)'),
+    ),
+    []),
 
   tool('render_artifact',
     'Display a file in the client\'s chat UI in a persistent panel next to the conversation. ' +
@@ -885,9 +1038,9 @@ const TOOLS: ToolDefinition[] = [
       prop('goal', 'string', 'Durable, concrete purpose statement'),
       prop('manager', 'string', 'Agent name of the manager who hired this agent (e.g. "cos", "advisor"). Omit if hired directly by the client.'),
       prop('identity', 'string', 'Durable identity prompt — who the agent is and their standing capabilities. All mode-specific framing goes here.'),
-      ['tools', { type: 'array', items: { type: 'string' }, description: 'Tool names to expose to this agent in addition to agent_bash (always included automatically).' }],
+      ['tools', { type: 'array', items: { type: 'string' }, description: 'Additional tool names beyond the basic toolkit (which is always included automatically). Only list tools specific to this agent\'s domain.' }],
     ),
-    ['name', 'identity', 'tools']),
+    ['name', 'identity']),
 ];
 
 const SESSION_TOOLS: ToolDefinition[] = [

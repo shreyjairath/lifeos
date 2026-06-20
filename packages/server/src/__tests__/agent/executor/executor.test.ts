@@ -70,6 +70,45 @@ describe('Executor.runLoop', () => {
     expect(call).toBe(2);
   });
 
+  it('compresses large prior tool results but not the current turn on second LLM call', async () => {
+    // A prior turn in history with a large tool result (> 10_000 char threshold)
+    const bigContent = 'x'.repeat(15_000);
+    const priorHistory = [
+      { role: 'user', content: 'find something' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'prior-tc', type: 'function', function: { name: 'bash', arguments: '{"cmd":"find"}' } }] },
+      { role: 'tool', tool_call_id: 'prior-tc', content: bigContent },
+      { role: 'assistant', content: 'found it' },
+    ];
+
+    const fetchBodies: any[] = [];
+    let call = 0;
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      fetchBodies.push(JSON.parse((init as RequestInit).body as string));
+      call++;
+      if (call === 1) return Promise.resolve(makeToolStream('bash', '{"cmd":"ls"}'));
+      return Promise.resolve(makeStream('Done'));
+    });
+
+    const invoker = fakeToolInvoker(() => ({ output: 'file.txt' }));
+    const executor = new Executor(new LlmClient('key'), new Confirmations());
+    for await (const _ of executor.runLoop(priorHistory, 'sys', 'model', [], 'agent', null, invoker)) {}
+
+    expect(call).toBe(2);
+
+    const secondCallMessages: any[] = fetchBodies[1].messages;
+
+    // Prior large tool result should be compressed
+    const priorToolMsg = secondCallMessages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'prior-tc');
+    expect(priorToolMsg).toBeDefined();
+    expect(priorToolMsg.content).toContain('[...compressed');
+    expect(priorToolMsg.content.length).toBeLessThan(bigContent.length);
+
+    // Current turn's tool result (small) should be intact
+    const currentToolMsg = secondCallMessages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'tc1');
+    expect(currentToolMsg).toBeDefined();
+    expect(currentToolMsg.content).toBe(JSON.stringify({ output: 'file.txt' }));
+  });
+
   it('stops when cancelled', async () => {
     fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(makeStream('Never'));
     const executor = new Executor(new LlmClient('key'), new Confirmations());

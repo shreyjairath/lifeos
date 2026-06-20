@@ -1,6 +1,7 @@
 import type { AgentDefinition } from './agent-definition.js';
 import type { SessionHandler } from './session/session-handler.js';
 import type { EmailThreadStore } from '../agentfleet/tools/email-thread-store.js';
+import type { RunStatus } from './agent-run-logs.js';
 
 export interface InboundThread {
   threadId: string;
@@ -43,7 +44,7 @@ export interface Agent {
   handleAgentMessage(fromAgent: string, content: string): Promise<string>;
   handleAgentMessageAsync(fromAgent: string, content: string, onComplete?: (response: string) => void): void;
   getWorkspaceDir(): string;
-  handleEmailCheck(threads: InboundThread[], onComplete?: () => Promise<void>): void;
+  handleEmailCheck(threads: InboundThread[], onComplete?: (status: RunStatus) => Promise<void>): void;
   handleOverdueTask(task: Record<string, any>, onComplete?: () => void): void;
 }
 
