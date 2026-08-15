@@ -31,7 +31,6 @@ interface SidebarProps {
   onThemeChange: (theme: string) => void;
 }
 
-const PRIMARY_AGENTS = ['cos', 'advisor'];
 const MODEL_SUGGESTIONS = [
   'xiaomi/mimo-v2-pro',
   'anthropic/claude-sonnet-4-5',
@@ -128,8 +127,7 @@ export default function Sidebar({
   onHeaderClick,
   onThemeChange,
 }: SidebarProps) {
-  const primaryAgents = agents.filter(a => PRIMARY_AGENTS.includes(a.name));
-  const specialistAgents = agents.filter(a => !PRIMARY_AGENTS.includes(a.name));
+  const sortedAgents = [...agents].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <aside className="sidebar">
@@ -140,10 +138,9 @@ export default function Sidebar({
       <div className="sidebar-content">
         {!monitorOpen ? (
           <>
-            {/* Primary agents */}
-            {primaryAgents.length > 0 && (
+            {sortedAgents.length > 0 && (
               <div className="sidebar-section">
-                {primaryAgents.map(agent => (
+                {sortedAgents.map(agent => (
                   <div key={agent.name}>
                     <button
                       className={`agent-btn${activeAgent === agent.name ? ' active' : ''}`}
@@ -166,38 +163,6 @@ export default function Sidebar({
                   </div>
                 ))}
               </div>
-            )}
-
-            {/* Separator */}
-            {specialistAgents.length > 0 && (
-              <>
-                <div className="sidebar-separator" />
-                <div className="sidebar-section">
-                  <div className="sidebar-section-label">Specialists</div>
-                  {specialistAgents.map(agent => (
-                    <div key={agent.name}>
-                      <button
-                        className={`agent-btn${activeAgent === agent.name ? ' active' : ''}`}
-                        onClick={() => onSelectAgent(agent.name)}
-                        title={agent.description}
-                      >
-                        <span className="agent-indicator" style={{ background: 'var(--text-light)' }} />
-                        <span className="agent-btn-name">{agent.title ?? agent.name}</span>
-                      </button>
-                      {activeAgent === agent.name && (
-                        <SessionList
-                          agent={agent}
-                          sessions={sessions}
-                          activeSessionId={activeSessionId}
-                          onSelect={onSelectSession}
-                          onDelete={onDeleteSession}
-                          onNew={onNewSession}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
             )}
           </>
         ) : (

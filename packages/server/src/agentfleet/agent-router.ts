@@ -74,7 +74,6 @@ export class AgentRouter {
 
     console.log(`[EmailCheck] threads to process: ${rawThreads.map((t) => t.threadId).join(', ')}`);
     const allAgents = this.registry.all();
-    const cosAgent = this.registry.get('cos');
     const checkStartTime = Date.now();
 
     const resolveInvolved = (rawThread: RawThread): Agent[] | null => {
@@ -82,10 +81,14 @@ export class AgentRouter {
       const latestInbox = [...rawThread.messages].reverse().find((m) => m.labelIds.includes('INBOX') && !m.labelIds.includes('SENT'));
       const senderEmail = extractEmail(latestInbox ? latestInbox.from : rawThread.messages[rawThread.messages.length - 1]!.from);
 
-      // Client (owner) — route by @mention, cos as fallback
+      // Client (owner) — route by @mention only; no fallback agent
       if (clientEmail && senderEmail === clientEmail.toLowerCase()) {
         const involved = allAgents.filter((a) => fullThreadText.includes(`@${a.getName()}`));
-        return involved.length > 0 ? involved : [cosAgent];
+        if (involved.length === 0) {
+          console.log(`[EmailCheck] dropping thread from client with no @mention: ${rawThread.threadId}`);
+          return null;
+        }
+        return involved;
       }
 
       // Known contact — restricted to their allowed agents

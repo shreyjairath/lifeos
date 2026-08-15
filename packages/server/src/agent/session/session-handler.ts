@@ -197,7 +197,7 @@ export class SessionHandler {
         created_at: meta.created_at ?? 0,
         last_message_at: meta.last_message_at ?? 0,
         last_input_tokens: meta.last_input_tokens ?? 0,
-        agent: meta.agent ?? 'cos',
+        agent: meta.agent ?? this.agentName,
       });
     }
     return result.sort((a, b) => {

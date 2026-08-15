@@ -33,7 +33,7 @@ function nanoid() {
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeAgent, setActiveAgent] = useState<string>('cos');
+  const [activeAgent, setActiveAgent] = useState<string>('');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
@@ -62,8 +62,11 @@ export default function App() {
     fetchAgents()
       .then(a => {
         setAgents(a);
-        // Restore session for the active agent
-        const agent = localStorage.getItem(AGENT_KEY) ?? 'cos';
+        // Restore session for the active agent, or fall back to the first agent alphabetically
+        // as a pure UI bootstrap so the app isn't blank on first load — not a routing default.
+        const saved = localStorage.getItem(AGENT_KEY);
+        const agent = saved ?? [...a].sort((x, y) => x.name.localeCompare(y.name))[0]?.name ?? '';
+        if (!saved && agent) setActiveAgent(agent);
         const sid = localStorage.getItem(sessionKey(agent));
         if (sid) setSessionId(sid);
       })

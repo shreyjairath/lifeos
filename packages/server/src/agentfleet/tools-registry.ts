@@ -743,7 +743,7 @@ const TOOLS: ToolDefinition[] = [
     '(2) body: plain text — use only for short conversational replies (2–3 sentences). No markdown syntax. ' +
     'Do not provide both body and html_body. ' +
     'Attachments can be included alongside either body option — use for large, durable artifacts that will be referenced repeatedly (PDFs, CSVs, PPTs, interactive web pages). ' +
-    'Always end your email with a signature line: "@{your agent name}" (e.g. "@cos", "@chicago_childcare"). This is used to route future replies back to you. ' +
+    'Always end your email with a signature line: "@{your agent name}" (e.g. "@therapist", "@chicago_childcare"). This is used to route future replies back to you. ' +
     'When replying, you MUST set thread_id and in_reply_to — both required for the reply to stay in the correct thread. ' +
     'Returns { sent, thread_id, message_id } — save thread_id so you can track replies and pass it as thread_id on future replies.',
     props(
@@ -934,7 +934,7 @@ const TOOLS: ToolDefinition[] = [
     'Only use wakeup when the agent genuinely needs to act now — each wakeup triggers a full agent run.',
     props(
       prop('message', 'string', 'Message content'),
-      ['to', { type: 'array', items: { type: 'string' }, description: 'Agent names to address, e.g. ["cos"] or ["therapist", "advisor"]. Omit for broadcast.' }],
+      ['to', { type: 'array', items: { type: 'string' }, description: 'Agent names to address, e.g. ["therapist"] or ["therapist", "fitness"]. Omit for broadcast.' }],
       ['wakeup', { type: 'boolean', description: 'If true, wake each recipient immediately and write their reply to the feed. Default: false.' }],
     ),
     ['message']),
@@ -958,7 +958,7 @@ const TOOLS: ToolDefinition[] = [
     'Use topic: "{agentname}_log" to read another agent\'s log (read-only, no cursor advance for you). ' +
     'Set consume: false to browse history without advancing the cursor.',
     props(
-      prop('topic', 'string', 'Topic name, e.g. "feed", "cos_log", "system_feedback"'),
+      prop('topic', 'string', 'Topic name, e.g. "feed", "therapist_log", "system_feedback"'),
       prop('consume', 'boolean', 'Advance cursor after reading (default: true).'),
       prop('filter', 'string', 'Optional: return only entries containing this string.'),
       prop('page', 'number', 'Page number when browsing history (consume: false only). 1 = most recent (default: 1)'),
@@ -986,7 +986,7 @@ const TOOLS: ToolDefinition[] = [
       prop('title', 'string', 'New display name'),
       prop('description', 'string', 'New one-sentence description'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
-      prop('manager', 'string', 'Agent name of the manager (e.g. "cos", "advisor")'),
+      prop('manager', 'string', 'Agent name of the manager, if this agent has one (e.g. "therapist"). Most agents have none — omit unless one was explicitly hired by another agent.'),
       prop('identity', 'string', 'Replaces identity.md entirely — whatever you pass here becomes the full file. Read the current identity first via read_agent_definition, then incorporate your changes and pass the complete updated content. Partial updates will erase the rest. Identity covers: who the agent is, what they own, how they operate, guiding principles, and standing rules. Write it as a direct operational brief, not a job description.'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'New tool list (replaces current list)' }],
     ),
@@ -1036,7 +1036,7 @@ const TOOLS: ToolDefinition[] = [
       prop('title', 'string', 'Display name shown in the UI (e.g. "PM Coach")'),
       prop('description', 'string', 'One-sentence description of what this agent does.'),
       prop('goal', 'string', 'Durable, concrete purpose statement'),
-      prop('manager', 'string', 'Agent name of the manager who hired this agent (e.g. "cos", "advisor"). Omit if hired directly by the client.'),
+      prop('manager', 'string', 'Agent name of the manager who hired this agent (e.g. "therapist"), if any. Omit if hired directly by the client — most agents are.'),
       prop('identity', 'string', 'Durable identity prompt — who the agent is and their standing capabilities. All mode-specific framing goes here.'),
       ['tools', { type: 'array', items: { type: 'string' }, description: 'Additional tool names beyond the basic toolkit (which is always included automatically). Only list tools specific to this agent\'s domain.' }],
     ),

@@ -18,7 +18,8 @@ export function sessionRoutes(fleet: AgentFleet) {
   // POST /api/sessions — create session
   app.post('/sessions', async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const agentName = body.agent ?? 'cos';
+    const agentName = body.agent;
+    if (!agentName) return c.json({ error: 'agent is required' }, 400);
     const sessionId = fleet.createSession(agentName);
     return c.json({ session_id: sessionId });
   });
