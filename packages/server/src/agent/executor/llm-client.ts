@@ -13,6 +13,7 @@ export interface ParsedToolUse {
   id: string;
   name: string;
   input: Record<string, any>;
+  rawArguments?: string;
 }
 
 interface ToolUseAccumulator {
@@ -102,7 +103,7 @@ export class LlmClient {
             acc.parsedInput = {};
           }
         }
-        result.parsedToolUses.push({ id: acc.id!, name: acc.name!, input: acc.parsedInput ?? {} });
+        result.parsedToolUses.push({ id: acc.id!, name: acc.name!, input: acc.parsedInput ?? {}, rawArguments: acc.argumentsJson });
         yield { type: 'llm_tool_call', id: acc.id!, name: acc.name!, input: acc.parsedInput ?? {} };
       }
     }

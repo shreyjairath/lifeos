@@ -254,12 +254,12 @@ describe('ToolsRegistry.dispatch file tools', () => {
   });
 
   it('read_agent_workspace runs read-only command in target workspace', async () => {
-    const otherWorkspace = resolve(dir, 'agents', 'advisor', 'workspace');
+    const otherWorkspace = resolve(dir, 'agents', 'other', 'workspace');
     mkdirSync(otherWorkspace, { recursive: true });
-    writeFileSync(resolve(otherWorkspace, 'hello.txt'), 'advisor content');
-    reg.registerAgentWorkspace('advisor', otherWorkspace);
-    const r = await reg.dispatch('read_agent_workspace', { agent: 'advisor', command: 'cat hello.txt' }, 'cos');
-    expect(r.output ?? r.stdout).toContain('advisor content');
+    writeFileSync(resolve(otherWorkspace, 'hello.txt'), 'other content');
+    reg.registerAgentWorkspace('other', otherWorkspace);
+    const r = await reg.dispatch('read_agent_workspace', { agent: 'other', command: 'cat hello.txt' }, 'cos');
+    expect(r.output ?? r.stdout).toContain('other content');
   });
 });
 
@@ -341,14 +341,14 @@ describe('ToolsRegistry.dispatch task tools', () => {
 
   it('get_tasks returns tasks across all agents', async () => {
     await registry.dispatch('create_task', { name: 'cos-task', description: 'desc', run_at: futureIso }, 'cos');
-    await registry.dispatch('create_task', { name: 'advisor-task', description: 'desc', run_at: futureIso }, 'advisor');
+    await registry.dispatch('create_task', { name: 'other-task', description: 'desc', run_at: futureIso }, 'other');
     const r = await registry.dispatch('get_tasks', {}, 'cos');
     expect(r.tasks.length).toBeGreaterThanOrEqual(2);
   });
 
   it('get_tasks filters by assignee', async () => {
     await registry.dispatch('create_task', { name: 'cos-task', description: 'desc', assignee: 'cos', run_at: futureIso }, 'cos');
-    await registry.dispatch('create_task', { name: 'advisor-task', description: 'desc', assignee: 'advisor', run_at: futureIso }, 'cos');
+    await registry.dispatch('create_task', { name: 'other-task', description: 'desc', assignee: 'other', run_at: futureIso }, 'cos');
     const r = await registry.dispatch('get_tasks', { assignee: 'cos' }, 'cos');
     expect(r.tasks.every((t: any) => t.assignee === 'cos')).toBe(true);
   });
@@ -750,7 +750,7 @@ describe('ToolsRegistry.dispatch injected tools', () => {
   });
 
   it('message_agent delegates to agentTools.messageAgent', async () => {
-    const r = await reg.dispatch('message_agent', { agent: 'advisor', message: 'hello' }, 'cos');
+    const r = await reg.dispatch('message_agent', { agent: 'other', message: 'hello' }, 'cos');
     expect(r.reply).toBe('ok');
   });
 
@@ -760,7 +760,7 @@ describe('ToolsRegistry.dispatch injected tools', () => {
   });
 
   it('post_message delegates to agentTools.postMessage', async () => {
-    const r = await reg.dispatch('post_message', { message: 'broadcast update', to: ['advisor'] }, 'cos');
+    const r = await reg.dispatch('post_message', { message: 'broadcast update', to: ['other'] }, 'cos');
     expect(r.status).toBe('posted');
   });
 });

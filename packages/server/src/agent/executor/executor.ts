@@ -76,6 +76,14 @@ export class Executor {
         assistantMsg.reasoning = llmResult.fullReasoning;
       }
 
+      assistantMsg._stopReason = llmResult.stopReason;
+      assistantMsg._outputTokens = llmResult.usage?.output_tokens ?? 0;
+      if (llmResult.parsedToolUses.length > 0) {
+        assistantMsg._toolPreviews = llmResult.parsedToolUses.map((tu) => ({
+          argsPreview: (tu.rawArguments ?? '').slice(0, 300),
+        }));
+      }
+
       local.push(assistantMsg);
       prepareMessages(local);
       yield { type: 'agent_append', role: 'assistant', message: assistantMsg };

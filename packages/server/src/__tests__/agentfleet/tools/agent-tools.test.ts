@@ -149,9 +149,9 @@ describe('AgentTools.updateAgent', () => {
   });
 
   it('updates agent fields and preserves others', () => {
-    agentTools.createAgent('advisor', 'Advisor', 'Old desc', 'Old goal', null, 'id', []);
-    agentTools.updateAgent('advisor', 'New Title', null, null, null, null, null);
-    const def = agentTools.readAgentDefinition('advisor');
+    agentTools.createAgent('other', 'Advisor', 'Old desc', 'Old goal', null, 'id', []);
+    agentTools.updateAgent('other', 'New Title', null, null, null, null, null);
+    const def = agentTools.readAgentDefinition('other');
     expect(def.title).toBe('New Title');
     expect(def.description).toBe('Old desc'); // preserved
   });

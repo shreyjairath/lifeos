@@ -125,14 +125,16 @@ export class AgentRegistry {
       'read_file', 'write_file', 'patch_file', 'append_file',
       'save_plan', 'get_plan', 'update_plan',
       'log_entry', 'read_log',
-      'create_task', 'get_my_tasks', 'get_overdue_tasks', 'mark_task_complete', 'delete_task',
+      'create_task', 'get_my_tasks', 'get_tasks', 'get_overdue_tasks', 'mark_task_complete', 'delete_task',
       'post_message', 'read_messages', 'read_topic', 'message_agent',
-      'list_agents', 'read_agent_definition', 'update_agent',
-      'get_current_datetime',
-      'render_artifact', 'system_feedback',
+      'list_agents', 'read_agent_definition', 'update_agent', 'create_agent', 'read_agent_workspace',
+      'get_current_datetime', 'format_timestamp', 'time_diff', 'parse_datetime',
+      'render_artifact', 'system_feedback', 'show_image', 'list_tools', 'read_journal',
+      'web_search', 'brave_search', 'browse_page', 'browse_page_js',
       'read_emails', 'read_email_thread', 'read_email_message',
       'read_email_thread_summary', 'write_email_thread_summary',
       'fetch_email_attachment', 'send_file_email', 'send_email',
+      'list_sessions', 'read_session_summary', 'read_session_transcript', 'write_session_summary',
     ];
     for (const name of ALWAYS_INCLUDE) {
       if (!toolDefs.some((t) => t.name === name)) {

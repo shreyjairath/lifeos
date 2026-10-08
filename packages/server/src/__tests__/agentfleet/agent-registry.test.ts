@@ -149,8 +149,7 @@ describe('AgentRegistry.all', () => {
 
   it('returns all loaded agents', () => {
     writeAgentYml(builtinDir, 'cos');
-    writeAgentYml(builtinDir, 'advisor');
     registry.load();
-    expect(registry.all()).toHaveLength(2);
+    expect(registry.all()).toHaveLength(1);
   });
 });

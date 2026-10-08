@@ -112,7 +112,7 @@ describe('BaseAgent.handleUserMessage', () => {
 describe('BaseAgent.handleAgentMessage', () => {
   it('returns response text', async () => {
     const a = makeAgent('Response from agent');
-    const resp = await a.handleAgentMessage('advisor', 'what should I do?');
+    const resp = await a.handleAgentMessage('other', 'what should I do?');
     expect(resp).toBe('Response from agent');
   });
 });
@@ -122,7 +122,7 @@ describe('BaseAgent.handleAgentMessage', () => {
 describe('BaseAgent.handleAgentMessageAsync', () => {
   it('does not throw and calls onComplete callback', async () => {
     let called = false;
-    agent.handleAgentMessageAsync('advisor', 'hello', (response) => {
+    agent.handleAgentMessageAsync('other', 'hello', (response) => {
       called = true;
       expect(typeof response).toBe('string');
     });
@@ -220,9 +220,9 @@ describe('buildSystemPrompt', () => {
   });
 
   it('includes hires', () => {
-    const prompt = buildSystemPrompt(def, clientConfig, ['therapist', 'advisor'], 'chat', { identityText: '' });
+    const prompt = buildSystemPrompt(def, clientConfig, ['therapist', 'other'], 'chat', { identityText: '' });
     expect(prompt).toContain('**therapist**');
-    expect(prompt).toContain('**advisor**');
+    expect(prompt).toContain('**other**');
   });
 
   it('chat mode includes session ID', () => {

@@ -135,8 +135,8 @@ describe('AgentFleet session methods', () => {
     const s1 = { ...makeFakeSession(), listSessions: () => [{ id: 's1' }] };
     const s2 = { ...makeFakeSession(), listSessions: () => [{ id: 's2' }] };
     const cos = fakeAgent({ getName: () => 'cos', getSessionHandler: () => s1 as any });
-    const advisor = fakeAgent({ getName: () => 'advisor', getSessionHandler: () => s2 as any });
-    fleet = makeFleet([cos, advisor]);
+    const other = fakeAgent({ getName: () => 'other', getSessionHandler: () => s2 as any });
+    fleet = makeFleet([cos, other]);
     expect(fleet.listAllSessions()).toHaveLength(2);
   });
 

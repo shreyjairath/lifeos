@@ -53,14 +53,14 @@ describe('ScheduledTasks.upsert', () => {
 describe('ScheduledTasks.list', () => {
   it('returns all tasks when filter is null', () => {
     tasks.upsert('cos', 'task-1', 'a', null, futureIso, 'cos');
-    tasks.upsert('cos', 'task-2', 'b', null, futureIso, 'advisor');
+    tasks.upsert('cos', 'task-2', 'b', null, futureIso, 'other');
     const result = tasks.list(null);
     expect(result.tasks).toHaveLength(2);
   });
 
   it('filters by assignee', () => {
     tasks.upsert('cos', 'task-1', 'a', null, futureIso, 'cos');
-    tasks.upsert('cos', 'task-2', 'b', null, futureIso, 'advisor');
+    tasks.upsert('cos', 'task-2', 'b', null, futureIso, 'other');
     const result = tasks.list('cos');
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].assignee).toBe('cos');

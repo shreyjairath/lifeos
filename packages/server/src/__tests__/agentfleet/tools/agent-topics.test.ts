@@ -41,7 +41,7 @@ describe('AgentTopics.writeTopic', () => {
   });
 
   it('includes to and threadId in header when provided', () => {
-    topics.writeTopic('cos', 'feed', 'hello', ['advisor'], 'tid-1');
+    topics.writeTopic('cos', 'feed', 'hello', ['other'], 'tid-1');
     const read = topics.readTopic('cos', 'feed', false);
     expect(read.messages[0].from).toContain('cos');
   });

@@ -68,11 +68,16 @@ export function addTurn(record: RunRecord, role: string, message: Record<string,
   if (message.reasoning && typeof message.reasoning === 'string') {
     turn.reasoning = message.reasoning;
   }
+  if (message._stopReason) turn.stopReason = message._stopReason;
+  if (message._outputTokens != null) turn.outputTokens = message._outputTokens;
   if (Array.isArray(message.tool_calls)) {
-    turn.tool_calls = message.tool_calls.map((tc: any) => ({
-      name: tc.function?.name,
-      arguments: tc.function?.arguments ?? '{}',
-    }));
+    const previews: any[] = Array.isArray(message._toolPreviews) ? message._toolPreviews : [];
+    turn.tool_calls = message.tool_calls.map((tc: any, i: number) => {
+      const entry: Record<string, any> = { name: tc.function?.name };
+      const preview = previews[i]?.argsPreview;
+      if (preview && preview.length > 2) entry.argsPreview = preview;
+      return entry;
+    });
   }
   record.turns.push(turn);
 }
